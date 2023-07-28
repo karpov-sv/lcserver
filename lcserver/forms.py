@@ -61,3 +61,23 @@ class TargetInfoForm(forms.Form):
                 css_class='align-items-end'
             ),
         )
+
+
+class TargetZTFForm(forms.Form):
+    form_type = forms.CharField(initial='target_ztf', widget=forms.HiddenInput())
+    ztf_color_model = forms.ChoiceField(choices=[('constant', 'Constant'),
+                                                 ('gp', 'GP smoothing')],
+                                         initial='constant', required=True, label="Color model", widget=forms.RadioSelect)
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.helper = FormHelper()
+        self.helper.form_tag = False
+        self.helper.field_template = 'crispy_field.html'
+        self.helper.layout = Layout(
+            'form_type',
+            Row(
+                Column(InlineRadios('ztf_color_model', template='crispy_radioselect_inline.html'), css_class='form-group'),
+                css_class='align-items-end'
+            ),
+        )

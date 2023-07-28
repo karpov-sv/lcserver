@@ -34,6 +34,14 @@ def index(request):
     return TemplateResponse(request, 'index.html', context=context)
 
 
+def sanitize_path(path):
+    # Prevent escaping from parent folder
+    if not path or os.path.isabs(path):
+        path = ''
+
+    return path
+
+
 def download(request, path, attachment=True, base=settings.TARGETS_PATH):
     path = sanitize_path(path)
 
@@ -48,14 +56,14 @@ def download(request, path, attachment=True, base=settings.TARGETS_PATH):
 def target_download(request, id=None, path='', **kwargs):
     target = models.Target.objects.get(id=id)
 
-    return views.download(request, path, base=target.path(), **kwargs)
+    return download(request, path, base=target.path(), **kwargs)
 
 
 @cache_page(15 * 60)
 def target_preview(request, id=None, path='', **kwargs):
     target = models.Target.objects.get(id=id)
 
-    return views.preview(request, path, base=target.path(), **kwargs)
+    return preview(request, path, base=target.path(), **kwargs)
 
 
 def targets(request, id=None):
@@ -87,11 +95,11 @@ def targets(request, id=None):
 
         all_forms = {}
 
-        all_forms['new_target'] = forms.TargetNewForm(request.POST or None, initial = target.config)
-
         params = target.config.copy()
         params.update({'name':target.name, 'title':target.title})
         all_forms['target_info'] = forms.TargetInfoForm(request.POST or None, initial = params)
+
+        all_forms['target_ztf'] = forms.TargetZTFForm(request.POST or None, initial = target.config)
 
         for name,form in all_forms.items():
             context['form_'+name] = form
@@ -148,6 +156,12 @@ def targets(request, id=None):
                     target.state = 'acquiring info'
                     target.save()
                     messages.success(request, f"Started info collection for target {str(id)}")
+
+                if action == 'target_ztf':
+                    target.celery_id = celery_tasks.task_ztf.delay(target.id).id
+                    target.state = 'acquiring ZTF lightcurve'
+                    target.save()
+                    messages.success(request, f"Started getting ZTF lightcurve for target {str(id)}")
 
                 return HttpResponseRedirect(request.path_info)
 

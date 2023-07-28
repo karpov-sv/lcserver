@@ -15,12 +15,23 @@
   {% elif image %}
 
     <!-- Normal image -->
-    <img src="{% url 'target_view' target.id image %}"
-         class="figure-img img-fluid rounded mb-0" style="max-width: 256px;"
-         onclick="popupImage(event, '{% url 'target_view' target.id image %}?timestamp={{ target.completed|unix }}', '{{ image }}', true)"/>
+    <img src="{% url 'target_view' target.id image %}?timestamp={{ target.completed|unix }}"
+         class="figure-img img-fluid rounded mb-0" {% if width %}style="max-width: {{ width }};"{% endif %}
+         {% if not noclick %}
+         onclick="popupImage(event, '{% url 'target_view' target.id image %}?timestamp={{ target.completed|unix }}', '{{ image }}', true)"
+         {% endif %}
+         />
 
     <figcaption class="figure-caption text-center mt-0 mb-3">
       <small><a href="{% url 'target_view' target.id image %}">{{ image }}</a></small>
+    </figcaption>
+
+  {% elif hips %}
+
+    <!-- HiPS cutout -->
+    <img src="https://alasky.u-strasbg.fr/hips-image-services/hips2fits?hips={{ hips|urlencode }}&width={{ width }}&height={{ height }}&fov={{ fov }}&ra={{ ra }}&dec={{ dec }}&projection=TAN&coordsys=icrs&rotation_angle=0.0&format=jpg"/>
+    <figcaption class="figure-caption text-center mt-0 mb-3">
+      <small>{{ hips }}</small>
     </figcaption>
 
   {% endif %}

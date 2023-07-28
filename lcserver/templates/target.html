@@ -7,6 +7,8 @@
 {% load humanize %}
 
 {% block head %}
+  {% include "popup_image.html" %}
+
   <script language="javascript">
 
    {% if target.celery_id %}
@@ -102,8 +104,7 @@
     </div>
 
     <hr>
-    <h3>Basic info
-    </h3>
+    <h3>Basic info</h3>
 
     {% if user_may_submit %}
       <form action="" method="POST" class="mb-2">
@@ -137,12 +138,86 @@
     <hr style="border-style: dotted">
     <div class="row mb-2">
       {% if 'info.log' in files %}
-        <div class="col">
+        <div class="col-md">
           {% include "target_block_text.html" with file='info.log' %}
         </div>
       {% endif %}
 
+      {% if 'target_ra' in target.config and 'target_dec' in target.config %}
+        <div class="col-md">
+          <!-- include Aladin Lite CSS file in the head section of your page -->
+          <link rel="stylesheet" href="https://aladin.u-strasbg.fr/AladinLite/api/v3/latest/aladin.min.css" />
+          <!-- It seems Aladin uses jQuery 1.x, let's also load it and hope it will not break anything -->
+<script type="text/javascript" src="https://aladin.u-strasbg.fr/AladinLite/api/v3/latest/aladin.js" charset="utf-8"></script>
+          <script type="text/javascript">
+           $(document).ready(function(){
+             let aladin;
+             A.init.then(() => {
+               aladin = A.aladin('#aladin-lite-div', {survey: "P/DSS2/color", fov:0.03, projection: 'TAN'});
+               aladin.gotoRaDec({{ target.config.target_ra }}, {{ target.config.target_dec }});
+             });
+           });
+          </script>
+
+          <div>
+          <!-- insert this snippet where you want Aladin Lite viewer to appear and after the loading of jQuery -->
+          <div id="aladin-lite-div" style="min-height:400px"></div>
+          </div>
+          {% include "target_block_external.html" with ra=target.config.target_ra dec=target.config.target_dec %}
+
+        </div>
+
+      {% endif %}
     </div>
+
+    {% if 'target_ra' in target.config and 'target_dec' in target.config %}
+      <hr>
+      <h3>Zwicky Transient Facility</h3>
+
+      {% if user_may_submit %}
+        <form action="" method="POST" class="mb-2">
+          <fieldset class="small" {% if task.celery_id %}disabled{% endif %}>
+            {% crispy form_target_ztf %}
+            <button type="submit" name="action" value="target_ztf" class="btn btn-primary">Get ZTF lightcurve</button>
+          </fieldset>
+        </form>
+      {% endif %}
+
+      <hr style="border-style: dotted">
+      <div class="row mb-2">
+        {% if 'ztf.log' in files %}
+          <div class="col-md">
+            {% include "target_block_text.html" with file='ztf.log' %}
+          </div>
+
+          <div class="col-md">
+            <div class="row">
+              <!-- Cutouts -->
+              <div class="col" style="max-width: 256px">
+                {% include "target_block_image.html" with hips="CDS/P/ZTF/DR7/color" ra=target.config.target_ra dec=target.config.target_dec width=256 height=256 fov=0.03 only %}
+              </div>
+
+              {% make_list 'ztf_color_mag.png' as list %}
+              {% for name in list %}
+                {% if name in files %}
+                  <div class="col" style="max-width: 256px">
+                    {% include "target_block_image.html" with image=name target=target only %}
+                  </div>
+                {% endif %}
+              {% endfor %}
+            </div>
+          </div>
+
+        {% endif %}
+      </div>
+
+      {% if 'ztf_lc.png' in files %}
+        <div class="text-center">
+          {% include "target_block_image.html" with image='ztf_lc.png' target=target width="800px" noclick=1 only %}
+        </div>
+      {% endif %}
+
+    {% endif %}
 
   {% endif %}
 

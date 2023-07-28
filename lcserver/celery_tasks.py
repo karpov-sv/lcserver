@@ -65,3 +65,31 @@ def task_info(self, id):
     fix_config(config)
     target.complete()
     target.save()
+
+@shared_task(bind=True)
+def task_ztf(self, id):
+    target = models.Target.objects.get(id=id)
+    basepath = target.path()
+
+    config = target.config
+    config['target_name'] = target.name
+
+    log = partial(processing.print_to_file, logname=os.path.join(basepath, 'ztf.log'))
+    log(clear=True)
+
+    # Start processing
+    try:
+        processing.target_ztf(config, basepath=basepath, verbose=log)
+        target.state = 'ztf lightcurve acquired'
+    except:
+        import traceback
+        log("\nError!\n", traceback.format_exc())
+
+        target.state = 'failed'
+        target.celery_id = None
+
+    # End processing
+    target.celery_id = None
+    fix_config(config)
+    target.complete()
+    target.save()

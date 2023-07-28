@@ -113,9 +113,7 @@ ENV/
 
 # Project specific
 tests/
-cutouts/
-data/
-tasks/
+targets/
 
 db.sqlite3
 dump.rdb
