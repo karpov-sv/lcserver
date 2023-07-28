@@ -1,0 +1,12 @@
+Django
+python-decouple
+python-magic
+django-crispy-forms
+crispy-bootstrap5
+django-el-pagination
+celery
+django-celery-results
+redis
+humanize
+dill
+astropy==5.2

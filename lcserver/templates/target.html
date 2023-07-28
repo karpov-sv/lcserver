@@ -1,0 +1,149 @@
+{% extends "template.html" %}
+
+{% load tags %}
+{% load filters %}
+{% load wrapwith %}
+{% load crispy_forms_tags %}
+{% load humanize %}
+
+{% block head %}
+  <script language="javascript">
+
+   {% if target.celery_id %}
+
+   var update_timer = 0;
+   var update_timeout = 3000;
+
+   update = function(){
+     $.ajax({
+       url: "{% url 'queue_state' target.celery_id %}",
+       dataType: "json",
+       timeout: 3000,
+
+       success: function(json){
+         $('#celery_state').html(json.state);
+         if(json.state == 'SUCCESS' || json.state == 'FAILURE' || json.state == 'REVOKED'){
+           location.reload();
+         }
+       },
+
+       complete: function(xhr, status) {
+         setTimeout(update, update_timeout);
+       }
+     });
+   }
+
+   $(function(){
+     setTimeout(update, update_timeout);
+   });
+
+   {% endif %}
+
+  </script>
+{% endblock %}
+
+{% block ptitle %}
+  {% if target.celery_id %}(Running){% endif %}
+  Target {{ target.id }} : LCServer
+{% endblock %}
+
+{% block title_div %}{% endblock %}
+
+{% block content %}
+
+  {% if not target %}
+    <p>Target not found</p>
+  {% else %}
+
+    <h2>
+      {{ target.name }}
+    </h2>
+
+    {% if target.title %}
+    <div class="fst-italic mb-2">
+      {{ target.title }}
+    </div>
+    {% endif %}
+    <div>
+      Target {{ target.id }} created by <span class="text-primary fw-bold">{{ target.user|user }}</span> on {{ target.created|timestamp }} - {{ target.created|naturaltime }}
+      {% if not user_may_submit %}
+        <br>
+        <span class="text-danger fw-bold">Target is read-only</span>
+      {% endif %}
+    </div>
+    <div class="mb-4 {% if target.celery_id %}sticky-top bg-white border-bottom pb-2{% endif %}">
+      State:
+      {% if target.celery_id %}
+        <span class="spinner-border spinner-border-sm text-primary" role="status"></span>
+      {% endif %}
+      <b class="text-{% if target.state == 'failed' %}danger{% elif target.celery_id %}primary{% else %}success{% endif %}">{{ target.state }}</b> on {{ target.modified|timestamp }} - {{ target.modified|naturaltime }}
+      {% if target.celery_id and user_may_submit %}
+        <!-- Help popover -->
+        <div class="span-help-popover d-inline float-end" title="Target is running">
+          <p>
+            The target processing task is running on the server. The page will be automatically re-loaded when processing is finished.
+          </p>
+          <p>
+            If necessary, you may cancel the running task by clicking on the running task id and using corresponding button on the task page.
+          </p>
+        </div>
+
+        <br>
+        Running id:
+        <a href="{% url 'queue' id=target.celery_id %}">{{ target.celery_id }}</a>
+        (<span id="celery_state"></span>)
+        {% if user_may_submit and False %}
+          <form action="{% url 'queue' id=target.celery_id %}" method="POST">
+            {% csrf_token %}
+            <button type="submit" name="action" value="terminatetarget" class="btn btn-danger">Terminate</button>
+          </form>
+        {% endif %}
+      {% endif %}
+    </div>
+
+    <hr>
+    <h3>Basic info
+    </h3>
+
+    {% if user_may_submit %}
+      <form action="" method="POST" class="mb-2">
+        <fieldset class="small" {% if task.celery_id %}disabled{% endif %}>
+          {% crispy form_target_info %}
+
+          <button type="submit" name="action" value="target_info" class="btn btn-primary">Get info</button>
+
+          <button type="submit" name="action" value="cleanup_target" class="btn btn-danger"
+                  title="Delete all processing results and configurations">Cleanup</button>
+
+          <!-- Unsafe controls -->
+          <button class="btn btn-light collapse-chevron-horizontal collapsed ms-4 me-4" type="button"
+                  data-bs-toggle="collapse"
+                  data-bs-target="#unsafeButtons"
+                  aria-expanded="false"
+                  aria-controls="unsafeButtons"
+                  title="Show / hide unsafe controls">
+          </button>
+
+          <span id="unsafeButtons" class="collapse collapse-horizontal collapsed">
+            <button type="submit" name="action" value="delete_target" class="btn btn-danger"
+                    title="Permanently delete this target">Delete target</button>
+          </span>
+
+        </fieldset>
+      </form>
+    {% endif %}
+
+    <!-- Basic info -->
+    <hr style="border-style: dotted">
+    <div class="row mb-2">
+      {% if 'info.log' in files %}
+        <div class="col">
+          {% include "target_block_text.html" with file='info.log' %}
+        </div>
+      {% endif %}
+
+    </div>
+
+  {% endif %}
+
+{% endblock %}

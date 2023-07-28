@@ -1,0 +1,38 @@
+{% extends "template.html" %}
+
+{% load crispy_forms_tags %}
+{% load filters %}
+
+{% block title %}Lightcurves for the Web{% endblock %}
+
+{% block content %}
+
+  <p>
+    This is a simple web-based tool for a quick-look of lightcurves for your object available in various archives.
+  </p>
+
+  <hr>
+  <h3>
+    New target
+    {% if user.is_authenticated %}
+      <!-- Help popover -->
+      <span class="span-help-popover float-end" title="Create new target">
+        <p>
+          You may create new target here. Upon creation, you will be redirected to the dedicated target page, where you may analyze it.
+        </p>
+      </span>
+    {% endif %}
+  </h3>
+
+  {% if user.is_authenticated %}
+
+    <!-- File upload form -->
+    {% crispy form_new_target %}
+
+  {% else %}
+
+    Please <a href="{% url 'login' %}">log in</a> to be able to create new targets.
+
+  {% endif %}
+
+{% endblock %}

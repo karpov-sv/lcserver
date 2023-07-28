@@ -1,0 +1,55 @@
+{% extends "template.html" %}
+
+{% load el_pagination_tags %}
+{% load crispy_forms_tags %}
+{% load filters %}
+
+{% block ptitle %}Targets : LCServer{% endblock %}
+
+{% block title %}Targets{% endblock %}
+
+{% block content %}
+
+  <div>
+    {% crispy form_filter %}
+  </div>
+
+  {% if targets %}
+
+    {% paginate 10 targets %}
+
+    <div class="list-group mb-4">
+        {% for target in targets %}
+          <a href="{% url 'targets' id=target.id %}" class="text-decoration-none list-group-item list-group-item-action d-flex justify-content-between align-items-start">
+              <div class="ms-1 me-2">
+                {{ target.id }}
+              </div>
+              <div class="ms-2 me-auto">
+                <div class="fw-bold">{{ target.name }}</div>
+
+                {% if target.title %}
+                  <div class="fst-italic">{{ target.title }}</div>
+                {% endif %}
+
+                <div>
+                  {% if target.config.target_ra or target.config.target_dec %}
+                    Target: <span class="fw-bold">{{ target.config.target_ra|to_sexadecimal_hours }} {{ target.config.target_dec|to_sexadecimal_plus }}</span>
+                  {% endif %}
+                </div>
+
+                <small class="me-2 badge bg-info">{{ target.user|user }}</small>
+                <small class="me-2">Created: <span class="fst-italic">{{ target.created|timestamp }}</span></small>
+                <small class="me-2">Modified: <span class="fst-italic">{{ target.modified|timestamp }}</span></small>
+              </div>
+              <span class="badge bg-{% if target.state == 'failed' %}danger{% else %}primary{% endif %} rounded-pill">{{ target.state }}</span>
+          </a>
+        {% endfor %}
+    </div>
+
+    {% show_pages %}
+
+  {% else %}
+    No targets found
+  {% endif %}
+
+{% endblock %}

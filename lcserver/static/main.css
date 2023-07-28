@@ -1,0 +1,127 @@
+.stdview-image-container {
+    position: relative;
+}
+
+.stdview-image-overlay {
+    background: white;
+    font-size: 0.8em;
+    display: inline-block;
+    position: absolute;
+    top: 1.5em;
+    left: 50%;
+    /* left: 1em; */
+    transform: translate(-50%, -50%);
+    /* margin: 0.5em; */
+    padding: 0.2em;
+    border-radius: 0.3em;
+    opacity: 0%;
+    transition: .5s ease;
+    white-space: nowrap;
+    z-order: 100;
+}
+
+.stdview-image-container:hover .stdview-image-overlay {
+    opacity: 80%;
+}
+
+.stdview-image-loading {
+    position: relative;
+    /* display: inline-block; */
+}
+
+.stdview-image-loading::after {
+    content: "Loading...";
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    opacity: 1.0;
+    display: block;
+    background: white;
+    padding: 1em;
+    border: 1px dotted red;
+}
+
+.bootbox .modal-body {
+    padding: 2px;
+}
+
+.bootbox .modal-header {
+    padding-top: 0.3em;
+    padding-bottom: 0.3em;
+}
+
+.bootbox .modal-footer {
+    padding-top: 0.3em;
+    padding-bottom: 0.3em;
+}
+
+.collapse-chevron:after {
+    font-family:Fontawesome;
+    content:'\f077';
+    float:right;
+}
+.collapse-chevron.collapsed:after {
+    font-family:Fontawesome;
+    content:'\f078';
+    float:right;
+}
+
+
+.collapse-chevron-horizontal:after {
+    font-family:Fontawesome;
+    content:'\f053';
+}
+.collapse-chevron-horizontal.collapsed:after {
+    font-family:Fontawesome;
+    content:'\f054';
+}
+
+.form-label {
+    margin-bottom: 0.1em;
+}
+
+.help-popover {
+    --bs-popover-max-width: 500px;
+    --bs-popover-border-color: var(--bs-info);
+    --bs-popover-header-bg: var(--bs-info);
+    --bs-popover-header-color: var(--bs-white);
+    --bs-popover-font-size: 9pt;
+    --bs-popover-body-padding-x: 1rem;
+    --bs-popover-body-padding-y: .5rem;
+    box-shadow: var(--bs-box-shadow);
+    /* font-size: 8pt; /\*var(--bs-font-size-sm);*\/ */
+}
+
+.help-popover p {
+    margin-bottom: .5rem;
+}
+
+.navbar .navbar-brand {
+    /* text-shadow: 2px 2px 4px #000000, 2px 2px 6px #ffffff; */
+    background-color: #565656;
+    color: transparent;
+    text-shadow: 0px 3px 3px rgba(255,255,255,0.3);
+    -webkit-background-clip: text;
+    -moz-background-clip: text;
+    background-clip: text;
+    font-weight: bold;
+}
+
+.navbar .nav-link {
+    /* font-weight: bold; */
+    color: #888888;
+}
+
+.navbar .nav-link.active {
+    font-weight: bold;
+    color: #565656;
+}
+
+.navbar .nav-link:hover {
+  color: #565656;
+}
+
+/* .navbar { */
+/*     background: linear-gradient(0deg, rgba(100,100,100,0.1) 0%, rgba(255,255,255,0.2) 30%); */
+/* } */

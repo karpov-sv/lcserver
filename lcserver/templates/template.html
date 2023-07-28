@@ -1,0 +1,131 @@
+{% load filters %}
+{% load tags %}
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="">
+    <meta name="author" content="">
+
+    <!-- Bootstrap5 -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-9ndCyUaIbzAi2FUVXJi0CjmCapSmO7SnpJef0486qhLnuZ2cdeRhO02iuK6FUUVM" crossorigin="anonymous">
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js" integrity="sha384-geWF76RCwLtnZ8qwWowPQNguL3RmwHVBC9FhGdlKrxdiJJigb/j/68SIy3Te4Bkz" crossorigin="anonymous"></script>
+
+    <!-- jQuery -->
+    <script   src="https://code.jquery.com/jquery-3.7.0.min.js" integrity="sha256-2Pmvv0kuTBOenSvLm6bvfBSSHrUJ+3A7x6P5Ebd07/g=" crossorigin="anonymous"></script>
+
+    <script src="https://cdn.jsdelivr.net/npm/@popperjs/core@2.11.8/dist/umd/popper.min.js" integrity="sha256-whL0tQWoY1Ku1iskqPFvmZ+CHsvmRWx/PIoEvIeWh4I=" crossorigin="anonymous"></script>
+
+    <link href="https://stackpath.bootstrapcdn.com/font-awesome/4.7.0/css/font-awesome.min.css" rel="stylesheet" integrity="sha384-wvfXpqpZZVQGK6TAh5PVlGOfQNHSoD2xbE+QkPxCAFlNEevoEH3Sl0sibVcOQVnN" crossorigin="anonymous">
+
+    <!-- jQuery -->
+    <script type="text/javascript">
+     $(document).ready(function(){
+     });
+    </script>
+
+    {% load static %}
+
+    <!-- Custom CSS and JS -->
+    <link rel="stylesheet" href="{% static 'main.css' %}">
+    <script src="{% static 'help_popover.js' %}"></script>
+
+    <!-- Our own -->
+
+    {% block head %}{% endblock %}
+
+    <meta http-equiv="Content-Type" content="application/xhtml+xml; charset=utf-8" />
+    <meta name="robots" content="index, follow" />
+    <title>{% block ptitle %}LCServer{% endblock %}</title>
+
+    <!-- Add custom CSS here -->
+    <style>
+    </style>
+
+  </head>
+
+  <body>
+
+    <!-- Navigation bar -->
+    <nav class="navbar bg-light navbar-expand-lg mb-4 py-1 shadow-sm" data-bs-theme="light">
+      <div class="container-fluid">
+        <a class="navbar-brand" href="{% url 'index' %}">LCServer</a>
+        <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarSupportedContent" aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation">
+          <span class="navbar-toggler-icon"></span>
+        </button>
+
+        <div class="collapse navbar-collapse" id="navbarSupportedContent">
+          <ul class="navbar-nav me-auto">
+            <li class="nav-item">
+              <a class="nav-link {% if request.resolver_match.view_name == 'targets' %}active{% endif %}" href="{% url 'targets' %}">Targets</a>
+            </li>
+          </ul>
+
+          <ul class="navbar-nav ms-auto me-2">
+            {% if user.is_authenticated %}
+              <li class="nav-item dropdown">
+                <a href="#" class="dropdown-toggle nav-link" data-bs-toggle="dropdown">User: {{ user|user }} <span class="caret"></span></a>
+                <ul class="dropdown-menu shadow-sm">
+                  {% if user.is_staff %}
+                    <li class="dropdown-item disabled">
+                      Free: {% filter naturalsize %}{% free_disk_space %}{% endfilter %}
+                    </li>
+                  {% endif %}
+
+                  {% if user.is_staff %}
+                    <li>
+                      <a class="dropdown-item" href="{% url 'queue' %}">Running Tasks</a>
+                    </li>
+                  {% endif %}
+
+
+                  {% if user.is_staff %}
+                    <li>
+                      <a class="dropdown-item" href="{% url 'admin:index' %}">Admin Panel</a>
+                    </li>
+                  {% endif %}
+
+                  <!-- Logout requires POST -->
+                  <li>
+                    <form id="logout-form" method="post" action="{% url 'logout' %}?next={{ request.get_full_path }}">
+                      {% csrf_token %}
+                      <button class="btn-link dropdown-item" type="submit">Log out</button>
+                    </form>
+                  </li>
+
+                </ul>
+              </li>
+            {% else %}
+              <li class="nav-item">
+                <a class="nav-link" href="{% url 'login' %}?next={{ request.get_full_path }}">Log in</a>
+              </li>
+            {% endif %}
+          </ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <!-- Main content -->
+    <div class="container">
+
+      {% if messages %}
+          {% for message in messages %}
+            <div class="alert alert-dismissible {% if message.tags %} alert-{{ message.tags }}{% endif %}" role="alert">
+              {{ message }}
+              <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+            </div>
+          {% endfor %}
+      {% endif %}
+
+      {% block title_div %}
+        <h1 class="mb-4">{% block title %}{% endblock %}</h1>
+      {% endblock %}
+
+      {% block content %}{% endblock %}
+
+    </div>
+    <!-- /.container -->
+  </body>
+</html>
