@@ -1,6 +1,7 @@
 from django.conf import settings
 
-import os, glob, shutil
+import os, glob, shutil, re
+import requests
 
 from functools import partial
 
@@ -40,6 +41,8 @@ files_info = [
 files_cache = [
     'ztf.vot',
     'asas.vot',
+    'dasch.vot',
+    'applause.vot',
 ]
 
 files_ztf = [
@@ -60,10 +63,22 @@ files_tess = [
     'tess_lc_*.vot',
 ]
 
-cleanup_info = files_info + files_cache + files_ztf + files_asas + files_tess
+files_dasch = [
+    'dasch.log',
+    'dasch_lc.png',
+]
+
+files_applause = [
+    'applause.log',
+    'applause_lc.png',
+]
+
+cleanup_info = files_info + files_cache + files_ztf + files_asas + files_tess + files_dasch + files_applause
 cleanup_ztf = files_ztf
 cleanup_asas = files_asas
 cleanup_tess = files_tess
+cleanup_dasch = files_dasch
+cleanup_applause = files_applause
 
 
 def cleanup_paths(paths, basepath=None):
@@ -177,13 +192,35 @@ def target_info(config, basepath=None, verbose=True, show=False):
         # if config.get('B_minus_V') is not None and config.get('g_minus_r') is not None:
             # break
 
+    # Gaia DR3 photometry
+    cat = catalogs.get_cat_vizier(config.get('target_ra'), config.get('target_dec'), 5/3600,
+                                  'I/355/gaiadr3',
+                                  extra=['_RAJ2000', '_DEJ2000', 'e_Gmag', 'e_BPmag', 'e_RPmag'],
+                                  get_distance=True, verbose=False)
+    if cat:
+        star = dict(cat[cat['_r'] == np.min(cat['_r'])][0])
+
+        log(f"\n---- Gaia DR3 ----\n")
+
+        for fn in ['G', 'BP', 'RP']:
+            if star.get(f'{fn}mag'):
+                log(f"{fn} = {star[f'{fn}mag']:.2f} +/- {star[f'e_{fn}mag']:.2f}")
+
+        if star.get('BPmag') and star.get('RPmag'):
+            BP_minus_RP = star['BPmag'] - star['RPmag']
+            BP_minus_RP_err = np.hypot(star['e_BPmag'], star['e_RPmag'])
+            log(f"(BP - RP) = {BP_minus_RP:.3f} +/- {BP_minus_RP_err:.3f}")
+            if config.get('BP_minus_RP') is None:
+                config['BP_minus_RP'] = BP_minus_RP
+
     # Gaia DR3 distances by Bailer-Jones
-    cat = catalogs.get_cat_vizier(config.get('target_ra'), config.get('target_dec'), 5/3600, 'I/352/gedr3dis', extra=['_RAJ2000', '_DEJ2000'], get_distance=True)
+    cat = catalogs.get_cat_vizier(config.get('target_ra'), config.get('target_dec'), 5/3600,
+                                  'I/352/gedr3dis', extra=['_RAJ2000', '_DEJ2000'],
+                                  get_distance=True, verbose=False)
     if cat:
         star = cat[cat['_r'] == np.min(cat['_r'])][0]
 
         if star['rgeo']:
-            log(f"\n---- Gaia DR3 ----\n")
             log(f"Gaia DR3 distance is {star['rgeo']:.1f} [{star['b_rgeo']:.1f} ... {star['B_rgeo']:.1f}] pc")
 
             # Galaxy map
@@ -374,6 +411,7 @@ def target_ztf(config, basepath=None, verbose=True, show=False):
         ax.grid(alpha=0.3)
         ax.set_ylabel('g')
         ax.legend()
+        ax.set_title(f"{config['target_name']} - ZTF")
 
         ax = fig.add_subplot(3, 1, 2, sharex=ax)
 
@@ -391,6 +429,7 @@ def target_ztf(config, basepath=None, verbose=True, show=False):
             ax.errorbar(tg[iig].datetime, cmagg[iig]-cmagr[iir], np.hypot(dmagg[iig], dmagr[iir]), fmt='.', alpha=0.5, label='g-r=%.2g +/- %.2g' % (np.mean(cmagg[iig]-cmagr[iir]), np.std(cmagg[iig]-cmagr[iir])))
         ax.grid(alpha=0.3)
         ax.set_ylabel('g - r')
+        ax.set_xlabel('Time')
 
         handles, labels = ax.get_legend_handles_labels()
         ax.legend(reversed(handles), reversed(labels))
@@ -412,6 +451,8 @@ def target_ztf(config, basepath=None, verbose=True, show=False):
         ax.set_xlabel('g - r')
         ax.set_ylabel('r')
         ax.invert_yaxis()
+
+        fig.suptitle(f"{config['target_name']} - ZTF")
 
     log("\n---- Worst-case Pan-STARRS recalibration error ----\n")
 
@@ -510,6 +551,12 @@ def target_asas(config, basepath=None, verbose=True, show=False):
 
         ax.legend()
         ax.set_ylabel('g')
+        ax.set_xlabel('Time')
+        ax.set_title(f"{config['target_name']} - ASAS-SN")
+
+    # Time cannot be serialized to VOTable
+    asas[[_ for _ in asas.columns if _ != 'time']].write(os.path.join(basepath, 'asas.vot'), format='votable', overwrite=True)
+    log("ASAS-SN data written to file:asas.vot")
 
 
 import lightkurve as lk
@@ -598,3 +645,198 @@ def target_tess(config, basepath=None, verbose=True, show=False):
 
                 if is_done:
                     break
+
+
+# Get DASCH lightcurve
+def target_dasch(config, basepath=None, verbose=True, show=False):
+    # Simple wrapper around print for logging in verbose mode only
+    log = (verbose if callable(verbose) else print) if verbose else lambda *args,**kwargs: None
+
+    # Cleanup stale plots
+    cleanup_paths(cleanup_dasch, basepath=basepath)
+
+    if 'target_ra' not in config or 'target_dec' not in config:
+        raise RuntimeError("Cannot operate without target coordinates")
+
+    if config.get('target_b') < 0:
+        log("DASCH is not currently available for Southern Galactic hemisphere")
+        return
+
+
+    cachename = f"dasch_{config['target_ra']:.4f}_{config['target_dec']:.4f}.vot"
+
+    if os.path.exists(os.path.join(basepath, 'cache', cachename)):
+        log(f"Loading DASCH lightcurve from the cache")
+        dasch = Table.read(os.path.join(basepath, 'cache', cachename))
+    else:
+        dasch_sr = config.get('dasch_sr', 5.0)
+
+        log(f"Requesting DASCH lightcurve for {config['target_name']} within {dasch_sr:.1f} arcsec")
+
+        baseurl = "http://dasch.rc.fas.harvard.edu"
+        url = f"{baseurl}/lightcurve_cat_input.php?nmin=1&box={dasch_sr}&source=atlas&coo={config['target_ra']}+{config['target_dec']}"
+        res = requests.get(url)
+        m = re.search(r'/tmp/(\w+)/object', res.text)
+        if not m:
+            raise RuntimeError('Error downloading DASCH data')
+        token = m[1]
+        url2 = f"http://dasch.rc.fas.harvard.edu/lightcurve_data.php?dbfilename=/tmp/{token}/object_{token}.db&vofilename=/tmp/{token}/object_{token}.xml.gz&tmpdir={token}&REF=object&source=atlas"
+        res2 = requests.get(url2)
+
+        m = re.search(r'"tmp/\w+/([^s][^/"]+\.xml\.gz)"', res2.text)
+        if not m:
+            raise RuntimeError('Error downloading DASCH data')
+        fname = m[1]
+        url3 = f"{baseurl}/tmp/{token}/{fname}"
+        dasch = Table.read(url3)
+
+        try:
+            os.makedirs(os.path.join(basepath, 'cache'))
+        except:
+            pass
+
+        dasch.write(os.path.join(basepath, 'cache', cachename), format='votable', overwrite=True)
+
+    log(f"{len(dasch)} original data points")
+
+    dasch['time'] = Time(dasch['ExposureDate'].value, format='jd')
+    dasch.sort('time')
+
+    dasch['mjd'] = dasch['time'].mjd
+
+    dasch = dasch[dasch['magcal_magdep'] > 0]
+    # t = t[t['BFLAGS'] & 0x10000 > 0]
+
+    # Criteria from https://github.com/barentsen/did-tabbys-star-fade/blob/master/data/data-preprocessing.py
+    # dasch = dasch[dasch['AFLAGS'] <= 9000]
+    dasch = dasch[dasch['AFLAGS'] < 524288]
+    # dasch = dasch[dasch['AFLAGS'] & 33554432 == 0]
+    # dasch = dasch[dasch['AFLAGS'] & 1048576 == 0]
+    dasch = dasch[dasch['magcal_local_rms'] < 1]
+    # dasch = dasch[dasch['magcal_local_rms'] < 0.33]
+    # dasch = dasch[dasch['magcal_magdep'] < dasch['limiting_mag_local'] - 0.2]
+
+    dasch['mag_g'] = dasch['magcal_magdep']
+    dasch['mag_err'] = dasch['magcal_local_rms']
+
+    log(f"{len(dasch)} data points after filtering")
+    if not len(dasch):
+        return
+
+    # Plot lightcurve
+    with plots.figure_saver(os.path.join(basepath, 'dasch_lc.png'), figsize=(12, 4), show=show) as fig:
+        ax = fig.add_subplot(1, 1, 1)
+
+        ax.errorbar(dasch['time'].datetime, dasch['mag_g'], dasch['mag_err'], fmt='.', label='g')
+
+        ax.invert_yaxis()
+        ax.grid(alpha=0.2)
+
+        # ax.legend()
+        ax.set_ylabel('g')
+        ax.set_xlabel('Time')
+        ax.set_title(f"{config['target_name']} - DASCH")
+
+    # Time cannot be serialized to VOTable
+    dasch[[_ for _ in dasch.columns if _ != 'time']].write(os.path.join(basepath, 'dasch.vot'), format='votable', overwrite=True)
+    log("DASCH data written to file:dasch.vot")
+
+
+import pyvo as vo
+
+# Get APPLAUSE lightcurve
+def target_applause(config, basepath=None, verbose=True, show=False):
+    # Simple wrapper around print for logging in verbose mode only
+    log = (verbose if callable(verbose) else print) if verbose else lambda *args,**kwargs: None
+
+    # Cleanup stale plots
+    cleanup_paths(cleanup_applause, basepath=basepath)
+
+    if 'target_ra' not in config or 'target_dec' not in config:
+        raise RuntimeError("Cannot operate without target coordinates")
+
+
+    cachename = f"applause_{config['target_ra']:.4f}_{config['target_dec']:.4f}.vot"
+
+    if os.path.exists(os.path.join(basepath, 'cache', cachename)):
+        log(f"Loading APPLAUSE lightcurve from the cache")
+        applause = Table.read(os.path.join(basepath, 'cache', cachename))
+    else:
+        applause_sr = config.get('applause_sr', 2.0)
+
+        log(f"Requesting APPLAUSE lightcurve for {config['target_name']} within {applause_sr:.1f} arcsec")
+
+        url = 'https://www.plate-archive.org/tap'
+
+        query = f"""
+        SELECT
+            s.*,
+            DEGREES(spoint(RADIANS(s.ra_icrs), RADIANS(s.dec_icrs)) <-> spoint(RADIANS({config['target_ra']}), RADIANS({config['target_dec']}))) AS angdist,
+            e.jd_start, e.jd_mid, e.jd_end
+        FROM applause_dr4.source_calib s, applause_dr4.exposure e, applause_dr4.plate p
+        WHERE
+            s.pos @ scircle(spoint(RADIANS({config['target_ra']}), RADIANS({config['target_dec']})), RADIANS({5/3600}))
+            AND
+            s.plate_id = e.plate_id
+            AND
+            s.plate_id = p.plate_id
+            AND
+            p.numexp = 1
+            AND
+            s.match_radius > 0
+            AND
+            s.model_prediction > 0.9
+        """
+
+        tap_service = vo.dal.TAPService(url) # Anonymous access
+
+        job = tap_service.submit_job(query, language='PostgreSQL')
+        job.run()
+
+        job.wait(phases=["COMPLETED", "ERROR", "ABORTED"], timeout=120.)
+
+        # TODO: more intelligent error handling?
+        job.raise_if_error()
+        results = job.fetch_result()
+        applause = results.to_table()
+
+        try:
+            os.makedirs(os.path.join(basepath, 'cache'))
+        except:
+            pass
+
+        applause.write(os.path.join(basepath, 'cache', cachename), format='votable', overwrite=True)
+
+    log(f"{len(applause)} original data points")
+
+    if not len(applause):
+        return
+
+    applause['time'] = Time(applause['jd_start'], format='jd')
+    applause['mjd'] = applause['time'].mjd
+    applause.sort('time')
+
+    BP_minus_RP = config.get('BP_minus_RP', np.nanmedian(applause['gaiaedr3_bp_rp']))
+
+    log(f"Using BP - RP = {BP_minus_RP:.2f} for converting natural magnitudes to Gaia Gmag")
+
+    applause['mag_RP'] = applause['natmag'] - BP_minus_RP*applause['color_term']
+    applause['mag_err'] = applause['natmag_error']
+
+    # Plot lightcurve
+    with plots.figure_saver(os.path.join(basepath, 'applause_lc.png'), figsize=(12, 4), show=show) as fig:
+        ax = fig.add_subplot(1, 1, 1)
+
+        ax.errorbar(applause['time'].datetime, applause['mag_RP'], applause['mag_err'], fmt='.', label='g')
+
+        ax.invert_yaxis()
+        ax.grid(alpha=0.2)
+
+        # ax.legend()
+        ax.set_ylabel('RP')
+        ax.set_xlabel('Time')
+        ax.set_title(f"{config['target_name']} - APPLAUSE")
+
+    # Time cannot be serialized to VOTable
+    applause[[_ for _ in applause.columns if _ != 'time']].write(os.path.join(basepath, 'applause.vot'), format='votable', overwrite=True)
+    log("APPLAUSE data written to file:applause.vot")

@@ -104,6 +104,8 @@ def targets(request, id=None):
         all_forms['target_ztf'] = forms.TargetZTFForm(request.POST or None, initial = target.config)
         all_forms['target_asas'] = forms.TargetASASForm(request.POST or None, initial = target.config)
         all_forms['target_tess'] = forms.TargetTESSForm(request.POST or None, initial = target.config)
+        all_forms['target_dasch'] = forms.TargetDASCHForm(request.POST or None, initial = target.config)
+        all_forms['target_applause'] = forms.TargetAPPLAUSEForm(request.POST or None, initial = target.config)
 
         for name,form in all_forms.items():
             context['form_'+name] = form
@@ -145,7 +147,7 @@ def targets(request, id=None):
                     target.config = {} # should we reset the config on cleanup?..
                     target.state = 'cleaning'
                     target.save()
-                    messages.success(request, f"Started cleanup for target {str(id)}")
+                    messages.success(request, f"Started cleanup for target {target.id}")
 
                 if action == 'target_info':
                     # Only accept non-empty new values
@@ -159,25 +161,37 @@ def targets(request, id=None):
                     target.celery_id = celery_tasks.task_info.delay(target.id).id
                     target.state = 'acquiring info'
                     target.save()
-                    messages.success(request, f"Started info collection for target {str(id)}")
+                    messages.success(request, f"Started info collection for target {target.id}")
 
                 if action == 'target_ztf':
                     target.celery_id = celery_tasks.task_ztf.delay(target.id).id
                     target.state = 'acquiring ZTF lightcurve'
                     target.save()
-                    messages.success(request, f"Started getting ZTF lightcurve for target {str(id)}")
+                    messages.success(request, f"Started getting ZTF lightcurve for target {target.id}")
 
                 if action == 'target_asas':
                     target.celery_id = celery_tasks.task_asas.delay(target.id).id
                     target.state = 'acquiring ASAS-SN lightcurve'
                     target.save()
-                    messages.success(request, f"Started getting ASAS-SN lightcurve for target {str(id)}")
+                    messages.success(request, f"Started getting ASAS-SN lightcurve for target {target.id}")
 
                 if action == 'target_tess':
                     target.celery_id = celery_tasks.task_tess.delay(target.id).id
                     target.state = 'acquiring TESS lightcurves'
                     target.save()
-                    messages.success(request, f"Started getting TESS lightcurves for target {str(id)}")
+                    messages.success(request, f"Started getting TESS lightcurves for target {target.id}")
+
+                if action == 'target_dasch':
+                    target.celery_id = celery_tasks.task_dasch.delay(target.id).id
+                    target.state = 'acquiring DASCH lightcurve'
+                    target.save()
+                    messages.success(request, f"Started getting DASCH lightcurve for target {target.id}")
+
+                if action == 'target_applause':
+                    target.celery_id = celery_tasks.task_applause.delay(target.id).id
+                    target.state = 'acquiring APPLAUSE lightcurve'
+                    target.save()
+                    messages.success(request, f"Started getting APPLAUSE lightcurve for target {target.id}")
 
                 if action == 'target_everything':
                     target.celery_id = chain(
@@ -185,11 +199,13 @@ def targets(request, id=None):
                         celery_tasks.task_ztf.subtask(args=[target.id], immutable=True),
                         celery_tasks.task_asas.subtask(args=[target.id], immutable=True),
                         celery_tasks.task_tess.subtask(args=[target.id], immutable=True),
+                        celery_tasks.task_dasch.subtask(args=[target.id], immutable=True),
+                        celery_tasks.task_applause.subtask(args=[target.id], immutable=True),
                     ).apply_async().id
 
                     target.state = 'acquiring all possible data'
                     target.save()
-                    messages.success(request, f"Started doing everything for target {str(id)}")
+                    messages.success(request, f"Started doing everything for target {target.id}")
 
 
                 return HttpResponseRedirect(request.path_info)
@@ -226,13 +242,13 @@ def targets(request, id=None):
                     target.user = request.user
                     target.state = 'created'
                     target.save() # to populate target.id
-                    messages.success(request, f"New target {str(target.id)} created")
+                    messages.success(request, f"New target {target.id} created")
 
                     # Let's immediately start collecting basic info for it
                     target.celery_id = celery_tasks.task_info.delay(target.id).id
                     target.state = 'acquiring info'
                     target.save()
-                    messages.success(request, f"Started info collection for target {str(id)}")
+                    messages.success(request, f"Started info collection for target {target.id}")
 
                     return HttpResponseRedirect(reverse('targets', kwargs={'id': target.id}))
 

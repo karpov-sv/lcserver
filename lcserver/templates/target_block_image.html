@@ -1,5 +1,5 @@
 {% load filters %}
-<figure class="figure mb-2">
+<figure class="figure mb-2 p-0">
 
   {% if fits %}
 
@@ -29,7 +29,8 @@
   {% elif hips %}
 
     <!-- HiPS cutout -->
-    <img src="https://alasky.u-strasbg.fr/hips-image-services/hips2fits?hips={{ hips|urlencode }}&width={{ width }}&height={{ height }}&fov={{ fov }}&ra={{ ra }}&dec={{ dec }}&projection=TAN&coordsys=icrs&rotation_angle=0.0&format=jpg"/>
+    <img src="https://alasky.u-strasbg.fr/hips-image-services/hips2fits?hips={{ hips|urlencode }}&width={{ width }}&height={{ height }}&fov={{ fov }}&ra={{ ra }}&dec={{ dec }}&projection=TAN&coordsys=icrs&rotation_angle=0.0&format=jpg"
+         class="figure-img img-fluid rounded mb-0" />
     <figcaption class="figure-caption text-center mt-0 mb-3">
       <small>{{ hips }}</small>
     </figcaption>
@@ -37,7 +38,8 @@
   {% elif skyview %}
 
     <!-- SkyView cutout -->
-    <img src="https://skyview.gsfc.nasa.gov/current/cgi/runquery.pl?Survey={{ skyview|urlencode }}&Pixels={{ width }}&Size={{ fov }}&Position={{ ra }},{{ dec }}&scaling=histeq&LUT={{ "colortables/blue-white.bin"|urlencode }}&Return=GIF{% if catalog %}&Catalog={{ catalog|urlencode }}{% endif %}"/>
+    <img src="https://skyview.gsfc.nasa.gov/current/cgi/runquery.pl?Survey={{ skyview|urlencode }}&Pixels={{ width }}&Size={{ fov }}&Position={{ ra }},{{ dec }}&scaling=histeq&LUT={{ "colortables/blue-white.bin"|urlencode }}&Return=GIF{% if catalog %}&Catalog={{ catalog|urlencode }}{% endif %}"
+         class="figure-img img-fluid rounded mb-0" />
     <figcaption class="figure-caption text-center mt-0 mb-3">
       <small>{{ skyview }}</small>
     </figcaption>

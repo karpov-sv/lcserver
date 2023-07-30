@@ -122,6 +122,7 @@ def task_asas(self, id):
     target.complete()
     target.save()
 
+
 @shared_task(bind=True)
 def task_tess(self, id):
     target = models.Target.objects.get(id=id)
@@ -136,7 +137,65 @@ def task_tess(self, id):
     # Start processing
     try:
         processing.target_tess(config, basepath=basepath, verbose=log)
-        target.state = 'TESS lightcurve acquired'
+        target.state = 'TESS lightcurves acquired'
+    except:
+        import traceback
+        log("\nError!\n", traceback.format_exc())
+
+        target.state = 'failed'
+        target.celery_id = None
+
+    # End processing
+    target.celery_id = None
+    fix_config(config)
+    target.complete()
+    target.save()
+
+
+@shared_task(bind=True)
+def task_dasch(self, id):
+    target = models.Target.objects.get(id=id)
+    basepath = target.path()
+
+    config = target.config
+    config['target_name'] = target.name
+
+    log = partial(processing.print_to_file, logname=os.path.join(basepath, 'dasch.log'))
+    log(clear=True)
+
+    # Start processing
+    try:
+        processing.target_dasch(config, basepath=basepath, verbose=log)
+        target.state = 'DASCH lightcurve acquired'
+    except:
+        import traceback
+        log("\nError!\n", traceback.format_exc())
+
+        target.state = 'failed'
+        target.celery_id = None
+
+    # End processing
+    target.celery_id = None
+    fix_config(config)
+    target.complete()
+    target.save()
+
+
+@shared_task(bind=True)
+def task_applause(self, id):
+    target = models.Target.objects.get(id=id)
+    basepath = target.path()
+
+    config = target.config
+    config['target_name'] = target.name
+
+    log = partial(processing.print_to_file, logname=os.path.join(basepath, 'applause.log'))
+    log(clear=True)
+
+    # Start processing
+    try:
+        processing.target_applause(config, basepath=basepath, verbose=log)
+        target.state = 'APPLAUSE lightcurve acquired'
     except:
         import traceback
         log("\nError!\n", traceback.format_exc())
