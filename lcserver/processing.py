@@ -530,8 +530,9 @@ def target_tess(config, basepath=None, verbose=True, show=False):
 
     res = lk.search_lightcurve(SkyCoord(config.get('target_ra'), config.get('target_dec'), unit='deg'), radius=tess_sr*u.arcsec, mission='TESS')
 
-    # Filter out CDIPS products
-    res = res[res.author != 'CDIPS']
+    if len(res):
+        # Filter out CDIPS products
+        res = res[res.author != 'CDIPS']
 
     if not len(res):
         log("Warning: No TESS data found")
