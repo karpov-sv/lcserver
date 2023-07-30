@@ -13,3 +13,5 @@ astropy<5.3
 ztfquery
 george
 scipy
+skypatrol
+lightkurve
