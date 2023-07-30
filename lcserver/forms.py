@@ -48,6 +48,9 @@ class TargetInfoForm(forms.Form):
     name = forms.CharField(max_length=150, required=False, label="Target name or coordinates")
     title = forms.CharField(max_length=150, required=False, label="Optional title or comment")
 
+    g_minus_r = forms.FloatField(required=False, label="(g - r) color")
+    B_minus_V = forms.FloatField(required=False, label="(B - V) color")
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.helper = FormHelper()
@@ -58,6 +61,11 @@ class TargetInfoForm(forms.Form):
             Row(
                 Column('name', css_class="col-md-4"),
                 Column('title', css_class="col-md-8"),
+                css_class='align-items-end'
+            ),
+            Row(
+                Column('g_minus_r', css_class="col-md"),
+                Column('B_minus_V', css_class="col-md"),
                 css_class='align-items-end'
             ),
         )
@@ -80,4 +88,30 @@ class TargetZTFForm(forms.Form):
                 Column(InlineRadios('ztf_color_model', template='crispy_radioselect_inline.html'), css_class='form-group'),
                 css_class='align-items-end'
             ),
+        )
+
+
+class TargetASASForm(forms.Form):
+    form_type = forms.CharField(initial='target_asas', widget=forms.HiddenInput())
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.helper = FormHelper()
+        self.helper.form_tag = False
+        self.helper.field_template = 'crispy_field.html'
+        self.helper.layout = Layout(
+            'form_type',
+        )
+
+
+class TargetTESSForm(forms.Form):
+    form_type = forms.CharField(initial='target_tess', widget=forms.HiddenInput())
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.helper = FormHelper()
+        self.helper.form_tag = False
+        self.helper.field_template = 'crispy_field.html'
+        self.helper.layout = Layout(
+            'form_type',
         )

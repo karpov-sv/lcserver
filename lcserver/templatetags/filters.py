@@ -4,6 +4,7 @@ from django.template.defaultfilters import stringfilter
 import datetime
 import uuid
 import humanize
+import re
 
 import numpy as np
 
@@ -91,3 +92,16 @@ def to_sexadecimal_plus(value):
 @register.filter
 def to_sexadecimal_hours(value):
     return to_sexadecimal(value*1.0/15)
+
+@register.filter
+def grep(items, arg):
+    """List items that do not match the regular expression are removed."""
+    pattern = re.compile(arg)
+
+    items_out = [item for item in items if pattern.search(str(item))]
+
+    return items_out
+
+@register.filter
+def sort(items):
+    return sorted(items)

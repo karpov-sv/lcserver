@@ -108,12 +108,14 @@
 
     {% if user_may_submit %}
       <form action="" method="POST" class="mb-2">
-        <fieldset class="small" {% if task.celery_id %}disabled{% endif %}>
+        <fieldset class="small" {% if target.celery_id %}disabled{% endif %}>
           {% crispy form_target_info %}
 
           <button type="submit" name="action" value="target_info" class="btn btn-primary">Get info</button>
 
-          <button type="submit" name="action" value="cleanup_target" class="btn btn-danger"
+          <button type="submit" name="action" value="target_everything" class="btn btn-secondary">Run everything</button>
+
+          <button type="submit" name="action" value="cleanup_target" class="btn btn-danger ms-4"
                   title="Delete all processing results and configurations">Cleanup</button>
 
           <!-- Unsafe controls -->
@@ -134,6 +136,7 @@
       </form>
     {% endif %}
 
+
     <!-- Basic info -->
     <hr style="border-style: dotted">
     <div class="row mb-2">
@@ -143,12 +146,13 @@
         </div>
       {% endif %}
 
-      {% if 'target_ra' in target.config and 'target_dec' in target.config %}
-        <div class="col-md">
+      <div class="col-md">
+        {% if 'target_ra' in target.config and 'target_dec' in target.config %}
           <!-- include Aladin Lite CSS file in the head section of your page -->
           <link rel="stylesheet" href="https://aladin.u-strasbg.fr/AladinLite/api/v3/latest/aladin.min.css" />
           <!-- It seems Aladin uses jQuery 1.x, let's also load it and hope it will not break anything -->
-<script type="text/javascript" src="https://aladin.u-strasbg.fr/AladinLite/api/v3/latest/aladin.js" charset="utf-8"></script>
+          <script type="text/javascript" src="https://aladin.u-strasbg.fr/AladinLite/api/v3/latest/aladin.js" charset="utf-8"></script>
+          {% if not target.celery_id %}
           <script type="text/javascript">
            $(document).ready(function(){
              let aladin;
@@ -158,34 +162,53 @@
              });
            });
           </script>
-
+          {% endif %}
           <div>
-          <!-- insert this snippet where you want Aladin Lite viewer to appear and after the loading of jQuery -->
-          <div id="aladin-lite-div" style="min-height:400px"></div>
+            <!-- insert this snippet where you want Aladin Lite viewer to appear and after the loading of jQuery -->
+            <div id="aladin-lite-div"
+                 style="min-height:400px; min-width:400px; background-color: lightgray; display: flex; justify-content: center; align-items: center;">
+              Aladin Lite is loading...
+            </div>
           </div>
-          {% include "target_block_external.html" with ra=target.config.target_ra dec=target.config.target_dec %}
+          <small>
+            {% include "target_block_external.html" with ra=target.config.target_ra dec=target.config.target_dec %}
+          </small>
 
+        {% endif %}
+
+        <div class="row">
+          {% make_list 'galaxy_map.png' as list %}
+          {% for name in list %}
+            {% if name in files %}
+              <div class="col" style="max-width: 256px">
+                {% include "target_block_image.html" with image=name target=target only %}
+              </div>
+            {% endif %}
+          {% endfor %}
         </div>
 
-      {% endif %}
+      </div>
+
     </div>
 
+
+    <!-- ZTF -->
     {% if 'target_ra' in target.config and 'target_dec' in target.config %}
       <hr>
       <h3>Zwicky Transient Facility</h3>
 
       {% if user_may_submit %}
         <form action="" method="POST" class="mb-2">
-          <fieldset class="small" {% if task.celery_id %}disabled{% endif %}>
+          <fieldset class="small" {% if target.celery_id %}disabled{% endif %}>
             {% crispy form_target_ztf %}
             <button type="submit" name="action" value="target_ztf" class="btn btn-primary">Get ZTF lightcurve</button>
           </fieldset>
         </form>
       {% endif %}
 
-      <hr style="border-style: dotted">
-      <div class="row mb-2">
-        {% if 'ztf.log' in files %}
+      {% if 'ztf.log' in files %}
+        <hr style="border-style: dotted">
+        <div class="row mb-2">
           <div class="col-md">
             {% include "target_block_text.html" with file='ztf.log' %}
           </div>
@@ -207,16 +230,110 @@
               {% endfor %}
             </div>
           </div>
-
-        {% endif %}
-      </div>
-
-      {% if 'ztf_lc.png' in files %}
-        <div class="text-center">
-          {% include "target_block_image.html" with image='ztf_lc.png' target=target width="800px" noclick=1 only %}
         </div>
+
+        {% if 'ztf_lc.png' in files %}
+          <div class="text-center">
+            {% include "target_block_image.html" with image='ztf_lc.png' target=target width="800px" noclick=1 only %}
+          </div>
+        {% endif %}
+      {% endif %}
+    {% endif %}
+
+
+    <!-- ASAS-SN -->
+    {% if 'target_ra' in target.config and 'target_dec' in target.config %}
+      <hr>
+      <h3>ASAS-SN</h3>
+
+      {% if user_may_submit %}
+        <form action="" method="POST" class="mb-2">
+          <fieldset class="small" {% if target.celery_id %}disabled{% endif %}>
+            {% crispy form_target_asas %}
+            <button type="submit" name="action" value="target_asas" class="btn btn-primary">Get ASAS-SN lightcurve</button>
+          </fieldset>
+        </form>
       {% endif %}
 
+      {% if 'asas.log' in files %}
+        <hr style="border-style: dotted">
+        <div class="row mb-2">
+          <div class="col-md">
+            {% include "target_block_text.html" with file='asas.log' %}
+          </div>
+
+          <div class="col-md">
+            <div class="row">
+              {% make_list 'asas_color_mag.png' as list %}
+              {% for name in list %}
+                {% if name in files %}
+                  <div class="col" style="max-width: 256px">
+                    {% include "target_block_image.html" with image=name target=target only %}
+                  </div>
+                {% endif %}
+              {% endfor %}
+            </div>
+          </div>
+        </div>
+
+        {% if 'asas_lc.png' in files %}
+          <div class="text-center">
+            {% include "target_block_image.html" with image='asas_lc.png' target=target width="800px" noclick=1 only %}
+          </div>
+        {% endif %}
+      {% endif %}
+    {% endif %}
+
+
+    <!-- TESS -->
+    {% if 'target_ra' in target.config and 'target_dec' in target.config %}
+      <hr>
+      <h3>TESS</h3>
+
+      {% if user_may_submit %}
+        <form action="" method="POST" class="mb-2">
+          <fieldset class="small" {% if target.celery_id %}disabled{% endif %}>
+            {% crispy form_target_tess %}
+            <button type="submit" name="action" value="target_tess" class="btn btn-primary">Get TESS lightcurves</button>
+          </fieldset>
+        </form>
+      {% endif %}
+
+      {% if 'tess.log' in files %}
+        <hr style="border-style: dotted">
+        <div class="row mb-2">
+          <div class="col-md">
+            {% include "target_block_text.html" with file='tess.log' %}
+          </div>
+
+          <div class="col-md">
+            <div class="row">
+              <!-- Cutouts -->
+              <div class="col" style="max-width: 256px">
+                {% include "target_block_image.html" with skyview="TESS" catalog="J/ApJ/867/105/refcat2" ra=target.config.target_ra dec=target.config.target_dec width=256 fov=0.06 only %}
+              </div>
+              <div class="col" style="max-width: 256px">
+                {% include "target_block_image.html" with hips="DSS2/color" ra=target.config.target_ra dec=target.config.target_dec width=256 height=256 fov=0.06 only %}
+              </div>
+
+              {% make_list 'tess_color_mag.png' as list %}
+              {% for name in files|grep:"^tess_lc_.*png$"|sort %}
+                {% if name in files %}
+                  <div class="col" style="max-width: 256px">
+                    {% include "target_block_image.html" with image=name target=target only %}
+                  </div>
+                {% endif %}
+              {% endfor %}
+            </div>
+          </div>
+        </div>
+
+        {% if 'tess_lc.png' in files %}
+          <div class="text-center">
+            {% include "target_block_image.html" with image='tess_lc.png' target=target width="800px" noclick=1 only %}
+          </div>
+        {% endif %}
+      {% endif %}
     {% endif %}
 
   {% endif %}

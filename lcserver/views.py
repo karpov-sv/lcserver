@@ -21,6 +21,8 @@ from astropy.io import fits
 from matplotlib.figure import Figure
 from matplotlib.axes import Axes
 
+from celery import chain
+
 from . import forms
 from . import models
 from . import celery
@@ -100,6 +102,8 @@ def targets(request, id=None):
         all_forms['target_info'] = forms.TargetInfoForm(request.POST or None, initial = params)
 
         all_forms['target_ztf'] = forms.TargetZTFForm(request.POST or None, initial = target.config)
+        all_forms['target_asas'] = forms.TargetASASForm(request.POST or None, initial = target.config)
+        all_forms['target_tess'] = forms.TargetTESSForm(request.POST or None, initial = target.config)
 
         for name,form in all_forms.items():
             context['form_'+name] = form
@@ -163,6 +167,31 @@ def targets(request, id=None):
                     target.save()
                     messages.success(request, f"Started getting ZTF lightcurve for target {str(id)}")
 
+                if action == 'target_asas':
+                    target.celery_id = celery_tasks.task_asas.delay(target.id).id
+                    target.state = 'acquiring ASAS-SN lightcurve'
+                    target.save()
+                    messages.success(request, f"Started getting ASAS-SN lightcurve for target {str(id)}")
+
+                if action == 'target_tess':
+                    target.celery_id = celery_tasks.task_tess.delay(target.id).id
+                    target.state = 'acquiring TESS lightcurves'
+                    target.save()
+                    messages.success(request, f"Started getting TESS lightcurves for target {str(id)}")
+
+                if action == 'target_everything':
+                    target.celery_id = chain(
+                        celery_tasks.task_info.subtask(args=[target.id], immutable=True),
+                        celery_tasks.task_ztf.subtask(args=[target.id], immutable=True),
+                        celery_tasks.task_asas.subtask(args=[target.id], immutable=True),
+                        celery_tasks.task_tess.subtask(args=[target.id], immutable=True),
+                    ).apply_async().id
+
+                    target.state = 'acquiring all possible data'
+                    target.save()
+                    messages.success(request, f"Started doing everything for target {str(id)}")
+
+
                 return HttpResponseRedirect(request.path_info)
 
         # Display target
@@ -198,6 +227,12 @@ def targets(request, id=None):
                     target.state = 'created'
                     target.save() # to populate target.id
                     messages.success(request, f"New target {str(target.id)} created")
+
+                    # Let's immediately start collecting basic info for it
+                    target.celery_id = celery_tasks.task_info.delay(target.id).id
+                    target.state = 'acquiring info'
+                    target.save()
+                    messages.success(request, f"Started info collection for target {str(id)}")
 
                     return HttpResponseRedirect(reverse('targets', kwargs={'id': target.id}))
 

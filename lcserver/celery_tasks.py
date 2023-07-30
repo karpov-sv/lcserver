@@ -80,7 +80,63 @@ def task_ztf(self, id):
     # Start processing
     try:
         processing.target_ztf(config, basepath=basepath, verbose=log)
-        target.state = 'ztf lightcurve acquired'
+        target.state = 'ZTF lightcurve acquired'
+    except:
+        import traceback
+        log("\nError!\n", traceback.format_exc())
+
+        target.state = 'failed'
+        target.celery_id = None
+
+    # End processing
+    target.celery_id = None
+    fix_config(config)
+    target.complete()
+    target.save()
+
+@shared_task(bind=True)
+def task_asas(self, id):
+    target = models.Target.objects.get(id=id)
+    basepath = target.path()
+
+    config = target.config
+    config['target_name'] = target.name
+
+    log = partial(processing.print_to_file, logname=os.path.join(basepath, 'asas.log'))
+    log(clear=True)
+
+    # Start processing
+    try:
+        processing.target_asas(config, basepath=basepath, verbose=log)
+        target.state = 'ASAS-SN lightcurve acquired'
+    except:
+        import traceback
+        log("\nError!\n", traceback.format_exc())
+
+        target.state = 'failed'
+        target.celery_id = None
+
+    # End processing
+    target.celery_id = None
+    fix_config(config)
+    target.complete()
+    target.save()
+
+@shared_task(bind=True)
+def task_tess(self, id):
+    target = models.Target.objects.get(id=id)
+    basepath = target.path()
+
+    config = target.config
+    config['target_name'] = target.name
+
+    log = partial(processing.print_to_file, logname=os.path.join(basepath, 'tess.log'))
+    log(clear=True)
+
+    # Start processing
+    try:
+        processing.target_tess(config, basepath=basepath, verbose=log)
+        target.state = 'TESS lightcurve acquired'
     except:
         import traceback
         log("\nError!\n", traceback.format_exc())
