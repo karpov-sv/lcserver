@@ -2,6 +2,7 @@ from django.conf import settings
 
 import os, glob, shutil, re
 import requests
+from io import BytesIO
 
 from functools import partial
 
@@ -39,6 +40,7 @@ files_info = [
 ]
 
 files_cache = [
+    'ps1.vot',
     'ztf.vot',
     'asas.vot',
     'dasch.vot',
@@ -73,12 +75,18 @@ files_applause = [
     'applause_lc.png',
 ]
 
-cleanup_info = files_info + files_cache + files_ztf + files_asas + files_tess + files_dasch + files_applause
+files_combined = [
+    'combined.log',
+    'combined_lc.png',
+]
+
+cleanup_info = files_info + files_cache + files_ztf + files_asas + files_tess + files_dasch + files_applause + files_combined
 cleanup_ztf = files_ztf
 cleanup_asas = files_asas
 cleanup_tess = files_tess
 cleanup_dasch = files_dasch
 cleanup_applause = files_applause
+cleanup_combined = files_combined
 
 
 def cleanup_paths(paths, basepath=None):
@@ -223,6 +231,8 @@ def target_info(config, basepath=None, verbose=True, show=False):
         if star['rgeo']:
             log(f"Gaia DR3 distance is {star['rgeo']:.1f} [{star['b_rgeo']:.1f} ... {star['B_rgeo']:.1f}] pc")
 
+            log(f"Height above Galactic plane is {star['rgeo']*np.abs(np.sin(np.deg2rad(config.get('target_b')))):.1f} pc")
+
             # Galaxy map
             from matplotlib import image
             from PIL import Image
@@ -251,11 +261,68 @@ def target_info(config, basepath=None, verbose=True, show=False):
                 x = x0 - scale * r * np.cos(np.deg2rad(b)) * np.sin(np.deg2rad(l))
                 y = y0 - scale * r * np.cos(np.deg2rad(b)) * np.cos(np.deg2rad(l))
 
-                ax.scatter(x, y, marker='*', color='yellow', edgecolor='black', alpha=1, s=200, label=config.get('target_name'))
+                z = scale * r * np.sin(np.deg2rad(b))
+
+                ax.plot([x, x], [y-z, y], '.-', color='yellow', markeredgecolor='black')
+                ax.scatter(x, y-z, marker='*', color='yellow', edgecolor='black', alpha=1, s=200, label=config.get('target_name'), zorder=100)
+
                 ax.scatter(x0, y0, marker='o', color='lightgreen', edgecolor='black', s=30, label='Sun')
                 ax.legend()
 
             log("Galaxy map with object position saved to file:galaxy_map.png")
+
+    # Pan-STARRS DR2 warp photometry
+    log("\n---- Pan-STARRS DR2 warp photometry ----\n")
+
+    try:
+        res = requests.get('https://catalogs.mast.stsci.edu/api/v0.1/panstarrs/dr2/detection.csv', params={'ra':config['target_ra'], 'dec':config['target_dec'], 'radius':2/3600, 'format':'csv', 'columns':['obsTime', 'filterID', 'psfQfPerfect', 'psfFlux', 'psfFluxErr']})
+        ps1 = Table.read(BytesIO(res.content), format='csv')
+    except:
+        import traceback
+        traceback.print_exc()
+        log("Error while downloading the data")
+        ps1 = None
+
+    if ps1 and len(ps1):
+        ps1.sort('obsTime')
+        ps1 = ps1[ps1['psfQfPerfect'] > 0.95] # Quality cut
+
+        ps1['time'] = Time(ps1['obsTime'], format='mjd')
+        ps1['mjd'] = ps1['time'].mjd
+        ps1['mag'] = -2.5*np.log10(ps1['psfFlux']) + 8.90 # Janskys to AB?..
+        ps1['magerr'] = 2.5/np.log(10)*(ps1['psfFluxErr']/ps1['psfFlux'])
+
+        for fid,fn in [[1, 'g'], [2, 'r'], [3, 'i']]:
+            idx = ps1['filterID'] == fid
+
+            log(f"{fn}: {np.sum(idx)} good points")
+
+            ps1['mag_' + fn] = np.nan
+            ps1['mag_' + fn][idx] = ps1['mag'][idx]
+
+        # Color?..
+        ig,ir = np.where(ps1['filterID'] == 1)[0], np.where(ps1['filterID'] == 2)[0]
+        mg,mr = [],[]
+
+        for i in ig:
+            dist = np.abs(ps1['mjd'][i] - ps1['mjd'][ir])
+            if np.min(dist) < 1:
+                mg.append(ps1['mag'][i])
+                mr.append(ps1['mag'][ir[dist == np.min(dist)]][0])
+
+        if len(mg):
+            mg,mr = [np.array(_) for _ in (mg,mr)]
+
+            log(f"{len(mg)} quasi-simultaneous measurements")
+            log(f"(g - r) = {np.nanmean(mg-mr):.3f} +/- {np.nanstd(mg-mr):.3f}")
+
+        # Time cannot be serialized to VOTable
+        ps1[[_ for _ in ps1.columns if _ != 'time']].write(os.path.join(basepath, 'ps1.vot'), format='votable', overwrite=True)
+        log("Pan-STARRS DR2 warp photometry written to file:ps1.vot")
+
+    else:
+        log("No Pan-STARRS DR2 warp data found")
+
 
 # Some convenience code for gaussian process based smoothing of unevenly spaced 1d data
 import george
@@ -399,7 +466,8 @@ def target_ztf(config, basepath=None, verbose=True, show=False):
             break
 
     # Time cannot be serialized to VOTable
-    ztf[[_ for _ in ztf.columns if _ != 'time']].write(os.path.join(basepath, 'ztf.vot'), format='votable', overwrite=True)
+    ztf[[_ for _ in ztf.columns if _ != 'time']].write(os.path.join(basepath, 'ztf.vot'),
+                                                       format='votable', overwrite=True)
     log("ZTF data written to file:ztf.vot")
 
     # Plot lightcurve
@@ -555,7 +623,8 @@ def target_asas(config, basepath=None, verbose=True, show=False):
         ax.set_title(f"{config['target_name']} - ASAS-SN")
 
     # Time cannot be serialized to VOTable
-    asas[[_ for _ in asas.columns if _ != 'time']].write(os.path.join(basepath, 'asas.vot'), format='votable', overwrite=True)
+    asas[[_ for _ in asas.columns if _ != 'time']].write(os.path.join(basepath, 'asas.vot'),
+                                                         format='votable', overwrite=True)
     log("ASAS-SN data written to file:asas.vot")
 
 
@@ -695,7 +764,8 @@ def target_dasch(config, basepath=None, verbose=True, show=False):
         except:
             pass
 
-        dasch.write(os.path.join(basepath, 'cache', cachename), format='votable', overwrite=True)
+        dasch.write(os.path.join(basepath, 'cache', cachename),
+                    format='votable', overwrite=True)
 
     log(f"{len(dasch)} original data points")
 
@@ -717,7 +787,7 @@ def target_dasch(config, basepath=None, verbose=True, show=False):
     # dasch = dasch[dasch['magcal_magdep'] < dasch['limiting_mag_local'] - 0.2]
 
     dasch['mag_g'] = dasch['magcal_magdep']
-    dasch['mag_err'] = dasch['magcal_local_rms']
+    dasch['magerr'] = dasch['magcal_local_rms']
 
     log(f"{len(dasch)} data points after filtering")
     if not len(dasch):
@@ -727,7 +797,7 @@ def target_dasch(config, basepath=None, verbose=True, show=False):
     with plots.figure_saver(os.path.join(basepath, 'dasch_lc.png'), figsize=(12, 4), show=show) as fig:
         ax = fig.add_subplot(1, 1, 1)
 
-        ax.errorbar(dasch['time'].datetime, dasch['mag_g'], dasch['mag_err'], fmt='.', label='g')
+        ax.errorbar(dasch['time'].datetime, dasch['mag_g'], dasch['magerr'], fmt='.', label='g')
 
         ax.invert_yaxis()
         ax.grid(alpha=0.2)
@@ -738,7 +808,8 @@ def target_dasch(config, basepath=None, verbose=True, show=False):
         ax.set_title(f"{config['target_name']} - DASCH")
 
     # Time cannot be serialized to VOTable
-    dasch[[_ for _ in dasch.columns if _ != 'time']].write(os.path.join(basepath, 'dasch.vot'), format='votable', overwrite=True)
+    dasch[[_ for _ in dasch.columns if _ != 'time']].write(os.path.join(basepath, 'dasch.vot'),
+                                                           format='votable', overwrite=True)
     log("DASCH data written to file:dasch.vot")
 
 
@@ -805,7 +876,8 @@ def target_applause(config, basepath=None, verbose=True, show=False):
         except:
             pass
 
-        applause.write(os.path.join(basepath, 'cache', cachename), format='votable', overwrite=True)
+        applause.write(os.path.join(basepath, 'cache', cachename),
+                       format='votable', overwrite=True)
 
     log(f"{len(applause)} original data points")
 
@@ -817,26 +889,97 @@ def target_applause(config, basepath=None, verbose=True, show=False):
     applause.sort('time')
 
     BP_minus_RP = config.get('BP_minus_RP', np.nanmedian(applause['gaiaedr3_bp_rp']))
+    g_minus_r = config.get('g_minus_r', 0.0)
 
     log(f"Using BP - RP = {BP_minus_RP:.2f} for converting natural magnitudes to Gaia Gmag")
 
-    applause['mag_RP'] = applause['natmag'] - BP_minus_RP*applause['color_term']
-    applause['mag_err'] = applause['natmag_error']
+    RPmag = applause['natmag'] - BP_minus_RP*applause['color_term']
+    BPmag = RPmag + BP_minus_RP # assuming constant color
+    # Simple one-color fits based on Landolt standards
+    gmag = BPmag - np.polyval([-0.11445168305534677, -0.20378930951540578, 0.0499368274565225], g_minus_r)
+    rmag = BPmag - np.polyval([-0.13189831407771777, 0.8213890428750275, 0.04388161680503415], g_minus_r)
+
+    applause['mag_RP'] = RPmag
+    applause['magerr'] = applause['natmag_error']
+
+    applause['mag_g'] = gmag
+    applause['mag_r'] = rmag
 
     # Plot lightcurve
     with plots.figure_saver(os.path.join(basepath, 'applause_lc.png'), figsize=(12, 4), show=show) as fig:
         ax = fig.add_subplot(1, 1, 1)
 
-        ax.errorbar(applause['time'].datetime, applause['mag_RP'], applause['mag_err'], fmt='.', label='g')
+        ax.errorbar(applause['time'].datetime, applause['mag_g'], applause['magerr'], fmt='.', label='g')
 
         ax.invert_yaxis()
         ax.grid(alpha=0.2)
 
         # ax.legend()
-        ax.set_ylabel('RP')
+        ax.set_ylabel('g')
         ax.set_xlabel('Time')
         ax.set_title(f"{config['target_name']} - APPLAUSE")
 
     # Time cannot be serialized to VOTable
-    applause[[_ for _ in applause.columns if _ != 'time']].write(os.path.join(basepath, 'applause.vot'), format='votable', overwrite=True)
+    applause[[_ for _ in applause.columns if _ != 'time']].write(os.path.join(basepath, 'applause.vot'),
+                                                                 format='votable', overwrite=True)
     log("APPLAUSE data written to file:applause.vot")
+
+
+combined_lc_rules = {
+    'asas': {'name': 'ASAS-SN', 'filename': 'asas.vot', 'mag': 'mag_g', 'err': 'mag_err', 'filter': 'phot_filter', 'short': True},
+    'ztf': {'name': 'ZTF', 'filename': 'ztf.vot', 'mag': 'mag_g', 'err': 'magerr', 'filter': 'zg', 'short': True},
+    'ps1': {'name': 'Pan-STARRS', 'filename': 'ps1.vot', 'mag': 'mag_g', 'err': 'magerr', 'filter': 'g', 'short': True},
+    'dasch': {'name': 'DASCH', 'filename': 'dasch.vot', 'mag': 'mag_g', 'err': 'magerr'},
+    'applause': {'name': 'APPLAUSE', 'filename': 'applause.vot', 'mag': 'mag_g', 'err': 'magerr'},
+}
+
+# Get combined lightcurve
+def target_combined(config, basepath=None, verbose=True, show=False):
+    # Simple wrapper around print for logging in verbose mode only
+    log = (verbose if callable(verbose) else print) if verbose else lambda *args,**kwargs: None
+
+    # Cleanup stale plots
+    cleanup_paths(cleanup_combined, basepath=basepath)
+
+    for short,lcname in [[True, 'combined_short_lc.png'], [False, 'combined_lc.png']]:
+        log(f"\n---- Plotting {'short ' if short else ''}lightcurve ----\n")
+
+        with plots.figure_saver(os.path.join(basepath, lcname), figsize=(12, 4), show=show) as fig:
+            ax = fig.add_subplot(1, 1, 1)
+
+            for name,rules in combined_lc_rules.items():
+                if short and not rules.get('short'):
+                    continue
+
+                fullname = os.path.join(basepath, rules['filename'])
+                if os.path.exists(fullname):
+                    log(f"Reading {rules['name']} data from file:{rules['filename']}")
+                    data = Table.read(fullname)
+
+                    data['time'] = Time(data['mjd'], format='mjd')
+
+                    x = data['time'].datetime
+                    y = data[rules.get('mag', 'mag_g')]
+                    dy = data[rules.get('err', 'magerr')]
+
+                    if 'filter' in rules and rules['filter'] in data.colnames:
+                        fnames = data[rules['filter']]
+                    else:
+                        fnames = np.repeat(rules.get('filter', ''), len(data))
+
+                    for fn in np.unique(fnames):
+                        idx = fnames == fn
+
+                        label = rules['name']
+                        if fn:
+                            label += ' ' + fn
+
+                        ax.errorbar(x[idx], y[idx], dy[idx], fmt='.', label=label)
+
+            ax.invert_yaxis()
+            ax.grid(alpha=0.2)
+
+            ax.legend()
+            ax.set_ylabel('g magnitude')
+            ax.set_xlabel('Time')
+            ax.set_title(f"{config['target_name']}")

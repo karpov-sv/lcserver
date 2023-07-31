@@ -141,3 +141,16 @@ class TargetAPPLAUSEForm(forms.Form):
         self.helper.layout = Layout(
             'form_type',
         )
+
+
+class TargetCombinedForm(forms.Form):
+    form_type = forms.CharField(initial='target_combined', widget=forms.HiddenInput())
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.helper = FormHelper()
+        self.helper.form_tag = False
+        self.helper.field_template = 'crispy_field.html'
+        self.helper.layout = Layout(
+            'form_type',
+        )

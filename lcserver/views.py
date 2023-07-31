@@ -106,6 +106,7 @@ def targets(request, id=None):
         all_forms['target_tess'] = forms.TargetTESSForm(request.POST or None, initial = target.config)
         all_forms['target_dasch'] = forms.TargetDASCHForm(request.POST or None, initial = target.config)
         all_forms['target_applause'] = forms.TargetAPPLAUSEForm(request.POST or None, initial = target.config)
+        all_forms['target_combined'] = forms.TargetCombinedForm(request.POST or None, initial = target.config)
 
         for name,form in all_forms.items():
             context['form_'+name] = form
@@ -193,6 +194,12 @@ def targets(request, id=None):
                     target.save()
                     messages.success(request, f"Started getting APPLAUSE lightcurve for target {target.id}")
 
+                if action == 'target_combined':
+                    target.celery_id = celery_tasks.task_combined.delay(target.id).id
+                    target.state = 'acquiring combined lightcurve'
+                    target.save()
+                    messages.success(request, f"Started getting combined lightcurve for target {target.id}")
+
                 if action == 'target_everything':
                     target.celery_id = chain(
                         celery_tasks.task_info.subtask(args=[target.id], immutable=True),
@@ -201,6 +208,7 @@ def targets(request, id=None):
                         celery_tasks.task_tess.subtask(args=[target.id], immutable=True),
                         celery_tasks.task_dasch.subtask(args=[target.id], immutable=True),
                         celery_tasks.task_applause.subtask(args=[target.id], immutable=True),
+                        celery_tasks.task_combined.subtask(args=[target.id], immutable=True),
                     ).apply_async().id
 
                     target.state = 'acquiring all possible data'

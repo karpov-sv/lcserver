@@ -60,6 +60,9 @@ def task_info(self, id):
         target.state = 'failed'
         target.celery_id = None
 
+        # We should raise it in order to break the chain (as the rest does depend on this stage)
+        raise RuntimeError('failed')
+
     # End processing
     target.celery_id = None
     fix_config(config)
@@ -196,6 +199,35 @@ def task_applause(self, id):
     try:
         processing.target_applause(config, basepath=basepath, verbose=log)
         target.state = 'APPLAUSE lightcurve acquired'
+    except:
+        import traceback
+        log("\nError!\n", traceback.format_exc())
+
+        target.state = 'failed'
+        target.celery_id = None
+
+    # End processing
+    target.celery_id = None
+    fix_config(config)
+    target.complete()
+    target.save()
+
+
+@shared_task(bind=True)
+def task_combined(self, id):
+    target = models.Target.objects.get(id=id)
+    basepath = target.path()
+
+    config = target.config
+    config['target_name'] = target.name
+
+    log = partial(processing.print_to_file, logname=os.path.join(basepath, 'combined.log'))
+    log(clear=True)
+
+    # Start processing
+    try:
+        processing.target_combined(config, basepath=basepath, verbose=log)
+        target.state = 'Combined lightcurve acquired'
     except:
         import traceback
         log("\nError!\n", traceback.format_exc())
