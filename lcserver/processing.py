@@ -153,7 +153,7 @@ def target_info(config, basepath=None, verbose=True, show=False):
 
     res = sim.query_region(target, radius=5*u.arcsec)
 
-    if not len(res):
+    if not res or not len(res):
         log("No SIMBAD objects within 5 arcsec")
     else:
         for r in res:
@@ -284,8 +284,10 @@ def target_info(config, basepath=None, verbose=True, show=False):
         ps1 = None
 
     if ps1 and len(ps1):
-        ps1.sort('obsTime')
         ps1 = ps1[ps1['psfQfPerfect'] > 0.95] # Quality cut
+
+    if ps1 and len(ps1):
+        ps1.sort('obsTime')
 
         ps1['time'] = Time(ps1['obsTime'], format='mjd')
         ps1['mjd'] = ps1['time'].mjd
