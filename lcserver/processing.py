@@ -308,7 +308,7 @@ def target_info(config, basepath=None, verbose=True, show=False):
 
         for i in ig:
             dist = np.abs(ps1['mjd'][i] - ps1['mjd'][ir])
-            if np.min(dist) < 1:
+            if len(dist) and np.min(dist) < 1:
                 mg.append(ps1['mag'][i])
                 mr.append(ps1['mag'][ir[dist == np.min(dist)]][0])
 
