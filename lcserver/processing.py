@@ -47,6 +47,8 @@ files_cache = [
     'applause.vot',
 ]
 
+files_cache += [_.replace('.vot', '.txt') for _ in files_cache if '.vot' in _]
+
 files_ztf = [
     'ztf.log',
     'ztf_lc.png',
@@ -238,8 +240,10 @@ def target_info(config, basepath=None, verbose=True, show=False):
             from PIL import Image
             import urllib
 
-            url = 'https://upload.wikimedia.org/wikipedia/commons/thumb/1/12/Artist%27s_impression_of_the_Milky_Way_%28updated_-_annotated%29.jpg/1024px-Artist%27s_impression_of_the_Milky_Way_%28updated_-_annotated%29.jpg'
-            galaxy_image = np.array(Image.open(urllib.request.urlopen(url)))
+            # url = 'https://upload.wikimedia.org/wikipedia/commons/thumb/1/12/Artist%27s_impression_of_the_Milky_Way_%28updated_-_annotated%29.jpg/1024px-Artist%27s_impression_of_the_Milky_Way_%28updated_-_annotated%29.jpg'
+            # galaxy_image = np.array(Image.open(urllib.request.urlopen(url)))
+            path = '1024px-Artist\'s_impression_of_the_Milky_Way_(updated_-_annotated).jpg'
+            galaxy_image = np.array(Image.open(path))
 
             # Plot Galaxy map
             with plots.figure_saver(os.path.join(basepath, 'galaxy_map.png'), figsize=(8, 8), show=show) as fig:
@@ -320,7 +324,9 @@ def target_info(config, basepath=None, verbose=True, show=False):
 
         # Time cannot be serialized to VOTable
         ps1[[_ for _ in ps1.columns if _ != 'time']].write(os.path.join(basepath, 'ps1.vot'), format='votable', overwrite=True)
+        ps1[[_ for _ in ps1.columns if _ != 'time']].write(os.path.join(basepath, 'ps1.txt'), format='ascii.commented_header', overwrite=True)
         log("Pan-STARRS DR2 warp photometry written to file:ps1.vot")
+        log("Pan-STARRS DR2 warp photometry written to file:ps1.txt")
 
     else:
         log("No Pan-STARRS DR2 warp data found")
@@ -470,7 +476,10 @@ def target_ztf(config, basepath=None, verbose=True, show=False):
     # Time cannot be serialized to VOTable
     ztf[[_ for _ in ztf.columns if _ != 'time']].write(os.path.join(basepath, 'ztf.vot'),
                                                        format='votable', overwrite=True)
+    ztf[[_ for _ in ztf.columns if _ != 'time']].write(os.path.join(basepath, 'ztf.txt'),
+                                                       format='ascii.commented_header', overwrite=True)
     log("ZTF data written to file:ztf.vot")
+    log("ZTF data written to file:ztf.txt")
 
     # Plot lightcurve
     with plots.figure_saver(os.path.join(basepath, 'ztf_lc.png'), figsize=(12, 8), show=show) as fig:
@@ -627,7 +636,10 @@ def target_asas(config, basepath=None, verbose=True, show=False):
     # Time cannot be serialized to VOTable
     asas[[_ for _ in asas.columns if _ != 'time']].write(os.path.join(basepath, 'asas.vot'),
                                                          format='votable', overwrite=True)
+    asas[[_ for _ in asas.columns if _ != 'time']].write(os.path.join(basepath, 'asas.txt'),
+                                                         format='ascii.commented_header', overwrite=True)
     log("ASAS-SN data written to file:asas.vot")
+    log("ASAS-SN data written to file:asas.txt")
 
 
 import lightkurve as lk
@@ -708,8 +720,11 @@ def target_tess(config, basepath=None, verbose=True, show=False):
                     lc1.remove_column('time')
 
                     votname = os.path.splitext(lcname)[0] + '.vot'
+                    txtname = os.path.splitext(lcname)[0] + '.txt'
                     lc1.write(os.path.join(basepath, votname), format='votable', overwrite=True)
+                    lc1.write(os.path.join(basepath, txtname), format='ascii.commented_header', overwrite=True)
                     log(f"    Sector lightcurve written to file:{votname}")
+                    log(f"    Sector lightcurve written to file:{txtname}")
 
                     is_done = True
                     break
@@ -812,7 +827,10 @@ def target_dasch(config, basepath=None, verbose=True, show=False):
     # Time cannot be serialized to VOTable
     dasch[[_ for _ in dasch.columns if _ != 'time']].write(os.path.join(basepath, 'dasch.vot'),
                                                            format='votable', overwrite=True)
+    dasch[[_ for _ in dasch.columns if _ != 'time']].write(os.path.join(basepath, 'dasch.txt'),
+                                                           format='ascii.commented_header', overwrite=True)
     log("DASCH data written to file:dasch.vot")
+    log("DASCH data written to file:dasch.txt")
 
 
 import pyvo as vo
@@ -924,7 +942,10 @@ def target_applause(config, basepath=None, verbose=True, show=False):
     # Time cannot be serialized to VOTable
     applause[[_ for _ in applause.columns if _ != 'time']].write(os.path.join(basepath, 'applause.vot'),
                                                                  format='votable', overwrite=True)
+    applause[[_ for _ in applause.columns if _ != 'time']].write(os.path.join(basepath, 'applause.txt'),
+                                                                 format='ascii.commented_header', overwrite=True)
     log("APPLAUSE data written to file:applause.vot")
+    log("APPLAUSE data written to file:applause.txt")
 
 
 combined_lc_rules = {
