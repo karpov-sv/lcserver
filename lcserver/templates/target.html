@@ -67,6 +67,9 @@
     </div>
     {% endif %}
     <div>
+      <a href="{% url 'target_files' id=target.id %}" class="text-decoration-none text-body" title="Browse task files">
+        <i class="fa fa-folder-open"></i>
+      </a>
       Target {{ target.id }} created by <span class="text-primary fw-bold">{{ target.user|user }}</span> on {{ target.created|timestamp }} - {{ target.created|naturaltime }}
       {% if not user_may_submit %}
         <br>

@@ -1,5 +1,7 @@
 from django import template
 from django.template.defaultfilters import stringfilter
+from django.template.defaultfilters import stringfilter
+from django.utils.safestring import mark_safe
 
 import datetime
 import uuid
@@ -93,6 +95,7 @@ def to_sexadecimal_plus(value):
 def to_sexadecimal_hours(value):
     return to_sexadecimal(value*1.0/15)
 
+
 @register.filter
 def grep(items, arg):
     """List items that do not match the regular expression are removed."""
@@ -102,6 +105,44 @@ def grep(items, arg):
 
     return items_out
 
+
 @register.filter
 def sort(items):
     return sorted(items)
+
+
+from astropy.table import Table
+
+@register.filter
+def show_table(table, maxrows=100):
+    contents = ""
+
+    # Ensure it is a Table
+    table = Table(table)
+
+    try:
+        if len(table) > maxrows:
+            table = table[:maxrows]
+
+        for col in table.itercols():
+            if col.info.dtype.kind == 'f':
+                if col.name in ['ra', 'dec', 'RAJ2000', 'DEJ2000']:
+                    col.info.format = '.5f'
+                elif col.name in ['x', 'y']:
+                    col.info.format = '.2f'
+                else:
+                    col.info.format = '.4g'
+            elif col.name in ['flags']:
+                col.info.format = '#x'
+
+        contents = "\n".join(table.pformat_all(
+            html=True,
+            tableclass="table table-sm table-bordered text-center",
+            tableid='table_targets',
+        ))
+    except:
+        import traceback
+        traceback.print_exc()
+        pass
+
+    return mark_safe(contents)

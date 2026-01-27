@@ -44,6 +44,182 @@ def sanitize_path(path):
     return path
 
 
+def make_breadcrumb(path, base="Files"):
+    """Create breadcrumb navigation from path"""
+    parts = []
+
+    if path:
+        components = path.split(os.sep)
+        accumulated = ""
+
+        for component in components:
+            if accumulated:
+                accumulated = os.path.join(accumulated, component)
+            else:
+                accumulated = component
+
+            parts.append({'path': accumulated, 'name': component})
+
+    return [{'path': '.', 'name': base}] + parts
+
+
+def list_files(request, path='', base=settings.TARGETS_PATH):
+    """Browse files in a directory with support for viewing different file types"""
+    context = {}
+
+    path = sanitize_path(path)
+    fullpath = os.path.join(base, path)
+
+    context['path'] = path
+    context['breadcrumb'] = make_breadcrumb(path, base="Files")
+
+    if os.path.isfile(fullpath):
+        # Display a file
+        context['mime'] = magic.from_file(filename=fullpath, mime=True)
+        context['magic_info'] = magic.from_file(filename=fullpath)
+        context['stat'] = os.stat(fullpath)
+        context['size'] = context['stat'].st_size
+        context['time'] = Time(context['stat'].st_mtime, format='unix')
+
+        context['mode'] = 'download'
+
+        # VOTable/Parquet files
+        if path.endswith('.vot') or path.endswith('.parquet'):
+            try:
+                context['table'] = Table.read(fullpath)
+                context['mode'] = 'table'
+            except:
+                pass
+
+        # FITS files
+        elif 'fits' in context['mime'] or 'FITS' in context['magic_info'] or os.path.splitext(path)[1].lower().startswith('.fit'):
+            context['mode'] = 'fits'
+
+            try:
+                hdus = fits.open(fullpath)
+                context['fitsfile'] = hdus
+            except:
+                import traceback
+                traceback.print_exc()
+                pass
+
+        # Text files
+        elif 'text' in context['mime']:
+            try:
+                with open(fullpath, 'r') as f:
+                    context['contents'] = f.read()
+                context['mode'] = 'text'
+            except:
+                pass
+
+        # Image files
+        elif 'image' in context['mime']:
+            context['mode'] = 'image'
+
+        return TemplateResponse(request, 'files.html', context=context)
+
+    elif os.path.isdir(fullpath):
+        # List files in directory
+        files = []
+
+        for entry in os.scandir(fullpath):
+            # Check for broken symlinks
+            if not os.path.exists(os.path.join(fullpath, entry.name)):
+                continue
+
+            stat = entry.stat()
+
+            elem = {
+                'path': os.path.join(path, entry.name),
+                'name': entry.name,
+                'stat': stat,
+                'size': stat.st_size,
+                'time': Time(stat.st_mtime, format='unix'),
+                'mime': mimetypes.guess_type(entry.name)[0],
+                'is_dir': entry.is_dir(),
+            }
+
+            if elem['is_dir']:
+                elem['type'] = 'dir'
+            elif elem['mime'] and 'fits' in elem['mime']:
+                elem['type'] = 'fits'
+            elif os.path.splitext(entry.name)[1].lower().startswith('.fit'):
+                elem['type'] = 'fits'
+            elif elem['mime'] and 'image' in elem['mime']:
+                elem['type'] = 'image'
+            elif elem['mime'] and 'text' in elem['mime']:
+                elem['type'] = 'text'
+            else:
+                elem['type'] = 'file'
+
+            files.append(elem)
+
+        files = sorted(files, key=lambda _: _.get('name'))
+
+        # Add parent directory link if not at root
+        if len(context['breadcrumb']) > 1:
+            files = [{'path': os.path.dirname(path), 'name': '..', 'is_dir': True, 'type':'up'}] + files
+
+        context['files'] = files
+        context['mode'] = 'list'
+
+        return TemplateResponse(request, 'files.html', context=context)
+
+    return HttpResponse("Path not found", status=404)
+
+
+def preview(request, path, width=None, minwidth=256, maxwidth=1024, base=settings.TARGETS_PATH):
+    """Generate preview image for FITS files"""
+    path = sanitize_path(path)
+    fullpath = os.path.join(base, path)
+
+    if not os.path.isfile(fullpath):
+        return HttpResponse("File not found", status=404)
+
+    # Try to open as FITS
+    try:
+        with fits.open(fullpath) as hdus:
+            # Find first image HDU
+            image = None
+            for hdu in hdus:
+                if hdu.data is not None and len(hdu.data.shape) >= 2:
+                    image = hdu.data
+                    break
+
+            if image is None:
+                return HttpResponse("No image data found in FITS", status=404)
+
+            # Create figure
+            fig = Figure(figsize=(8, 8))
+            ax = fig.add_subplot(111)
+
+            # Display image with auto-scaling
+            from matplotlib.colors import Normalize
+            import numpy as np
+
+            # Compute percentile scaling
+            vmin = np.percentile(image[np.isfinite(image)], 1)
+            vmax = np.percentile(image[np.isfinite(image)], 99)
+
+            ax.imshow(image, origin='lower', cmap='gray',
+                     norm=Normalize(vmin=vmin, vmax=vmax))
+            ax.set_xlabel('X')
+            ax.set_ylabel('Y')
+            ax.set_title(os.path.basename(path))
+
+            # Render to response
+            buf = io.BytesIO()
+            fig.savefig(buf, format='png', dpi=100, bbox_inches='tight')
+            buf.seek(0)
+
+            return HttpResponse(buf.getvalue(), content_type='image/png')
+
+    except:
+        import traceback
+        traceback.print_exc()
+        return HttpResponse("Error generating preview", status=500)
+
+
 def download(request, path, attachment=True, base=settings.TARGETS_PATH):
     path = sanitize_path(path)
 
@@ -52,7 +228,7 @@ def download(request, path, attachment=True, base=settings.TARGETS_PATH):
     if os.path.isfile(fullpath):
         return FileResponse(open(os.path.abspath(fullpath), 'rb'), as_attachment=attachment)
     else:
-        return "No such file"
+        return HttpResponse("No such file", status=404)
 
 
 def target_download(request, id=None, path='', **kwargs):
@@ -66,6 +242,30 @@ def target_preview(request, id=None, path='', **kwargs):
     target = models.Target.objects.get(id=id)
 
     return preview(request, path, base=target.path(), **kwargs)
+
+
+@login_required
+def target_files(request, id, path=''):
+    """Browse files within a target folder using the generic file browser"""
+    target = models.Target.objects.get(id=id)
+
+    # Permission check: owner or staff
+    if not request.user.is_authenticated or not (
+        request.user.is_staff or request.user == target.user
+    ):
+        return HttpResponse("You don't have permission to view this target", status=403)
+
+    # Call generic list_files with target base path
+    response = list_files(request, path=path, base=target.path())
+
+    # Customize context for target-specific rendering
+    if hasattr(response, 'context_data'):
+        context = response.context_data
+        context['target'] = target
+        context['target_id'] = id
+        context['is_target_browser'] = True
+
+    return response
 
 
 def targets(request, id=None):

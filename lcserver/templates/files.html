@@ -1,0 +1,220 @@
+{% extends "template.html" %}
+
+{% load filters %}
+{% load humanize %}
+
+{% block ptitle %}{% if path %}{{ path }}{% else %}Files{% endif %} : LCServer{% endblock %}
+
+{% block title %}File browser{% endblock %}
+
+{% block content %}
+
+  {% if breadcrumb %}
+    <!-- Display breadcrumb with clickable path elements -->
+    <nav aria-label="breadcrumb">
+      <ol class="breadcrumb">
+        {% if is_target_browser %}
+          <li class="breadcrumb-item">
+            <a href="{% url 'targets' id=target_id %}"><span class="fa fa-angle-left text-body"/></a>
+            <a href="{% url 'targets' id=target_id %}">Target {{ target_id }}: {{ target.name }}</a>
+          </li>
+        {% endif %}
+
+        {% for bread in breadcrumb %}
+          <li class="breadcrumb-item {% if forloop.last %}active{% endif %}">
+            {% if bread.path and not forloop.last %}
+              {% if is_target_browser %}
+                <a href="{% url 'target_files' id=target_id path=bread.path %}">{{ bread.name }}</a>
+              {% else %}
+                <a href="#">{{ bread.name }}</a>
+              {% endif %}
+            {% else %}
+              {{ bread.name }}
+            {% endif %}
+          </li>
+        {% endfor %}
+      </ol>
+    </nav>
+  {% endif %}
+
+  {% if mode == 'list' %}
+    <!-- Display directory listing -->
+
+    {% if not files %}
+      <p class="text-muted">Empty directory</p>
+    {% else %}
+      <p class="text-muted">
+        {{ files|length }} {% if files|length == 1 %}entry{% else %}entries{% endif %}
+      </p>
+
+      <div class="list-group mb-4">
+
+        <div class="list-group-item d-flex bg-light">
+          <span class="ms-auto me-auto"><strong>Filename</strong></span>
+          <span class="pull-right me-4"><strong>Size</strong></span>
+        </div>
+
+        {% for file in files %}
+          <div class="list-group-item d-flex align-items-center">
+            <i class="me-2 fa fa-{% if file.type == 'dir' %}folder-open-o{% elif file.type == 'up' %}level-up{% elif file.type == 'text' %}file-text-o{% elif file.type == 'file' %}file-o{% else %}file-image-o{% endif %}"></i>
+
+            {% if is_target_browser %}
+              <a href='{% url 'target_files' id=target_id path=file.path %}' class="text-decoration-none text-body">
+                {{ file.name }}
+              </a>
+            {% else %}
+              <a href='#' class="text-decoration-none text-body">
+                {{ file.name }}
+              </a>
+            {% endif %}
+
+            {% if file.type != 'dir' and file.type != 'up' %}
+              <span class="ms-auto">{{ file.size|filesizeformat }}</span>
+
+              <!-- Download button -->
+              {% if is_target_browser and False %}
+                <a href="{% url 'target_download' id=target_id path=file.path %}" class="btn btn-sm btn-outline-primary ms-2" title="Download">
+                  <i class="fa fa-download"></i>
+                </a>
+              {% endif %}
+            {% endif %}
+          </div>
+
+        {% endfor %}
+
+      </div>
+
+    {% endif %}
+
+  {% else %}
+    <!-- Display single file - starts with some metadata -->
+    <div class="card mb-3">
+      <div class="card-header">
+        <strong>File Information</strong>
+      </div>
+      <div class="card-body">
+        <dl class="row mb-0">
+          <dt class="col-sm-2">Path:</dt>
+          <dd class="col-sm-10">
+            {% if is_target_browser %}
+              <a href="{% url 'target_download' id=target_id path=path %}"><i class="fa fa-download"></i> {{ path }}</a>
+            {% else %}
+              <code>{{ path }}</code>
+            {% endif %}
+          </dd>
+
+          <dt class="col-sm-2">Size:</dt>
+          <dd class="col-sm-10">{{ stat.st_size|filesizeformat }} ({{ stat.st_size|intcomma }} bytes)</dd>
+
+          <dt class="col-sm-2">Modified:</dt>
+          <dd class="col-sm-10">{{ time.iso }} ({{ time.datetime|naturaltime }})</dd>
+
+          <dt class="col-sm-2">Type:</dt>
+          <dd class="col-sm-10"><code>{{ mime }}</code></dd>
+        </dl>
+      </div>
+    </div>
+
+    {% if mode == 'text' %}
+      <!-- Display text file contents -->
+
+      <div class="card mb-3">
+        <div class="card-header">
+          <strong>File Contents</strong>
+        </div>
+        <div class="card-body">
+          <pre class="mb-0"><code>{{ contents }}</code></pre>
+        </div>
+      </div>
+
+    {% elif mode == 'table' %}
+      <!-- Display table -->
+
+      <h3>
+        Tabular data with {{ table|length }} row(s)
+      </h3>
+
+      {% if table|length > 100 %}
+        <p class="text-muted">
+          First 100 rows are shown below
+        </p>
+      {% endif %}
+
+      <!-- <div class="overflow-auto mb-2"> -->
+      <pre style="white-space: pre-wrap;">{{ table|show_table:100 }}</pre>
+      <!-- </div> -->
+
+    {% elif mode == 'image' %}
+      <!-- Display image inline -->
+
+      <div class="text-center mb-3">
+        {% if is_target_browser %}
+          <img src="{% url 'target_view' id=target_id path=path %}" class="img-fluid img-thumbnail" alt="{{ path }}" style="max-height: 800px;"/>
+        {% else %}
+          <img src="#" class="img-fluid img-thumbnail" alt="{{ path }}" style="max-height: 800px;"/>
+        {% endif %}
+      </div>
+
+    {% elif mode == 'fits' %}
+      <!-- Display FITS inline -->
+
+      <div class="mb-4">
+        <h3>FITS File</h3>
+
+        {% if fitsfile %}
+          <div class="card mb-3">
+            <div class="card-header">
+              <strong>HDU List</strong>
+            </div>
+            <div class="card-body">
+              <p>{{ fitsfile|length }} HDU{% if fitsfile|length != 1 %}s{% endif %}</p>
+
+              {% for hdu in fitsfile %}
+                <div class="mb-3">
+                  <h5>HDU {{ forloop.counter0 }}: {{ hdu.name }}</h5>
+                  {% if hdu.header %}
+                    <p><strong>Header:</strong></p>
+                    <pre class="small" style="max-height: 300px; overflow-y: auto;"><code>{{ hdu.header|pprint }}</code></pre>
+                  {% endif %}
+                  {% if hdu.data is not None %}
+                    <p><strong>Data shape:</strong> {{ hdu.data.shape }}</p>
+                    <p><strong>Data type:</strong> {{ hdu.data.dtype }}</p>
+                  {% endif %}
+                </div>
+              {% endfor %}
+            </div>
+          </div>
+
+          <!-- Preview image if available -->
+          {% if is_target_browser %}
+            <div class="text-center mb-3">
+              <img src="{% url 'target_preview' id=target_id path=path %}"
+                   class="img-fluid img-thumbnail"
+                   alt="{{ path }}"
+                   style="max-height: 600px;"
+                   onerror="this.style.display='none'; this.nextElementSibling.style.display='block';" />
+              <div style="display:none;" class="alert alert-info">Preview not available for this FITS file</div>
+            </div>
+          {% endif %}
+        {% else %}
+          <p class="text-muted">Unable to read FITS file</p>
+        {% endif %}
+      </div>
+
+    {% else %}
+      <!-- Download link for other file types -->
+
+      <div class="alert alert-info">
+        <strong>Preview not available.</strong>
+        {% if is_target_browser %}
+          <a href="{% url 'target_download' id=target_id path=path %}" class="alert-link">Download file</a>
+        {% else %}
+          Download to view.
+        {% endif %}
+      </div>
+
+    {% endif %}
+
+  {% endif %}
+
+{% endblock %}

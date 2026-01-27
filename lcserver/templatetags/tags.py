@@ -18,7 +18,7 @@ register = template.Library()
 
 def target_file_link(m, target=None):
     name = m.group(2)
-    url = reverse('target_view', kwargs={'id':target.id, 'path':name})
+    url = reverse('target_files', kwargs={'id':target.id, 'path':name})
 
     return r"<a href='" + url + "'>" + name + r"</a>"
 

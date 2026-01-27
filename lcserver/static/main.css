@@ -125,3 +125,12 @@
 /* .navbar { */
 /*     background: linear-gradient(0deg, rgba(100,100,100,0.1) 0%, rgba(255,255,255,0.2) 30%); */
 /* } */
+
+.table thead th {
+  background-color: var(--bs-secondary-bg);
+}
+
+/* Hide required field asterisk in Crispy forms */
+span.asteriskField {
+  display: none;
+}
