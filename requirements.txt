@@ -9,9 +9,10 @@ django-celery-results
 redis
 humanize
 dill
-astropy<5.3
+astropy
 ztfquery
 george
 scipy
 skypatrol
 lightkurve
+watchdog

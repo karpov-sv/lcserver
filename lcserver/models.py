@@ -17,6 +17,8 @@ class Target(models.Model):
     state = models.CharField(max_length=50, blank=False, default='initial') # State of the task
 
     celery_id = models.CharField(max_length=50, blank=True, null=True, default=None, editable=False) # Celery task ID, when running
+    celery_chain_ids = models.JSONField(default=list, blank=True, editable=False) # List of all task IDs in the chain
+    celery_pid = models.IntegerField(blank=True, null=True, default=None, editable=False) # Process ID of running task
 
     user =  models.ForeignKey(User, on_delete=models.CASCADE)
 

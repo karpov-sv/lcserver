@@ -3,12 +3,12 @@
 {% load filters %}
 {% load wrapwith %}
 
-{% block ptitle %}Queue : STDWeb{% endblock %}
+{% block ptitle %}Queue : LCServer{% endblock %}
 
 {% block title %}
-  {% if task %}
+  {% if ctask %}
     Queued task ID
-    {{ task.id }}
+    {{ ctask.id }}
   {% else %}
     Queued tasks
   {% endif %}
@@ -16,20 +16,34 @@
 
 {% block content %}
 
-  {% if not task %}
+  {% if not ctask %}
     <div class="list-group mb-4">
-      {% for task in queue %}
-        <a href="{% url 'queue' id=task.id %}" class="text-decoration-none list-group-item list-group-item-action d-flex justify-content-between align-items-start">
-          <div class="ms-2 me-auto">
+      {% for ctask in queue %}
+        <div class="list-group-item list-group-item-action d-flex justify-content-between align-items-start">
+          <div>
+            <a href="{% url 'queue' id=ctask.id %}" class="text-decoration-none text-reset">
+              <div class="ms-2 me-auto">
+                <div>
+                  <span class="fw-bold">{{ ctask.shortname }}</span>
+                  -
+                  <span class="fst-italic">{{ ctask.id }}</span>
+                </div>
+                <small class="me-2">Started: {{ ctask.time_start|time_from_unix|date:"Y-m-d H:i:s" }}</small>
+              </div>
+            </a>
             <div>
-            <span class="fw-bold">{{ task.shortname }}</span>
-            -
-            <span class="fst-italic">{{ task.id }}</span>
+              <small class="ms-2 me-auto text-muted">
+                {% if ctask.chain_position %}
+                  Step {{ ctask.chain_position }}/{{ ctask.chain_total }} :
+                {% endif %}
+                {% if ctask.target_id %}
+                  Target <a href="{% url 'targets' id=ctask.target_id %}">{{ ctask.target_id }}</a>: {{ ctask.target_name }}
+                {% endif %}
+              </small>
             </div>
-            <small class="me-2">Started: {{ task.time_start|time_from_unix|date:"Y-m-d H:i:s" }}</small>
           </div>
-          <span class="badge bg-{% if task.state == 'active' %}primary{% else %}secondary{% endif %} rounded-pill">{{ task.state }}</span>
-        </a>
+              <span class="badge bg-{% if ctask.state == 'active' %}primary{% else %}secondary{% endif %} rounded-pill">{{ ctask.state }}</span>
+        </div>
       {% endfor %}
     </div>
 
@@ -38,36 +52,47 @@
 
       <form action="" method="POST">
         {% csrf_token %}
-        <button type="submit" name="action" value="terminatealltasks" class="btn btn-danger">Terminate all tasks</button>
+        <button type="submit" name="action" value="terminatealltasks" class="btn btn-danger">Terminate all queued tasks</button>
         <button type="submit" name="action" value="cleanuplinkedtasks" class="btn btn-danger">Cleanup all linked tasks</button>
       </form>
 
       {% endwrapwith %}
    {% endif %}
 
-  {% elif task %}
+  {% elif ctask %}
 
     <div class="mb-4">
 
       <p>
-        State: <b>{{ task.state }}</b>
-        {% if task.date_done %}
-          at <b>{{ task.date_done|date:"Y-m-d H:i:s" }} UT</b>
+        State: <b>{{ ctask.state }}</b>
+        {% if ctask.date_done %}
+          at <b>{{ ctask.date_done|date:"Y-m-d H:i:s" }} UT</b>
         {% endif %}
       </p>
+
+
+      {% if chain_position %}
+        <p>
+          Step: <b>{{ chain_position }}/{{ chain_total }}</b>
+        </p>
+      {% endif %}
+
+      {% if target %}
+        <p>
+          Linked to target: <a href="{% url 'targets' id=target.id %}">{{ target.id }}</a> - {{ target.name }}
+        </p>
+      {% endif %}
 
     </div>
 
     {% if user.is_staff %}
-      {% wrapwith "wrapper_card_collapsed.html" with title="Management" %}
 
       <form action="" method="POST">
         {% csrf_token %}
-        <button type="submit" name="action" value="terminatetask" class="btn btn-danger">Terminate task</button>
+        <button type="submit" name="action" value="terminatetask" class="btn btn-danger">Terminate task{% if chain_total %} chain ({{ chain_total }} subtasks){% endif %}</button>
         <button type="submit" name="action" value="cleanuplinkedtask" class="btn btn-danger">Cleanup linked tasks</button>
       </form>
 
-      {% endwrapwith %}
     {% endif %}
 
   {% else %}

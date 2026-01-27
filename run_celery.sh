@@ -1,3 +1,6 @@
 #!/bin/sh
 
-watchmedo auto-restart -d lcserver -p '*.py' --ignore-patterns="*/.*" -- python3 -m celery -- -A lcserver worker --loglevel=info -P threads
+# Avoid crashing on newer MacOS
+export OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES
+
+watchmedo auto-restart -d lcserver --recursive -p '**/*.py' -- python3 -m celery -- -A lcserver worker --loglevel=info
