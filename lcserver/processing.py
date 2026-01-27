@@ -151,7 +151,7 @@ def target_info(config, basepath=None, verbose=True, show=False):
     log("\n---- SIMBAD ----\n")
 
     sim = Simbad()
-    sim.add_votable_fields('otype', 'otypes', 'ids', 'distance', 'sptype')
+    sim.add_votable_fields('otype', 'otypes', 'alltypes', 'ids', 'distance', 'sptype')
 
     res = sim.query_region(target, radius=5*u.arcsec)
 
@@ -160,11 +160,11 @@ def target_info(config, basepath=None, verbose=True, show=False):
     else:
         for r in res:
             # TODO: select closest object?..
-            log(f"{r['MAIN_ID']} = {r['OTYPE']}")
-            log(f"{r['OTYPES']}")
+            log(f"{r['main_id']} = {r['otype']}") #
+            log(f"{r['alltypes.otypes']}")
 
-            if r['SP_TYPE']:
-                log(f"SpType = {r['SP_TYPE']}")
+            if r['sp_type']:
+                log(f"SpType = {r['sp_type']}")
             # if r['Distance_distance']:
             #     log(f"Dist = {r['Distance_distance']:.2f} +{r['Distance_perr']:.2f} -{-r['Distance_merr']:.2f} {r['Distance_unit']}")
 
