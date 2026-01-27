@@ -1,9 +1,7 @@
 # Django + Celery imports
-from celery import shared_task, chain
+from celery import shared_task
 
 import os, glob, shutil
-import signal
-import time
 
 from functools import partial
 
@@ -13,23 +11,19 @@ from . import models
 from . import processing
 
 
-# Process group management for killing external processes
+# Thread pool-safe hook for killing external processes
 def kill_task_processes(target):
-    """Kill all processes associated with a target via process group."""
-    if target.celery_pid:
-        try:
-            # Kill entire process group
-            os.killpg(os.getpgid(target.celery_pid), signal.SIGTERM)
-            time.sleep(0.5)
-            os.killpg(os.getpgid(target.celery_pid), signal.SIGKILL)
-        except (ProcessLookupError, PermissionError, OSError):
-            pass
+    """
+    No-op in thread pool mode.
+    Killing by process group would terminate the entire worker process.
+    """
+    return
 
 
 class TaskProcessContext:
     """
-    Context manager for task execution with process group management.
-    Handles: cancellation check, process group setup, signal handlers, cleanup, finalization.
+    Context manager for task execution in thread pool mode.
+    Handles: cancellation check, celery_pid cleanup, and finalization.
     """
     def __init__(self, celery_task, target_id, finalize=True):
         self.celery_task = celery_task
@@ -38,42 +32,26 @@ class TaskProcessContext:
         self.target = None
         self.basepath = None
         self.cancelled = False
-        self._old_sigterm = None
 
     def __enter__(self):
         self.target = models.Target.objects.get(id=self.target_id)
 
         # Check if target was cancelled before starting
         if not self.target.celery_id:
-            self.celery_task.request.chain = None
+            if getattr(self.celery_task.request, 'chain', None) is not None:
+                self.celery_task.request.chain = None
             self.cancelled = True
             return self
 
         self.basepath = self.target.path()
 
-        # Store PID in database
-        self.target.celery_pid = os.getpid()
-        self.target.save(update_fields=['celery_pid'])
-
-        # Try to become process group leader so children can be killed together
-        try:
-            os.setpgrp()
-        except OSError:
-            pass  # Already a group leader
-
-        # Set up signal handler for graceful termination
-        self._old_sigterm = signal.signal(signal.SIGTERM, self._sigterm_handler)
+        # In thread pool mode, celery_pid refers to the whole worker process.
+        # Clear any stale PID values to avoid accidental process-group kills.
+        if self.target.celery_pid is not None:
+            self.target.celery_pid = None
+            self.target.save(update_fields=['celery_pid'])
 
         return self
-
-    def _sigterm_handler(self, signum, frame):
-        """Handle SIGTERM - clean up and kill process group."""
-        self._cleanup_pid()
-        try:
-            os.killpg(os.getpgrp(), signal.SIGKILL)
-        except:
-            pass
-        raise SystemExit(1)
 
     def _cleanup_pid(self):
         """Clear PID from database."""
@@ -102,10 +80,6 @@ class TaskProcessContext:
 
             # Save target (always)
             self.target.save()
-
-        # Restore old signal handler
-        if self._old_sigterm is not None:
-            signal.signal(signal.SIGTERM, self._old_sigterm)
 
         return False  # Don't suppress exceptions
 

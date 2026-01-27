@@ -1,15 +1,9 @@
-from django.http import HttpResponse, JsonResponse, FileResponse, HttpResponseRedirect
+from django.http import JsonResponse, HttpResponseRedirect
 from django.template.response import TemplateResponse
 
 from django.contrib.auth.decorators import login_required
 
 from django.contrib import messages
-
-from django.core import management
-
-from django.conf import settings
-
-import os, glob
 
 from . import models
 from . import celery
@@ -27,7 +21,7 @@ def find_target_by_chain_id(chain_id):
 
 def revoke_task_chain(target):
     """
-    Revoke all tasks in a chain and kill associated processes.
+    Revoke all tasks in a chain cooperatively (thread pool safe).
     Also clears the target's celery_id to signal cancellation.
     """
     ids_to_revoke = []
@@ -42,7 +36,7 @@ def revoke_task_chain(target):
 
     # Revoke all tasks - use SIGTERM first to allow cleanup
     for task_id in ids_to_revoke:
-        celery.app.control.revoke(task_id, terminate=True, signal='SIGTERM')
+        celery.app.control.revoke(task_id, terminate=False, signal='SIGTERM')
 
     # Kill any external processes spawned by the target
     kill_task_processes(target)
@@ -97,7 +91,7 @@ def view_queue(request, id=None):
                     messages.success(request, f"Terminated task chain ({count} subtasks)")
                 else:
                     # Fallback: revoke just this ID
-                    celery.app.control.revoke(id, terminate=True, signal='SIGTERM')
+                    celery.app.control.revoke(id, terminate=False, signal='SIGTERM')
                     messages.success(request, f"Terminated task {id}")
 
             return HttpResponseRedirect(request.path_info)
