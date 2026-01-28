@@ -16,3 +16,4 @@ scipy
 skypatrol
 lightkurve
 watchdog
+plotly

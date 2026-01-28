@@ -22,6 +22,7 @@ from django.contrib.auth import views as auth_views
 
 from . import views
 from . import views_celery
+from . import views_lightcurve
 
 urlpatterns = [
     path('', views.index, name='index'),
@@ -30,6 +31,7 @@ urlpatterns = [
     path('targets/', views.targets, {'id':None}, name='targets'),
     path('targets/<int:id>', views.targets, name='targets'),
 
+    path('targets/<int:id>/lightcurve/', views_lightcurve.target_lightcurve, name='target_lightcurve'),
     path('targets/<int:id>/files/', views.target_files, {'path': ''}, name='target_files'),
     path('targets/<int:id>/files/<path:path>', views.target_files, name='target_files'),
     path('targets/<int:id>/preview/<path:path>', views.target_preview, name='target_preview'),

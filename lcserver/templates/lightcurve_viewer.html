@@ -1,0 +1,274 @@
+{% extends "template.html" %}
+
+{% load filters %}
+
+{% block ptitle %}Light Curve : Target {{ target_id }} : LCServer{% endblock %}
+
+{% block title %}Interactive Light Curve Viewer{% endblock %}
+
+{% block head %}
+<!-- Plotly.js -->
+<script src="https://cdn.plot.ly/plotly-2.27.0.min.js" charset="utf-8"></script>
+
+<style>
+.control-panel {
+    background-color: var(--bs-light);
+    border: 1px solid var(--bs-border-color);
+    border-radius: 0.375rem;
+    padding: 1rem;
+    margin-bottom: 1rem;
+}
+
+.source-control {
+    display: flex;
+    align-items: center;
+    padding: 0.5rem;
+    margin-bottom: 0.25rem;
+    border-radius: 0.25rem;
+    background-color: var(--bs-body-bg);
+}
+
+.source-control:hover {
+    background-color: var(--bs-secondary-bg);
+}
+
+.source-color {
+    width: 20px;
+    height: 20px;
+    border-radius: 3px;
+    margin-right: 0.5rem;
+    border: 1px solid var(--bs-border-color);
+}
+
+.source-label {
+    flex: 1;
+    margin-right: 0.5rem;
+    font-weight: 500;
+}
+
+.source-info {
+    color: var(--bs-secondary-color);
+    font-size: 0.875rem;
+    margin-right: 1rem;
+}
+
+.offset-control {
+    width: 100px;
+    margin-right: 0.5rem;
+}
+
+.offset-label {
+    font-size: 0.875rem;
+    color: var(--bs-secondary-color);
+    margin-right: 0.5rem;
+}
+</style>
+{% endblock %}
+
+{% block content %}
+
+<!-- Breadcrumb -->
+<nav aria-label="breadcrumb">
+  <ol class="breadcrumb">
+    <li class="breadcrumb-item">
+      <a href="{% url 'targets' id=target_id %}"><span class="fa fa-angle-left text-body"></span></a>
+      <a href="{% url 'targets' id=target_id %}">Target {{ target_id }}: {{ target.name }}</a>
+    </li>
+    <li class="breadcrumb-item active">Light Curve Viewer</li>
+  </ol>
+</nav>
+
+<!-- Control Panel -->
+<div class="control-panel">
+  <h5 class="mb-3">Data Sources</h5>
+
+  <div id="source-controls">
+    <!-- Populated by JavaScript -->
+  </div>
+
+  <div class="mt-3">
+    <button class="btn btn-sm btn-outline-primary me-2" onclick="resetOffsets()">
+      <i class="fa fa-refresh"></i> Reset Offsets
+    </button>
+    <button class="btn btn-sm btn-outline-primary me-2" onclick="enableAll()">
+      <i class="fa fa-check-square-o"></i> Enable All
+    </button>
+    <button class="btn btn-sm btn-outline-primary" onclick="disableAll()">
+      <i class="fa fa-square-o"></i> Disable All
+    </button>
+  </div>
+</div>
+
+<!-- Plot Container -->
+<div id="plotly-container" style="width: 100%; height: 600px;"></div>
+
+<script>
+// Parse light curve data from Django context
+const lightcurveData = {{ lightcurve_data|safe }};
+
+// Track state of each series
+const seriesState = {};
+
+// Initialize series state and create controls
+function initializeControls() {
+    const container = document.getElementById('source-controls');
+    container.innerHTML = '';
+
+    lightcurveData.forEach((series, index) => {
+        // Initialize state
+        seriesState[index] = {
+            visible: true,
+            offset: 0,
+            data: series
+        };
+
+        // Create control element
+        const control = document.createElement('div');
+        control.className = 'source-control';
+        control.innerHTML = `
+            <div class="source-color" style="background-color: ${series.color};"></div>
+            <div class="source-label">${series.label}</div>
+            <div class="source-info">${series.n_points} points</div>
+            <span class="offset-label">Offset:</span>
+            <input type="number" class="form-control form-control-sm offset-control"
+                   id="offset-${index}" value="0" step="0.1"
+                   onchange="updateOffset(${index})">
+            <div class="form-check form-switch">
+                <input class="form-check-input" type="checkbox"
+                       id="toggle-${index}" checked
+                       onchange="toggleSeries(${index})">
+            </div>
+        `;
+        container.appendChild(control);
+    });
+}
+
+// Update plot
+function updatePlot() {
+    const traces = [];
+
+    lightcurveData.forEach((series, index) => {
+        const state = seriesState[index];
+        if (!state.visible) return;
+
+        // Apply offset to magnitudes
+        const mag_with_offset = series.mag.map(m => m + state.offset);
+
+        traces.push({
+            x: series.mjd,
+            y: mag_with_offset,
+            error_y: {
+                type: 'data',
+                array: series.magerr,
+                visible: true,
+                color: series.color,
+                thickness: 1,
+                width: 0
+            },
+            mode: 'markers',
+            type: 'scatter',
+            name: series.label,
+            marker: {
+                color: series.color,
+                size: 4,
+            },
+            hovertemplate:
+                '<b>%{fullData.name}</b><br>' +
+                'MJD: %{x:.2f}<br>' +
+                'Magnitude: %{y:.3f}<br>' +
+                '<extra></extra>',
+        });
+    });
+
+    const layout = {
+        title: {
+            text: '{{ target.name }} - Multi-Survey Light Curve',
+            font: { size: 18 }
+        },
+        xaxis: {
+            title: 'Modified Julian Date (MJD)',
+            gridcolor: '#e0e0e0',
+        },
+        yaxis: {
+            title: 'Magnitude',
+            autorange: 'reversed',  // Inverted for astronomical magnitudes
+            gridcolor: '#e0e0e0',
+        },
+        hovermode: 'closest',
+        showlegend: true,
+        legend: {
+            orientation: 'v',
+            yanchor: 'top',
+            y: 1,
+            xanchor: 'right',
+            x: 1
+        },
+        margin: {
+            l: 60,
+            r: 20,
+            t: 60,
+            b: 60
+        },
+        plot_bgcolor: 'white',
+        paper_bgcolor: 'white',
+    };
+
+    const config = {
+        responsive: true,
+        displayModeBar: true,
+        modeBarButtonsToRemove: ['lasso2d', 'select2d'],
+        displaylogo: false,
+    };
+
+    Plotly.newPlot('plotly-container', traces, layout, config);
+}
+
+// Toggle series visibility
+function toggleSeries(index) {
+    const checkbox = document.getElementById(`toggle-${index}`);
+    seriesState[index].visible = checkbox.checked;
+    updatePlot();
+}
+
+// Update offset for a series
+function updateOffset(index) {
+    const input = document.getElementById(`offset-${index}`);
+    seriesState[index].offset = parseFloat(input.value) || 0;
+    updatePlot();
+}
+
+// Reset all offsets to zero
+function resetOffsets() {
+    lightcurveData.forEach((series, index) => {
+        seriesState[index].offset = 0;
+        document.getElementById(`offset-${index}`).value = 0;
+    });
+    updatePlot();
+}
+
+// Enable all series
+function enableAll() {
+    lightcurveData.forEach((series, index) => {
+        seriesState[index].visible = true;
+        document.getElementById(`toggle-${index}`).checked = true;
+    });
+    updatePlot();
+}
+
+// Disable all series
+function disableAll() {
+    lightcurveData.forEach((series, index) => {
+        seriesState[index].visible = false;
+        document.getElementById(`toggle-${index}`).checked = false;
+    });
+    updatePlot();
+}
+
+// Initialize on page load
+document.addEventListener('DOMContentLoaded', function() {
+    initializeControls();
+    updatePlot();
+});
+</script>
+
+{% endblock %}

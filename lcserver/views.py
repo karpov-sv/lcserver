@@ -9,10 +9,12 @@ from django.conf import settings
 
 import os, io, glob
 import shutil
+import json
 
 import mimetypes
 import magic
 
+import numpy as np
 from astropy.table import Table
 from astropy.time import Time
 from astropy.io import fits
