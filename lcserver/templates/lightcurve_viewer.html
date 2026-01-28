@@ -98,24 +98,33 @@
 <div class="control-panel">
   <h5 class="mb-3">Display Mode</h5>
   <div class="btn-group">
-    <a href="?mode=magnitude" class="btn btn-sm {% if data_mode == 'magnitude' %}btn-primary{% else %}btn-outline-primary{% endif %}">
+    <button onclick="switchMode('magnitude')" class="btn btn-sm {% if data_mode == 'magnitude' %}btn-primary{% else %}btn-outline-primary{% endif %}">
       <i class="fa fa-star"></i> Magnitudes
-    </a>
-    <a href="?mode=flux" class="btn btn-sm {% if data_mode == 'flux' %}btn-primary{% else %}btn-outline-primary{% endif %}">
+    </button>
+    <button onclick="switchMode('flux')" class="btn btn-sm {% if data_mode == 'flux' %}btn-primary{% else %}btn-outline-primary{% endif %}">
       <i class="fa fa-line-chart"></i> TESS Flux
-    </a>
+    </button>
   </div>
 </div>
 
-{% if no_data %}
-<div class="alert alert-warning mt-3">
-  No lightcurve data available for {{ data_mode }} mode.
-  {% if data_mode == 'flux' %}Try acquiring TESS data first.{% endif %}
+<!-- Loading indicator -->
+<div id="loading-indicator" class="alert alert-info mt-3">
+  <i class="fa fa-spinner fa-spin"></i> Loading lightcurve data...
 </div>
-{% endif %}
+
+<!-- No data warning (hidden initially) -->
+<div id="no-data-warning" class="alert alert-warning mt-3" style="display: none;">
+  No lightcurve data available for <span id="no-data-mode"></span> mode.
+  <span id="no-data-hint"></span>
+</div>
+
+<!-- Error message (hidden initially) -->
+<div id="error-message" class="alert alert-danger mt-3" style="display: none;">
+  <strong>Error loading data:</strong> <span id="error-text"></span>
+</div>
 
 <!-- Control Panel -->
-<div class="control-panel">
+<div class="control-panel" id="control-panel" style="display: none;">
   <h5 class="mb-3">Data Sources</h5>
 
   <div id="source-controls">
@@ -136,7 +145,7 @@
 </div>
 
 <!-- Phase Folding Panel -->
-<div class="control-panel mt-3">
+<div class="control-panel mt-3" id="phase-panel" style="display: none;">
   <h5 class="mb-3">Phase Folding</h5>
 
   <div class="row g-2 align-items-center">
@@ -177,15 +186,15 @@
 </div>
 
 <!-- Plot Container -->
-<div id="plotly-container" style="width: 100%; height: 600px;"></div>
+<div id="plotly-container" style="width: 100%; height: 600px; display: none;"></div>
 
 <script>
-// Parse light curve data from Django context
-const lightcurveData = {{ lightcurve_data|safe }};
+// Light curve data (loaded asynchronously)
+let lightcurveData = [];
 
 // Data mode constants
-const dataMode = "{{ data_mode }}";  // 'magnitude' or 'flux'
-const isMagnitudeMode = dataMode === 'magnitude';
+let dataMode = "{{ data_mode }}";  // 'magnitude' or 'flux'
+let isMagnitudeMode = dataMode === 'magnitude';
 
 // Track state of each series
 const seriesState = {};
@@ -196,6 +205,9 @@ let plotInitialized = false;
 // Phase folding parameters
 let phasePeriod = 0;  // Period in days (0 = disabled)
 let phaseEpoch = 0;   // T0 in MJD
+
+// Track data loading state
+let dataLoaded = false;
 
 // Initialize series state and create controls
 function initializeControls() {
@@ -633,6 +645,12 @@ function getCookie(name) {
 
 // Fit period using Lomb-Scargle multiband periodogram
 function fitPeriod() {
+    // Check if data is loaded
+    if (!dataLoaded) {
+        alert('Data is still loading. Please wait...');
+        return;
+    }
+
     // Collect visible series data
     const visibleSeries = [];
     const dataKey = isMagnitudeMode ? 'mag' : 'flux';
@@ -782,10 +800,155 @@ function disableAll() {
     updatePlot();
 }
 
+// Switch display mode while preserving period/epoch
+function switchMode(newMode) {
+    // Get current period and epoch values
+    const periodInput = document.getElementById('period-input');
+    const epochInput = document.getElementById('epoch-input');
+
+    const period = periodInput.value;
+    const epoch = epochInput.value;
+
+    // Build URL with mode and optional period/epoch parameters
+    let url = `?mode=${newMode}`;
+
+    if (period) {
+        url += `&period=${encodeURIComponent(period)}`;
+    }
+
+    if (epoch) {
+        url += `&epoch=${encodeURIComponent(epoch)}`;
+    }
+
+    // Update URL without reloading (for better UX and browser history)
+    window.history.pushState({mode: newMode}, '', url);
+
+    // Update mode toggle button states
+    document.querySelectorAll('.control-panel .btn-group button').forEach(btn => {
+        if (btn.textContent.includes('Magnitudes')) {
+            if (newMode === 'magnitude') {
+                btn.classList.remove('btn-outline-primary');
+                btn.classList.add('btn-primary');
+            } else {
+                btn.classList.remove('btn-primary');
+                btn.classList.add('btn-outline-primary');
+            }
+        } else if (btn.textContent.includes('TESS Flux')) {
+            if (newMode === 'flux') {
+                btn.classList.remove('btn-outline-primary');
+                btn.classList.add('btn-primary');
+            } else {
+                btn.classList.remove('btn-primary');
+                btn.classList.add('btn-outline-primary');
+            }
+        }
+    });
+
+    // Reset plot state
+    plotInitialized = false;
+
+    // Reload data for new mode
+    loadLightcurveData();
+}
+
+// Get URL parameter by name
+function getUrlParameter(name) {
+    name = name.replace(/[\[]/, '\\[').replace(/[\]]/, '\\]');
+    const regex = new RegExp('[\\?&]' + name + '=([^&#]*)');
+    const results = regex.exec(location.search);
+    return results === null ? '' : decodeURIComponent(results[1].replace(/\+/g, ' '));
+}
+
+// Load lightcurve data asynchronously
+function loadLightcurveData() {
+    // Get mode from URL or use default
+    const mode = getUrlParameter('mode') || '{{ data_mode }}';
+
+    // Show loading indicator
+    document.getElementById('loading-indicator').style.display = 'block';
+    document.getElementById('no-data-warning').style.display = 'none';
+    document.getElementById('error-message').style.display = 'none';
+    document.getElementById('control-panel').style.display = 'none';
+    document.getElementById('phase-panel').style.display = 'none';
+
+    // Make AJAX request to load data
+    fetch(`/targets/{{ target_id }}/lightcurve_data/?mode=${mode}`)
+        .then(response => {
+            if (!response.ok) {
+                return response.json().then(err => {
+                    throw new Error(err.error || 'Server error');
+                });
+            }
+            return response.json();
+        })
+        .then(result => {
+            // Hide loading indicator
+            document.getElementById('loading-indicator').style.display = 'none';
+
+            // Update global variables
+            lightcurveData = result.data;
+            dataMode = result.mode;
+            isMagnitudeMode = dataMode === 'magnitude';
+            dataLoaded = true;
+
+            if (result.no_data) {
+                // Show no-data warning
+                document.getElementById('no-data-warning').style.display = 'block';
+                document.getElementById('no-data-mode').textContent = dataMode;
+                if (dataMode === 'flux') {
+                    document.getElementById('no-data-hint').textContent = 'Try acquiring TESS data first.';
+                } else {
+                    document.getElementById('no-data-hint').textContent = '';
+                }
+            } else {
+                // Show controls, plot container, and initialize
+                document.getElementById('control-panel').style.display = 'block';
+                document.getElementById('phase-panel').style.display = 'block';
+                document.getElementById('plotly-container').style.display = 'block';
+
+                // Restore period and epoch from URL parameters if present
+                const urlPeriod = getUrlParameter('period');
+                const urlEpoch = getUrlParameter('epoch');
+
+                if (urlPeriod) {
+                    document.getElementById('period-input').value = urlPeriod;
+                    phasePeriod = parseFloat(urlPeriod) || 0;
+                }
+
+                if (urlEpoch) {
+                    document.getElementById('epoch-input').value = urlEpoch;
+                    phaseEpoch = parseFloat(urlEpoch) || 0;
+                }
+
+                // Initialize controls and plot
+                initializeControls();
+                updatePlot();
+            }
+        })
+        .catch(error => {
+            console.error('Error loading lightcurve data:', error);
+
+            // Hide loading indicator
+            document.getElementById('loading-indicator').style.display = 'none';
+
+            // Show error message
+            document.getElementById('error-message').style.display = 'block';
+            document.getElementById('error-text').textContent = error.message;
+        });
+}
+
+// Handle browser back/forward buttons
+window.addEventListener('popstate', function(event) {
+    // Reset plot state
+    plotInitialized = false;
+
+    // Reload data for current URL
+    loadLightcurveData();
+});
+
 // Initialize on page load
 document.addEventListener('DOMContentLoaded', function() {
-    initializeControls();
-    updatePlot();
+    loadLightcurveData();
 });
 </script>
 

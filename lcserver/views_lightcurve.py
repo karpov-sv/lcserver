@@ -215,13 +215,13 @@ def target_lightcurve(request, id):
     if not (request.user.is_staff or target.user == request.user):
         return HttpResponse('Forbidden', status=403)
 
-    basepath = target.path()
-
-    # Determine display mode
+    # Determine display mode for initial render
     mode = request.GET.get('mode', 'auto')
 
-    # Auto-detect mode if not specified
+    # Auto-detect mode if not specified (lightweight check)
     if mode == 'auto':
+        basepath = target.path()
+
         # Check for magnitude data
         has_magnitude_data = any(
             os.path.exists(os.path.join(basepath, rules['filename']))
@@ -240,27 +240,49 @@ def target_lightcurve(request, id):
         else:
             mode = 'magnitude'  # Default fallback
 
-    # Load data based on mode
-    if mode == 'flux':
-        lightcurve_data = load_flux_data(basepath)
-        data_mode = 'flux'
-    else:
-        lightcurve_data = load_magnitude_data(basepath)
-        data_mode = 'magnitude'
-
-    # Check if we have any data
-    no_data = len(lightcurve_data) == 0
-
     context = {
         'target': target,
-        'lightcurve_data': json.dumps(lightcurve_data),
         'target_id': id,
-        'data_mode': data_mode,
+        'data_mode': mode,
         'mode': mode,
-        'no_data': no_data,
     }
 
     return TemplateResponse(request, 'lightcurve_viewer.html', context=context)
+
+
+@login_required
+@require_http_methods(["GET"])
+def load_lightcurve_data(request, id):
+    """Load lightcurve data asynchronously via AJAX"""
+    target = models.Target.objects.get(id=id)
+
+    # Check permissions
+    if not (request.user.is_staff or target.user == request.user):
+        return JsonResponse({'error': 'Forbidden'}, status=403)
+
+    try:
+        basepath = target.path()
+        mode = request.GET.get('mode', 'magnitude')
+
+        # Load data based on mode
+        if mode == 'flux':
+            lightcurve_data = load_flux_data(basepath)
+        else:
+            lightcurve_data = load_magnitude_data(basepath)
+
+        return JsonResponse({
+            'data': lightcurve_data,
+            'mode': mode,
+            'no_data': len(lightcurve_data) == 0,
+        })
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return JsonResponse({
+            'error': str(e),
+            'traceback': traceback.format_exc()
+        }, status=500)
 
 
 @login_required
