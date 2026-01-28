@@ -27,6 +27,7 @@ from . import forms
 from . import models
 from . import celery
 from . import celery_tasks
+from . import surveys
 
 def index(request):
     context = {}
@@ -297,17 +298,16 @@ def targets(request, id=None):
 
         all_forms = {}
 
-        params = target.config.copy()
-        params.update({'name':target.name, 'title':target.title})
-        all_forms['target_info'] = forms.TargetInfoForm(request.POST or None, initial = params)
-
-        all_forms['target_ztf'] = forms.TargetZTFForm(request.POST or None, initial = target.config)
-        all_forms['target_asas'] = forms.TargetASASForm(request.POST or None, initial = target.config)
-        all_forms['target_tess'] = forms.TargetTESSForm(request.POST or None, initial = target.config)
-        all_forms['target_dasch'] = forms.TargetDASCHForm(request.POST or None, initial = target.config)
-        all_forms['target_applause'] = forms.TargetAPPLAUSEForm(request.POST or None, initial = target.config)
-        all_forms['target_mmt9'] = forms.TargetMMT9Form(request.POST or None, initial = target.config)
-        all_forms['target_combined'] = forms.TargetCombinedForm(request.POST or None, initial = target.config)
+        # Auto-generate forms from registry
+        for source_id in surveys.SURVEY_SOURCES.keys():
+            form_class = forms.get_survey_form(source_id)
+            # Special case for info form which includes name and title
+            if source_id == 'info':
+                params = target.config.copy()
+                params.update({'name': target.name, 'title': target.title})
+                all_forms[f'target_{source_id}'] = form_class(request.POST or None, initial=params)
+            else:
+                all_forms[f'target_{source_id}'] = form_class(request.POST or None, initial=target.config)
 
         for name,form in all_forms.items():
             context['form_'+name] = form
@@ -344,80 +344,50 @@ def targets(request, id=None):
                         messages.error(request, f"Cannot delete target {str(id)} belonging to {target.user.username}")
                         return HttpResponseRedirect(request.path_info)
 
-                if action == 'cleanup_target':
+                elif action == 'cleanup_target':
                     target.celery_id = celery_tasks.task_cleanup.delay(target.id).id
                     target.config = {} # should we reset the config on cleanup?..
                     target.state = 'cleaning'
                     target.save()
                     messages.success(request, f"Started cleanup for target {target.id}")
 
-                if action == 'target_info':
-                    # Only accept non-empty new values
-                    if 'name' in form.changed_data and form.cleaned_data.get('name'):
-                        target.name = form.cleaned_data.get('name')
-                    if 'title' in form.changed_data:
-                        target.title = form.cleaned_data.get('title')
-
-                    target.save()
-
-                    target.celery_id = celery_tasks.task_info.delay(target.id).id
-                    target.state = 'acquiring info'
-                    target.save()
-                    messages.success(request, f"Started info collection for target {target.id}")
-
-                if action == 'target_ztf':
-                    target.celery_id = celery_tasks.task_ztf.delay(target.id).id
-                    target.state = 'acquiring ZTF lightcurve'
-                    target.save()
-                    messages.success(request, f"Started getting ZTF lightcurve for target {target.id}")
-
-                if action == 'target_asas':
-                    target.celery_id = celery_tasks.task_asas.delay(target.id).id
-                    target.state = 'acquiring ASAS-SN lightcurve'
-                    target.save()
-                    messages.success(request, f"Started getting ASAS-SN lightcurve for target {target.id}")
-
-                if action == 'target_tess':
-                    target.celery_id = celery_tasks.task_tess.delay(target.id).id
-                    target.state = 'acquiring TESS lightcurves'
-                    target.save()
-                    messages.success(request, f"Started getting TESS lightcurves for target {target.id}")
-
-                if action == 'target_dasch':
-                    target.celery_id = celery_tasks.task_dasch.delay(target.id).id
-                    target.state = 'acquiring DASCH lightcurve'
-                    target.save()
-                    messages.success(request, f"Started getting DASCH lightcurve for target {target.id}")
-
-                if action == 'target_applause':
-                    target.celery_id = celery_tasks.task_applause.delay(target.id).id
-                    target.state = 'acquiring APPLAUSE lightcurve'
-                    target.save()
-                    messages.success(request, f"Started getting APPLAUSE lightcurve for target {target.id}")
-
-                if action == 'target_mmt9':
-                    target.celery_id = celery_tasks.task_mmt9.delay(target.id).id
-                    target.state = 'acquiring Mini-MegaTORTORA lightcurve'
-                    target.save()
-                    messages.success(request, f"Started getting Mini-MegaTORTORA lightcurve for target {target.id}")
-
-                if action == 'target_combined':
-                    target.celery_id = celery_tasks.task_combined.delay(target.id).id
-                    target.state = 'acquiring combined lightcurve'
-                    target.save()
-                    messages.success(request, f"Started getting combined lightcurve for target {target.id}")
-
-                if action == 'target_everything':
+                elif action == 'target_everything':
                     # Use run_target_steps for proper chain management
-                    steps = ['info', 'ztf', 'asas', 'tess', 'dasch', 'applause', 'mmt9', 'combined']
+                    steps = surveys.get_survey_ids_for_everything()
                     celery_tasks.run_target_steps(target, steps)
                     messages.success(request, f"Started doing everything for target {target.id}")
+
+                # Check if it's a survey source action
+                elif action and action.startswith('target_'):
+                    source_id = action.replace('target_', '')
+                    survey_config = surveys.get_survey_source(source_id)
+
+                    if survey_config:
+                        # Special handling for 'info' action which updates name/title
+                        if source_id == 'info':
+                            if 'name' in form.changed_data and form.cleaned_data.get('name'):
+                                target.name = form.cleaned_data.get('name')
+                            if 'title' in form.changed_data:
+                                target.title = form.cleaned_data.get('title')
+                            target.save()
+
+                        # Get task function and start it
+                        task_func = celery_tasks.get_survey_task(source_id)
+                        target.celery_id = task_func.delay(target.id).id
+                        target.state = survey_config['state_acquiring']
+                        target.save()
+
+                        messages.success(request,
+                            f"Started getting {survey_config['short_name']} data for target {target.id}")
+                    else:
+                        messages.error(request, f"Unknown survey source: {source_id}")
 
 
                 return HttpResponseRedirect(request.path_info)
 
         # Display target
         context['target'] = target
+        context['survey_sources'] = surveys.get_all_survey_sources()
 
         context['files'] = [os.path.split(_)[1] for _ in glob.glob(os.path.join(path, '*'))]
 

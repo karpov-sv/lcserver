@@ -9,6 +9,7 @@ import numpy as np
 
 from . import models
 from . import processing
+from . import surveys
 
 
 # Thread pool-safe hook for killing external processes
@@ -93,6 +94,60 @@ def fix_config(config):
             config[key] = float(config[key])
 
 
+def create_survey_task(source_id, survey_config):
+    """Factory function to create a Celery task for a survey source."""
+    processing_func_name = survey_config['processing_function']
+
+    @shared_task(bind=True, acks_late=True, reject_on_worker_lost=True, name=f'lcserver.celery_tasks.task_{source_id}')
+    def survey_task(self, id, finalize=True):
+        with TaskProcessContext(self, id, finalize=finalize) as ctx:
+            if ctx.cancelled:
+                return
+
+            target = ctx.target
+            config = target.config
+            config['target_name'] = target.name
+
+            log = partial(processing.print_to_file,
+                         logname=os.path.join(ctx.basepath, survey_config['log_file']))
+            log(clear=True)
+
+            try:
+                # Get processing function by name
+                processing_func = getattr(processing, processing_func_name)
+                processing_func(config, basepath=ctx.basepath, verbose=log)
+                target.state = survey_config['state_acquired']
+            except:
+                import traceback
+                log("\nError!\n", traceback.format_exc())
+                target.state = 'failed'
+
+            fix_config(config)
+
+    return survey_task
+
+
+# Auto-register all survey tasks
+_survey_tasks = {}
+for source_id, config in surveys.SURVEY_SOURCES.items():
+    _survey_tasks[source_id] = create_survey_task(source_id, config)
+
+# Create named references for backward compatibility
+task_info = _survey_tasks['info']
+task_ztf = _survey_tasks['ztf']
+task_asas = _survey_tasks['asas']
+task_tess = _survey_tasks['tess']
+task_dasch = _survey_tasks['dasch']
+task_applause = _survey_tasks['applause']
+task_mmt9 = _survey_tasks['mmt9']
+task_combined = _survey_tasks['combined']
+
+
+def get_survey_task(source_id):
+    """Get Celery task for a survey source."""
+    return _survey_tasks.get(source_id)
+
+
 @shared_task(bind=True)
 def task_finalize(self, id):
     target = models.Target.objects.get(id=id)
@@ -150,220 +205,9 @@ def task_cleanup(self, id, finalize=True):
     target.save()
 
 
-@shared_task(bind=True, acks_late=True, reject_on_worker_lost=True)
-def task_info(self, id, finalize=True):
-    with TaskProcessContext(self, id, finalize=finalize) as ctx:
-        if ctx.cancelled:
-            return
-
-        target = ctx.target
-        basepath = ctx.basepath
-        config = target.config
-        config['target_name'] = target.name
-
-        log = partial(processing.print_to_file, logname=os.path.join(basepath, 'info.log'))
-        log(clear=True)
-
-        # Start processing
-        try:
-            processing.target_info(config, basepath=basepath, verbose=log)
-            target.state = 'info acquired'
-        except:
-            import traceback
-            log("\nError!\n", traceback.format_exc())
-            target.state = 'failed'
-
-        fix_config(config)
-        # Context manager handles finalize and save
-
-
-@shared_task(bind=True, acks_late=True, reject_on_worker_lost=True)
-def task_ztf(self, id, finalize=True):
-    with TaskProcessContext(self, id, finalize=finalize) as ctx:
-        if ctx.cancelled:
-            return
-
-        target = ctx.target
-        basepath = ctx.basepath
-        config = target.config
-        config['target_name'] = target.name
-
-        log = partial(processing.print_to_file, logname=os.path.join(basepath, 'ztf.log'))
-        log(clear=True)
-
-        # Start processing
-        try:
-            processing.target_ztf(config, basepath=basepath, verbose=log)
-            target.state = 'ZTF lightcurve acquired'
-        except:
-            import traceback
-            log("\nError!\n", traceback.format_exc())
-            target.state = 'failed'
-
-        fix_config(config)
-        # Context manager handles finalize and save
-
-
-@shared_task(bind=True, acks_late=True, reject_on_worker_lost=True)
-def task_asas(self, id, finalize=True):
-    with TaskProcessContext(self, id, finalize=finalize) as ctx:
-        if ctx.cancelled:
-            return
-
-        target = ctx.target
-        basepath = ctx.basepath
-        config = target.config
-        config['target_name'] = target.name
-
-        log = partial(processing.print_to_file, logname=os.path.join(basepath, 'asas.log'))
-        log(clear=True)
-
-        # Start processing
-        try:
-            processing.target_asas(config, basepath=basepath, verbose=log)
-            target.state = 'ASAS-SN lightcurve acquired'
-        except:
-            import traceback
-            log("\nError!\n", traceback.format_exc())
-            target.state = 'failed'
-
-        fix_config(config)
-        # Context manager handles finalize and save
-
-
-@shared_task(bind=True, acks_late=True, reject_on_worker_lost=True)
-def task_tess(self, id, finalize=True):
-    with TaskProcessContext(self, id, finalize=finalize) as ctx:
-        if ctx.cancelled:
-            return
-
-        target = ctx.target
-        basepath = ctx.basepath
-        config = target.config
-        config['target_name'] = target.name
-
-        log = partial(processing.print_to_file, logname=os.path.join(basepath, 'tess.log'))
-        log(clear=True)
-
-        # Start processing
-        try:
-            processing.target_tess(config, basepath=basepath, verbose=log)
-            target.state = 'TESS lightcurves acquired'
-        except:
-            import traceback
-            log("\nError!\n", traceback.format_exc())
-            target.state = 'failed'
-
-        fix_config(config)
-        # Context manager handles finalize and save
-
-
-@shared_task(bind=True, acks_late=True, reject_on_worker_lost=True)
-def task_dasch(self, id, finalize=True):
-    with TaskProcessContext(self, id, finalize=finalize) as ctx:
-        if ctx.cancelled:
-            return
-
-        target = ctx.target
-        basepath = ctx.basepath
-        config = target.config
-        config['target_name'] = target.name
-
-        log = partial(processing.print_to_file, logname=os.path.join(basepath, 'dasch.log'))
-        log(clear=True)
-
-        # Start processing
-        try:
-            processing.target_dasch(config, basepath=basepath, verbose=log)
-            target.state = 'DASCH lightcurve acquired'
-        except:
-            import traceback
-            log("\nError!\n", traceback.format_exc())
-            target.state = 'failed'
-
-        fix_config(config)
-        # Context manager handles finalize and save
-
-
-@shared_task(bind=True, acks_late=True, reject_on_worker_lost=True)
-def task_applause(self, id, finalize=True):
-    with TaskProcessContext(self, id, finalize=finalize) as ctx:
-        if ctx.cancelled:
-            return
-
-        target = ctx.target
-        basepath = ctx.basepath
-        config = target.config
-        config['target_name'] = target.name
-
-        log = partial(processing.print_to_file, logname=os.path.join(basepath, 'applause.log'))
-        log(clear=True)
-
-        # Start processing
-        try:
-            processing.target_applause(config, basepath=basepath, verbose=log)
-            target.state = 'APPLAUSE lightcurve acquired'
-        except:
-            import traceback
-            log("\nError!\n", traceback.format_exc())
-            target.state = 'failed'
-
-        fix_config(config)
-        # Context manager handles finalize and save
-
-
-@shared_task(bind=True, acks_late=True, reject_on_worker_lost=True)
-def task_mmt9(self, id, finalize=True):
-    with TaskProcessContext(self, id, finalize=finalize) as ctx:
-        if ctx.cancelled:
-            return
-
-        target = ctx.target
-        basepath = ctx.basepath
-        config = target.config
-        config['target_name'] = target.name
-
-        log = partial(processing.print_to_file, logname=os.path.join(basepath, 'mmt9.log'))
-        log(clear=True)
-
-        # Start processing
-        try:
-            processing.target_mmt9(config, basepath=basepath, verbose=log)
-            target.state = 'Mini-MegaTORTORA lightcurve acquired'
-        except:
-            import traceback
-            log("\nError!\n", traceback.format_exc())
-            target.state = 'failed'
-
-        fix_config(config)
-        # Context manager handles finalize and save
-
-
-@shared_task(bind=True, acks_late=True, reject_on_worker_lost=True)
-def task_combined(self, id, finalize=True):
-    with TaskProcessContext(self, id, finalize=finalize) as ctx:
-        if ctx.cancelled:
-            return
-
-        target = ctx.target
-        basepath = ctx.basepath
-        config = target.config
-        config['target_name'] = target.name
-
-        log = partial(processing.print_to_file, logname=os.path.join(basepath, 'combined.log'))
-        log(clear=True)
-
-        # Start processing
-        try:
-            processing.target_combined(config, basepath=basepath, verbose=log)
-            target.state = 'Combined lightcurve acquired'
-        except:
-            import traceback
-            log("\nError!\n", traceback.format_exc())
-            target.state = 'failed'
-
-        fix_config(config)
-        # Context manager handles finalize and save
+# Note: Individual task definitions (task_info, task_ztf, etc.) are now
+# auto-generated by create_survey_task() factory function above.
+# Named references are preserved for backward compatibility.
 
 
 # Higher-level interface for running multiple processing steps for the target
@@ -383,58 +227,25 @@ def run_target_steps(target, steps):
     todo = []
 
     for step in steps:
+        survey_config = surveys.get_survey_source(step)
+        if not survey_config:
+            print(f"Unknown step: {step}")
+            continue
+
         print(f"Will run {step} step for target {target.id}")
 
-        if step == 'info':
-            todo.append(task_set_state.subtask(args=[target.id, 'acquiring info'], immutable=True))
-            todo.append(task_info.subtask(args=[target.id, False], immutable=True))
-            todo.append(task_break_if_failed.subtask(args=[target.id], immutable=True))
-            todo.append(task_set_state.subtask(args=[target.id, 'info acquired'], immutable=True))
+        # Get task function
+        task_func = get_survey_task(step)
 
-        elif step == 'ztf':
-            todo.append(task_set_state.subtask(args=[target.id, 'acquiring ZTF lightcurve'], immutable=True))
-            todo.append(task_ztf.subtask(args=[target.id, False], immutable=True))
-            todo.append(task_break_if_failed.subtask(args=[target.id], immutable=True))
-            todo.append(task_set_state.subtask(args=[target.id, 'ZTF lightcurve acquired'], immutable=True))
-
-        elif step == 'asas':
-            todo.append(task_set_state.subtask(args=[target.id, 'acquiring ASAS-SN lightcurve'], immutable=True))
-            todo.append(task_asas.subtask(args=[target.id, False], immutable=True))
-            todo.append(task_break_if_failed.subtask(args=[target.id], immutable=True))
-            todo.append(task_set_state.subtask(args=[target.id, 'ASAS-SN lightcurve acquired'], immutable=True))
-
-        elif step == 'tess':
-            todo.append(task_set_state.subtask(args=[target.id, 'acquiring TESS lightcurves'], immutable=True))
-            todo.append(task_tess.subtask(args=[target.id, False], immutable=True))
-            todo.append(task_break_if_failed.subtask(args=[target.id], immutable=True))
-            todo.append(task_set_state.subtask(args=[target.id, 'TESS lightcurves acquired'], immutable=True))
-
-        elif step == 'dasch':
-            todo.append(task_set_state.subtask(args=[target.id, 'acquiring DASCH lightcurve'], immutable=True))
-            todo.append(task_dasch.subtask(args=[target.id, False], immutable=True))
-            todo.append(task_break_if_failed.subtask(args=[target.id], immutable=True))
-            todo.append(task_set_state.subtask(args=[target.id, 'DASCH lightcurve acquired'], immutable=True))
-
-        elif step == 'applause':
-            todo.append(task_set_state.subtask(args=[target.id, 'acquiring APPLAUSE lightcurve'], immutable=True))
-            todo.append(task_applause.subtask(args=[target.id, False], immutable=True))
-            todo.append(task_break_if_failed.subtask(args=[target.id], immutable=True))
-            todo.append(task_set_state.subtask(args=[target.id, 'APPLAUSE lightcurve acquired'], immutable=True))
-
-        elif step == 'mmt9':
-            todo.append(task_set_state.subtask(args=[target.id, 'acquiring Mini-MegaTORTORA lightcurve'], immutable=True))
-            todo.append(task_mmt9.subtask(args=[target.id, False], immutable=True))
-            todo.append(task_break_if_failed.subtask(args=[target.id], immutable=True))
-            todo.append(task_set_state.subtask(args=[target.id, 'Mini-MegaTORTORA lightcurve acquired'], immutable=True))
-
-        elif step == 'combined':
-            todo.append(task_set_state.subtask(args=[target.id, 'acquiring combined lightcurve'], immutable=True))
-            todo.append(task_combined.subtask(args=[target.id, False], immutable=True))
-            todo.append(task_break_if_failed.subtask(args=[target.id], immutable=True))
-            todo.append(task_set_state.subtask(args=[target.id, 'combined lightcurve acquired'], immutable=True))
-
-        elif step:
-            print(f"Unknown step: {step}")
+        # Add to chain: set_state -> task -> break -> set_state
+        todo.append(task_set_state.subtask(
+            args=[target.id, survey_config['state_acquiring']], immutable=True))
+        todo.append(task_func.subtask(
+            args=[target.id, False], immutable=True))
+        todo.append(task_break_if_failed.subtask(
+            args=[target.id], immutable=True))
+        todo.append(task_set_state.subtask(
+            args=[target.id, survey_config['state_acquired']], immutable=True))
 
     if todo:
         # Add finalize at the end

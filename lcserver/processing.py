@@ -6,6 +6,8 @@ from io import BytesIO
 
 from functools import partial
 
+from .surveys import survey_source
+
 import numpy as np
 
 from astropy.wcs import WCS
@@ -177,6 +179,18 @@ def pickle_from_file(filename):
 
 
 # Acquire basic info on the target
+@survey_source(
+    name='Target Info',
+    short_name='Info',
+    state_acquiring='acquiring info',
+    state_acquired='info acquired',
+    log_file='info.log',
+    output_files=['info.log', 'galaxy_map.png'],
+    button_text='Get Target Info',
+    button_class='btn-info',
+    help_text='Resolve target coordinates and fetch catalog photometry',
+    order=1,
+)
 def target_info(config, basepath=None, verbose=True, show=False):
     # Simple wrapper around print for logging in verbose mode only
     log = (verbose if callable(verbose) else print) if verbose else lambda *args,**kwargs: None
@@ -418,6 +432,26 @@ def gaussian_smoothing(x, y, dy, scale=100, nsteps=1000):
 
 
 # Get ZTF lightcurve
+@survey_source(
+    name='Zwicky Transient Facility',
+    short_name='ZTF',
+    state_acquiring='acquiring ZTF lightcurve',
+    state_acquired='ZTF lightcurve acquired',
+    log_file='ztf.log',
+    output_files=['ztf.log', 'ztf_lc.png', 'ztf_color_mag.png'],
+    button_text='Get ZTF lightcurve',
+    form_fields={
+        'ztf_color_model': {
+            'type': 'choice',
+            'label': 'Color model',
+            'choices': [('constant', 'Constant'), ('gp', 'GP smoothing')],
+            'initial': 'constant',
+            'required': False,
+        }
+    },
+    help_text='ZTF optical transient survey (g/r bands)',
+    order=10,
+)
 def target_ztf(config, basepath=None, verbose=True, show=False):
     # Simple wrapper around print for logging in verbose mode only
     log = (verbose if callable(verbose) else print) if verbose else lambda *args,**kwargs: None
@@ -607,6 +641,17 @@ def target_ztf(config, basepath=None, verbose=True, show=False):
 from pyasassn.client import SkyPatrolClient # Installed via %pip install skypatrol
 
 # Get ASAS-SN lightcurve
+@survey_source(
+    name='ASAS-SN',
+    short_name='ASAS-SN',
+    state_acquiring='acquiring ASAS-SN lightcurve',
+    state_acquired='ASAS-SN lightcurve acquired',
+    log_file='asas.log',
+    output_files=['asas.log', 'asas_lc.png', 'asas_color_mag.png'],
+    button_text='Get ASAS-SN lightcurve',
+    help_text='All-Sky Automated Survey for Supernovae',
+    order=20,
+)
 def target_asas(config, basepath=None, verbose=True, show=False):
     # Simple wrapper around print for logging in verbose mode only
     log = (verbose if callable(verbose) else print) if verbose else lambda *args,**kwargs: None
@@ -699,6 +744,17 @@ def target_asas(config, basepath=None, verbose=True, show=False):
 import lightkurve as lk
 
 # Get TESS lightcurves
+@survey_source(
+    name='TESS',
+    short_name='TESS',
+    state_acquiring='acquiring TESS lightcurves',
+    state_acquired='TESS lightcurves acquired',
+    log_file='tess.log',
+    output_files=['tess.log', 'tess_lc_*.vot', 'tess_lc_*.png'],
+    button_text='Get TESS lightcurves',
+    help_text='NASA TESS space telescope',
+    order=30,
+)
 def target_tess(config, basepath=None, verbose=True, show=False):
     # Simple wrapper around print for logging in verbose mode only
     log = (verbose if callable(verbose) else print) if verbose else lambda *args,**kwargs: None
@@ -788,6 +844,17 @@ def target_tess(config, basepath=None, verbose=True, show=False):
 
 
 # Get DASCH lightcurve
+@survey_source(
+    name='DASCH',
+    short_name='DASCH',
+    state_acquiring='acquiring DASCH lightcurve',
+    state_acquired='DASCH lightcurve acquired',
+    log_file='dasch.log',
+    output_files=['dasch.log', 'dasch_lc.png'],
+    button_text='Get DASCH lightcurve',
+    help_text='Harvard plate archive (historical data)',
+    order=40,
+)
 def target_dasch(config, basepath=None, verbose=True, show=False):
     # Simple wrapper around print for logging in verbose mode only
     log = (verbose if callable(verbose) else print) if verbose else lambda *args,**kwargs: None
@@ -966,6 +1033,17 @@ def target_dasch(config, basepath=None, verbose=True, show=False):
 import pyvo as vo
 
 # Get APPLAUSE lightcurve
+@survey_source(
+    name='APPLAUSE',
+    short_name='APPLAUSE',
+    state_acquiring='acquiring APPLAUSE lightcurve',
+    state_acquired='APPLAUSE lightcurve acquired',
+    log_file='applause.log',
+    output_files=['applause.log', 'applause_lc.png'],
+    button_text='Get APPLAUSE lightcurve',
+    help_text='European plate archive (Dec > -30 deg)',
+    order=50,
+)
 def target_applause(config, basepath=None, verbose=True, show=False):
     # Simple wrapper around print for logging in verbose mode only
     log = (verbose if callable(verbose) else print) if verbose else lambda *args,**kwargs: None
@@ -1085,6 +1163,25 @@ def target_applause(config, basepath=None, verbose=True, show=False):
 
 
 # Get Mini-MegaTORTORA lightcurve
+@survey_source(
+    name='Mini-MegaTORTORA',
+    short_name='MMT9',
+    state_acquiring='acquiring Mini-MegaTORTORA lightcurve',
+    state_acquired='Mini-MegaTORTORA lightcurve acquired',
+    log_file='mmt9.log',
+    output_files=['mmt9.log', 'mmt9_lc.png'],
+    button_text='Get Mini-MegaTORTORA lightcurve',
+    form_fields={
+        'mmt9_sr': {
+            'type': 'float',
+            'label': 'Search radius, arcsec',
+            'initial': 5.0,
+            'required': False,
+        }
+    },
+    help_text='Russian wide-field optical survey',
+    order=60,
+)
 def target_mmt9(config, basepath=None, verbose=True, show=False):
     # Simple wrapper around print for logging in verbose mode only
     log = (verbose if callable(verbose) else print) if verbose else lambda *args,**kwargs: None
@@ -1231,6 +1328,18 @@ combined_lc_rules = {
 }
 
 # Get combined lightcurve
+@survey_source(
+    name='Combined Lightcurve',
+    short_name='Combined',
+    state_acquiring='acquiring combined lightcurve',
+    state_acquired='combined lightcurve acquired',
+    log_file='combined.log',
+    output_files=['combined.log', 'combined_lc.png'],
+    button_text='Get combined lightcurve',
+    button_class='btn-success',
+    help_text='Multi-survey combined plot',
+    order=100,
+)
 def target_combined(config, basepath=None, verbose=True, show=False):
     # Simple wrapper around print for logging in verbose mode only
     log = (verbose if callable(verbose) else print) if verbose else lambda *args,**kwargs: None
