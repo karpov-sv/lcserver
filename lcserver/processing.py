@@ -792,11 +792,6 @@ def target_dasch(config, basepath=None, verbose=True, show=False):
     if 'target_ra' not in config or 'target_dec' not in config:
         raise RuntimeError("Cannot operate without target coordinates")
 
-    if config.get('target_b') < 0:
-        log("DASCH is not currently available for Southern Galactic hemisphere")
-        return
-
-
     cachename = f"dasch_{config['target_ra']:.4f}_{config['target_dec']:.4f}.vot"
 
     if os.path.exists(os.path.join(basepath, 'cache', cachename)):
@@ -807,22 +802,103 @@ def target_dasch(config, basepath=None, verbose=True, show=False):
 
         log(f"Requesting DASCH lightcurve for {config['target_name']} within {dasch_sr:.1f} arcsec")
 
-        baseurl = "http://dasch.rc.fas.harvard.edu"
-        url = f"{baseurl}/lightcurve_cat_input.php?nmin=1&box={dasch_sr}&source=atlas&coo={config['target_ra']}+{config['target_dec']}"
-        res = requests.get(url)
-        m = re.search(r'/tmp/(\w+)/object', res.text)
-        if not m:
-            raise RuntimeError('Error downloading DASCH data')
-        token = m[1]
-        url2 = f"http://dasch.rc.fas.harvard.edu/lightcurve_data.php?dbfilename=/tmp/{token}/object_{token}.db&vofilename=/tmp/{token}/object_{token}.xml.gz&tmpdir={token}&REF=object&source=atlas"
-        res2 = requests.get(url2)
+        # New DASCH DR7 API
+        base_url = "https://api.starglass.cfa.harvard.edu/public"
+        refcat = "atlas"  # Could also use "apass"
 
-        m = re.search(r'"tmp/\w+/([^s][^/"]+\.xml\.gz)"', res2.text)
-        if not m:
-            raise RuntimeError('Error downloading DASCH data')
-        fname = m[1]
-        url3 = f"{baseurl}/tmp/{token}/{fname}"
-        dasch = Table.read(url3)
+        # Step 1: Query catalog to find source
+        querycat_url = f"{base_url}/dasch/dr7/querycat"
+        querycat_payload = {
+            "refcat": refcat,
+            "ra_deg": config['target_ra'],
+            "dec_deg": config['target_dec'],
+            "radius_arcsec": dasch_sr
+        }
+
+        log(f"Querying DASCH catalog at RA={config['target_ra']:.4f}, Dec={config['target_dec']:.4f}")
+
+        try:
+            response = requests.post(querycat_url, json=querycat_payload, timeout=30)
+            response.raise_for_status()
+        except requests.exceptions.RequestException as e:
+            raise RuntimeError(f'Error querying DASCH catalog: {e}')
+
+        # Parse CSV response
+        csv_lines = response.json()
+        if not csv_lines or len(csv_lines) < 2:
+            raise RuntimeError('No sources found in DASCH catalog')
+
+        # Parse CSV to table
+        import csv
+        import io
+        csv_text = '\n'.join(csv_lines)
+        reader = csv.DictReader(io.StringIO(csv_text))
+        sources = list(reader)
+
+        if not sources:
+            raise RuntimeError('No sources found in DASCH catalog')
+
+        # Find closest source based on angular separation
+        separations = []
+        for src in sources:
+            dra = float(src['dra_asec'])
+            ddec = float(src['ddec_asec'])
+            sep = np.sqrt(dra**2 + ddec**2)
+            separations.append(sep)
+
+        closest_idx = np.argmin(separations)
+        source = sources[closest_idx]
+        ref_number = int(source['ref_number'])
+        gsc_bin_index = int(source['gsc_bin_index'])
+
+        log(f"Found {len(sources)} sources, using closest one (sep={separations[closest_idx]:.2f} arcsec)")
+        log(f"Source: ref_number={ref_number}, gsc_bin_index={gsc_bin_index}, stdmag={source.get('stdmag', 'N/A')}")
+
+        # Step 2: Get lightcurve for the source
+        lightcurve_url = f"{base_url}/dasch/dr7/lightcurve"
+        lightcurve_payload = {
+            "refcat": refcat,
+            "ref_number": ref_number,
+            "gsc_bin_index": gsc_bin_index
+        }
+
+        log(f"Requesting lightcurve data...")
+
+        try:
+            response = requests.post(lightcurve_url, json=lightcurve_payload, timeout=60)
+            response.raise_for_status()
+        except requests.exceptions.RequestException as e:
+            raise RuntimeError(f'Error downloading DASCH lightcurve: {e}')
+
+        # Parse CSV response
+        csv_lines = response.json()
+        if not csv_lines or len(csv_lines) < 2:
+            raise RuntimeError('No lightcurve data returned from DASCH')
+
+        # Parse CSV to table
+        csv_text = '\n'.join(csv_lines)
+        reader = csv.DictReader(io.StringIO(csv_text))
+        rows = list(reader)
+
+        if not rows:
+            raise RuntimeError('No lightcurve data points found')
+
+        # Convert to astropy Table with proper column names
+        # Note: API returns snake_case column names
+        dasch = Table()
+
+        # Parse required columns (handle empty values gracefully)
+        dasch['ExposureDate'] = [float(row['date_jd']) if row['date_jd'] else np.nan for row in rows]
+        dasch['magcal_magdep'] = [float(row['magcal_magdep']) if row['magcal_magdep'] else np.nan for row in rows]
+        dasch['magcal_local_rms'] = [float(row['magcal_local_rms']) if row['magcal_local_rms'] else np.nan for row in rows]
+        dasch['AFLAGS'] = [int(row['aflags']) if row['aflags'] else 0 for row in rows]
+
+        # Optional: add more columns if available
+        if 'limiting_mag_local' in rows[0]:
+            dasch['limiting_mag_local'] = [float(row['limiting_mag_local']) if row['limiting_mag_local'] else np.nan for row in rows]
+
+        # Filter out rows with invalid data
+        dasch = dasch[np.isfinite(dasch['ExposureDate'])]
 
         try:
             os.makedirs(os.path.join(basepath, 'cache'))
