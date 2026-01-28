@@ -435,15 +435,17 @@ def targets(request, id=None):
 
         all_forms = {}
 
-        all_forms['new_target'] = forms.TargetNewForm(request.POST or None)
-        all_forms['filter'] = forms.TargetsFilterForm(request.POST or None)
+        # Only pass POST data to the form that was actually submitted
+        form_type = request.POST.get('form_type') if request.method == 'POST' else None
+
+        all_forms['new_target'] = forms.TargetNewForm(request.POST if form_type == 'new_target' else None)
+        all_forms['filter'] = forms.TargetsFilterForm(request.POST if form_type == 'filter' else None)
 
         for name,form in all_forms.items():
             context['form_'+name] = form
 
         if request.method == 'POST':
-            # Handle forms
-            form_type = request.POST.get('form_type')
+            # Handle forms (form_type already extracted above)
             form = all_forms.get(form_type)
 
             if form and form.is_valid():

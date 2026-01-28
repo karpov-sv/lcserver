@@ -52,4 +52,21 @@
     No targets found
   {% endif %}
 
+  <!-- New Target Form at bottom -->
+  {% if user.is_authenticated %}
+    <hr class="my-4">
+    <h3>
+      Create New Target
+      <span class="span-help-popover float-end" title="Create new target">
+        <p>
+          You may create new target here. Upon creation, you will be redirected to the dedicated target page, where you may analyze it.
+        </p>
+      </span>
+    </h3>
+    {% crispy form_new_target %}
+  {% else %}
+    <hr class="my-4">
+    <p>Please <a href="{% url 'login' %}">log in</a> to create new targets.</p>
+  {% endif %}
+
 {% endblock %}
