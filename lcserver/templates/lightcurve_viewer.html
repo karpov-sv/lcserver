@@ -33,11 +33,22 @@
 }
 
 .source-color {
-    width: 20px;
-    height: 20px;
+    width: 30px;
+    height: 30px;
     border-radius: 3px;
     margin-right: 0.5rem;
     border: 1px solid var(--bs-border-color);
+    cursor: pointer;
+    position: relative;
+    overflow: hidden;
+}
+
+.color-input {
+    position: absolute;
+    width: 100%;
+    height: 100%;
+    opacity: 0;
+    cursor: pointer;
 }
 
 .source-label {
@@ -125,6 +136,8 @@ function initializeControls() {
             visible: true,
             offset: 0,
             markerSize: 4,
+            color: series.color,
+            defaultColor: series.color,
             data: series
         };
 
@@ -132,7 +145,10 @@ function initializeControls() {
         const control = document.createElement('div');
         control.className = 'source-control';
         control.innerHTML = `
-            <div class="source-color" style="background-color: ${series.color};"></div>
+            <div class="source-color" style="background-color: ${series.color};" id="color-display-${index}">
+                <input type="color" class="color-input" id="color-${index}"
+                       value="${series.color}" onchange="updateColor(${index})">
+            </div>
             <div class="source-label">${series.label}</div>
             <div class="source-info">${series.n_points} points</div>
             <span class="control-label">Offset:</span>
@@ -171,7 +187,7 @@ function updatePlot() {
                 type: 'data',
                 array: series.magerr,
                 visible: true,
-                color: series.color,
+                color: state.color,
                 thickness: 1,
                 width: 0
             },
@@ -179,7 +195,7 @@ function updatePlot() {
             type: 'scatter',
             name: series.label,
             marker: {
-                color: series.color,
+                color: state.color,
                 size: state.markerSize,
             },
             hovertemplate:
@@ -254,13 +270,25 @@ function updateMarkerSize(index) {
     updatePlot();
 }
 
-// Reset all offsets and marker sizes
+// Update color for a series
+function updateColor(index) {
+    const input = document.getElementById(`color-${index}`);
+    const colorDisplay = document.getElementById(`color-display-${index}`);
+    seriesState[index].color = input.value;
+    colorDisplay.style.backgroundColor = input.value;
+    updatePlot();
+}
+
+// Reset all offsets, marker sizes, and colors
 function resetOffsets() {
     lightcurveData.forEach((series, index) => {
         seriesState[index].offset = 0;
         seriesState[index].markerSize = 4;
+        seriesState[index].color = seriesState[index].defaultColor;
         document.getElementById(`offset-${index}`).value = 0;
         document.getElementById(`size-${index}`).value = 4;
+        document.getElementById(`color-${index}`).value = seriesState[index].defaultColor;
+        document.getElementById(`color-display-${index}`).style.backgroundColor = seriesState[index].defaultColor;
     });
     updatePlot();
 }
