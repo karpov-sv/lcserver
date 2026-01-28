@@ -1,4 +1,4 @@
-from django.http import HttpResponse, FileResponse, HttpResponseRedirect
+from django.http import HttpResponse, FileResponse, HttpResponseRedirect, JsonResponse
 from django.template.response import TemplateResponse
 from django.views.decorators.cache import cache_page
 from django.db.models import Q
@@ -22,8 +22,6 @@ from astropy.io import fits
 # from matplotlib.backends.backend_agg import FigureCanvasAgg as FigureCanvas
 from matplotlib.figure import Figure
 from matplotlib.axes import Axes
-
-from celery import chain
 
 from . import forms
 from . import models
@@ -410,19 +408,9 @@ def targets(request, id=None):
                     messages.success(request, f"Started getting combined lightcurve for target {target.id}")
 
                 if action == 'target_everything':
-                    target.celery_id = chain(
-                        celery_tasks.task_info.subtask(args=[target.id], immutable=True),
-                        celery_tasks.task_ztf.subtask(args=[target.id], immutable=True),
-                        celery_tasks.task_asas.subtask(args=[target.id], immutable=True),
-                        celery_tasks.task_tess.subtask(args=[target.id], immutable=True),
-                        celery_tasks.task_dasch.subtask(args=[target.id], immutable=True),
-                        celery_tasks.task_applause.subtask(args=[target.id], immutable=True),
-                        celery_tasks.task_mmt9.subtask(args=[target.id], immutable=True),
-                        celery_tasks.task_combined.subtask(args=[target.id], immutable=True),
-                    ).apply_async().id
-
-                    target.state = 'acquiring all possible data'
-                    target.save()
+                    # Use run_target_steps for proper chain management
+                    steps = ['info', 'ztf', 'asas', 'tess', 'dasch', 'applause', 'mmt9', 'combined']
+                    celery_tasks.run_target_steps(target, steps)
                     messages.success(request, f"Started doing everything for target {target.id}")
 
 
@@ -486,3 +474,25 @@ def targets(request, id=None):
         context['targets'] = targets
 
     return TemplateResponse(request, 'targets.html', context=context)
+
+
+def target_state(request, id):
+    """AJAX endpoint to get current target state."""
+    from django.shortcuts import get_object_or_404
+
+    target = get_object_or_404(models.Target, id=id)
+
+    # Permission check
+    if not request.user.is_authenticated or not (
+        request.user.is_staff or request.user == target.user
+    ):
+        return JsonResponse({'error': 'Permission denied'}, status=403)
+
+    # Refresh from database to get latest state
+    target.refresh_from_db()
+
+    return JsonResponse({
+        'state': target.state,
+        'id': target.id,
+        'celery_id': target.celery_id
+    })

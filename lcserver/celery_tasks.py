@@ -106,9 +106,16 @@ def task_finalize(self, id):
 
 @shared_task(bind=True)
 def task_set_state(self, id, state):
-    target = models.Target.objects.get(id=id)
-    target.state = state
-    target.save()
+    from django.db import transaction
+
+    with transaction.atomic():
+        target = models.Target.objects.select_for_update().get(id=id)
+        target.state = state
+        target.save()
+
+    # Force commit and close connection to ensure visibility
+    from django.db import connection
+    connection.close()
 
 
 @shared_task(bind=True, acks_late=True, reject_on_worker_lost=True)
@@ -357,3 +364,95 @@ def task_combined(self, id, finalize=True):
 
         fix_config(config)
         # Context manager handles finalize and save
+
+
+# Higher-level interface for running multiple processing steps for the target
+def run_target_steps(target, steps):
+    """
+    Build and execute a chain of processing steps for a target.
+
+    Pattern (from stdweb):
+    - For each step: set_state -> task -> break_if_failed -> set_state
+    - Add finalize at end
+    - Freeze chain to get all task IDs
+    - Store in target.celery_chain_ids (reversed)
+    - Apply chain
+    """
+    from celery import chain
+
+    todo = []
+
+    for step in steps:
+        print(f"Will run {step} step for target {target.id}")
+
+        if step == 'info':
+            todo.append(task_set_state.subtask(args=[target.id, 'acquiring info'], immutable=True))
+            todo.append(task_info.subtask(args=[target.id, False], immutable=True))
+            todo.append(task_break_if_failed.subtask(args=[target.id], immutable=True))
+            todo.append(task_set_state.subtask(args=[target.id, 'info acquired'], immutable=True))
+
+        elif step == 'ztf':
+            todo.append(task_set_state.subtask(args=[target.id, 'acquiring ZTF lightcurve'], immutable=True))
+            todo.append(task_ztf.subtask(args=[target.id, False], immutable=True))
+            todo.append(task_break_if_failed.subtask(args=[target.id], immutable=True))
+            todo.append(task_set_state.subtask(args=[target.id, 'ZTF lightcurve acquired'], immutable=True))
+
+        elif step == 'asas':
+            todo.append(task_set_state.subtask(args=[target.id, 'acquiring ASAS-SN lightcurve'], immutable=True))
+            todo.append(task_asas.subtask(args=[target.id, False], immutable=True))
+            todo.append(task_break_if_failed.subtask(args=[target.id], immutable=True))
+            todo.append(task_set_state.subtask(args=[target.id, 'ASAS-SN lightcurve acquired'], immutable=True))
+
+        elif step == 'tess':
+            todo.append(task_set_state.subtask(args=[target.id, 'acquiring TESS lightcurves'], immutable=True))
+            todo.append(task_tess.subtask(args=[target.id, False], immutable=True))
+            todo.append(task_break_if_failed.subtask(args=[target.id], immutable=True))
+            todo.append(task_set_state.subtask(args=[target.id, 'TESS lightcurves acquired'], immutable=True))
+
+        elif step == 'dasch':
+            todo.append(task_set_state.subtask(args=[target.id, 'acquiring DASCH lightcurve'], immutable=True))
+            todo.append(task_dasch.subtask(args=[target.id, False], immutable=True))
+            todo.append(task_break_if_failed.subtask(args=[target.id], immutable=True))
+            todo.append(task_set_state.subtask(args=[target.id, 'DASCH lightcurve acquired'], immutable=True))
+
+        elif step == 'applause':
+            todo.append(task_set_state.subtask(args=[target.id, 'acquiring APPLAUSE lightcurve'], immutable=True))
+            todo.append(task_applause.subtask(args=[target.id, False], immutable=True))
+            todo.append(task_break_if_failed.subtask(args=[target.id], immutable=True))
+            todo.append(task_set_state.subtask(args=[target.id, 'APPLAUSE lightcurve acquired'], immutable=True))
+
+        elif step == 'mmt9':
+            todo.append(task_set_state.subtask(args=[target.id, 'acquiring Mini-MegaTORTORA lightcurve'], immutable=True))
+            todo.append(task_mmt9.subtask(args=[target.id, False], immutable=True))
+            todo.append(task_break_if_failed.subtask(args=[target.id], immutable=True))
+            todo.append(task_set_state.subtask(args=[target.id, 'Mini-MegaTORTORA lightcurve acquired'], immutable=True))
+
+        elif step == 'combined':
+            todo.append(task_set_state.subtask(args=[target.id, 'acquiring combined lightcurve'], immutable=True))
+            todo.append(task_combined.subtask(args=[target.id, False], immutable=True))
+            todo.append(task_break_if_failed.subtask(args=[target.id], immutable=True))
+            todo.append(task_set_state.subtask(args=[target.id, 'combined lightcurve acquired'], immutable=True))
+
+        elif step:
+            print(f"Unknown step: {step}")
+
+    if todo:
+        # Add finalize at the end
+        todo.append(task_finalize.subtask(args=[target.id], immutable=True))
+
+        # Create the chain and freeze it to get task IDs before applying
+        task_chain = chain(todo)
+        res = task_chain.freeze()
+
+        # Extract all task IDs from the frozen chain (reversed order)
+        target.celery_chain_ids = list(reversed(res.as_list()))
+
+        # Apply the chain
+        result = task_chain.apply_async()
+        target.celery_id = result.id
+        target.state = 'running'
+        target.save()
+
+        return result
+
+    return None

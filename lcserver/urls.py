@@ -30,6 +30,7 @@ urlpatterns = [
     # Targets
     path('targets/', views.targets, {'id':None}, name='targets'),
     path('targets/<int:id>', views.targets, name='targets'),
+    path('targets/<int:id>/state', views.target_state, name='target_state'),
 
     path('targets/<int:id>/lightcurve/', views_lightcurve.target_lightcurve, name='target_lightcurve'),
     path('targets/<int:id>/lightcurve_data/', views_lightcurve.load_lightcurve_data, name='load_lightcurve_data'),
