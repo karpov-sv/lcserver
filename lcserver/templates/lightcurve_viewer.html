@@ -94,6 +94,26 @@
   </ol>
 </nav>
 
+<!-- Mode Toggle -->
+<div class="control-panel">
+  <h5 class="mb-3">Display Mode</h5>
+  <div class="btn-group">
+    <a href="?mode=magnitude" class="btn btn-sm {% if data_mode == 'magnitude' %}btn-primary{% else %}btn-outline-primary{% endif %}">
+      <i class="fa fa-star"></i> Magnitudes
+    </a>
+    <a href="?mode=flux" class="btn btn-sm {% if data_mode == 'flux' %}btn-primary{% else %}btn-outline-primary{% endif %}">
+      <i class="fa fa-line-chart"></i> TESS Flux
+    </a>
+  </div>
+</div>
+
+{% if no_data %}
+<div class="alert alert-warning mt-3">
+  No lightcurve data available for {{ data_mode }} mode.
+  {% if data_mode == 'flux' %}Try acquiring TESS data first.{% endif %}
+</div>
+{% endif %}
+
 <!-- Control Panel -->
 <div class="control-panel">
   <h5 class="mb-3">Data Sources</h5>
@@ -157,6 +177,10 @@
 // Parse light curve data from Django context
 const lightcurveData = {{ lightcurve_data|safe }};
 
+// Data mode constants
+const dataMode = "{{ data_mode }}";  // 'magnitude' or 'flux'
+const isMagnitudeMode = dataMode === 'magnitude';
+
 // Track state of each series
 const seriesState = {};
 
@@ -219,10 +243,14 @@ function calculatePhase(mjd, period, epoch) {
 // Prepare data for phase-folded display
 function preparePhaseData(series, period, epoch) {
     const phases = [];
-    const mags = [];
+    const values = [];
     const errs = [];
     const mjds = [];
     const datetimes = [];
+
+    // Use appropriate data keys based on mode
+    const dataKey = isMagnitudeMode ? 'mag' : 'flux';
+    const errKey = isMagnitudeMode ? 'magerr' : 'flux_err';
 
     // Calculate phases for all points
     for (let i = 0; i < series.mjd.length; i++) {
@@ -232,15 +260,15 @@ function preparePhaseData(series, period, epoch) {
         const normalizedPhase = phase >= 0 ? phase : phase + 1;
 
         phases.push(normalizedPhase);
-        mags.push(series.mag[i]);
-        errs.push(series.magerr[i]);
+        values.push(series[dataKey][i]);
+        errs.push(series[errKey][i]);
         mjds.push(series.mjd[i]);
         datetimes.push(series.datetime[i]);
     }
 
     // Wrap data to fill -0.6 to 1.6 range
     const wrappedPhases = [...phases];
-    const wrappedMags = [...mags];
+    const wrappedValues = [...values];
     const wrappedErrs = [...errs];
     const wrappedMjds = [...mjds];
     const wrappedDatetimes = [...datetimes];
@@ -249,7 +277,7 @@ function preparePhaseData(series, period, epoch) {
     for (let i = 0; i < phases.length; i++) {
         if (phases[i] >= 0.4) {
             wrappedPhases.push(phases[i] - 1);
-            wrappedMags.push(mags[i]);
+            wrappedValues.push(values[i]);
             wrappedErrs.push(errs[i]);
             wrappedMjds.push(mjds[i]);
             wrappedDatetimes.push(datetimes[i]);
@@ -260,7 +288,7 @@ function preparePhaseData(series, period, epoch) {
     for (let i = 0; i < phases.length; i++) {
         if (phases[i] < 0.6) {
             wrappedPhases.push(phases[i] + 1);
-            wrappedMags.push(mags[i]);
+            wrappedValues.push(values[i]);
             wrappedErrs.push(errs[i]);
             wrappedMjds.push(mjds[i]);
             wrappedDatetimes.push(datetimes[i]);
@@ -269,7 +297,7 @@ function preparePhaseData(series, period, epoch) {
 
     return {
         phases: wrappedPhases,
-        mags: wrappedMags,
+        values: wrappedValues,
         errs: wrappedErrs,
         mjds: wrappedMjds,
         datetimes: wrappedDatetimes
@@ -280,6 +308,11 @@ function preparePhaseData(series, period, epoch) {
 function updatePlot() {
     const traces = [];
     const isPhaseFolded = phasePeriod > 0;
+
+    // Determine value label and data keys based on mode
+    const valueLabel = isMagnitudeMode ? 'Magnitude' : 'Normalized Flux';
+    const dataKey = isMagnitudeMode ? 'mag' : 'flux';
+    const errKey = isMagnitudeMode ? 'magerr' : 'flux_err';
 
     lightcurveData.forEach((series, index) => {
         const state = seriesState[index];
@@ -292,7 +325,7 @@ function updatePlot() {
             const phaseData = preparePhaseData(series, phasePeriod, phaseEpoch);
 
             xData = phaseData.phases;
-            yData = phaseData.mags.map(m => m + state.offset);
+            yData = phaseData.values.map(v => v + state.offset);
             errData = phaseData.errs;
             customData = phaseData.mjds.map((mjd, i) => [
                 mjd,
@@ -304,22 +337,22 @@ function updatePlot() {
                 '<b>%{fullData.name}</b><br>' +
                 'Phase: %{customdata[2]:.4f}<br>' +
                 'MJD: %{customdata[0]:.2f}<br>' +
-                'Magnitude: %{y:.3f} ± %{customdata[1]:.3f}<br>' +
+                valueLabel + ': %{y:.3f} ± %{customdata[1]:.3f}<br>' +
                 '<extra></extra>';
         } else {
             // Time mode
-            const mag_with_offset = series.mag.map(m => m + state.offset);
+            const values_with_offset = series[dataKey].map(v => v + state.offset);
 
             xData = series.datetime;
-            yData = mag_with_offset;
-            errData = series.magerr;
-            customData = series.mjd.map((mjd, i) => [mjd, series.magerr[i]]);
+            yData = values_with_offset;
+            errData = series[errKey];
+            customData = series.mjd.map((mjd, i) => [mjd, series[errKey][i]]);
 
             hoverTemplate =
                 '<b>%{fullData.name}</b><br>' +
                 'Time: %{x}<br>' +
                 'MJD: %{customdata[0]:.2f}<br>' +
-                'Magnitude: %{y:.3f} ± %{customdata[1]:.3f}<br>' +
+                valueLabel + ': %{y:.3f} ± %{customdata[1]:.3f}<br>' +
                 '<extra></extra>';
         }
 
@@ -353,11 +386,19 @@ function updatePlot() {
         displaylogo: false,
     };
 
+    // Determine plot title based on mode
+    const titleText = isMagnitudeMode
+        ? '{{ target.name }} - Multi-Survey Light Curve'
+        : '{{ target.name }} - TESS Flux Light Curve';
+
+    // Determine y-axis label based on mode
+    const yAxisTitle = isMagnitudeMode ? 'Magnitude' : 'Normalized Flux';
+
     // Use newPlot for initial render, react for updates to preserve zoom state
     if (!plotInitialized) {
         const layout = {
             title: {
-                text: '{{ target.name }} - Multi-Survey Light Curve',
+                text: titleText,
                 font: { size: 18 }
             },
             xaxis: isPhaseFolded ? {
@@ -371,8 +412,8 @@ function updatePlot() {
                 zeroline: false,
             },
             yaxis: {
-                title: 'Magnitude',
-                autorange: 'reversed',  // Inverted for astronomical magnitudes
+                title: yAxisTitle,
+                autorange: isMagnitudeMode ? 'reversed' : true,  // Inverted for magnitudes, normal for flux
                 gridcolor: '#e0e0e0',
                 zeroline: false,
             },
@@ -420,7 +461,22 @@ function updatePlot() {
                         dash: 'dash'
                     }
                 }
-            ] : []
+            ] : (!isMagnitudeMode ? [
+                {
+                    type: 'line',
+                    x0: 0,
+                    y0: 1,
+                    x1: 1,
+                    y1: 1,
+                    xref: 'paper',
+                    line: {
+                        color: 'gray',
+                        width: 1,
+                        dash: 'dash',
+                        opacity: 0.5
+                    }
+                }
+            ] : [])
         };
         Plotly.newPlot('plotly-container', traces, layout, config);
         plotInitialized = true;
@@ -431,7 +487,7 @@ function updatePlot() {
 
         const layout = {
             title: {
-                text: '{{ target.name }} - Multi-Survey Light Curve',
+                text: titleText,
                 font: { size: 18 }
             },
             xaxis: isPhaseFolded ? {
@@ -448,7 +504,7 @@ function updatePlot() {
                 zeroline: false,
             },
             yaxis: {
-                title: 'Magnitude',
+                title: yAxisTitle,
                 gridcolor: '#e0e0e0',
                 // Preserve current range if it exists
                 range: currentLayout.yaxis.range,
@@ -499,7 +555,22 @@ function updatePlot() {
                         dash: 'dash'
                     }
                 }
-            ] : []
+            ] : (!isMagnitudeMode ? [
+                {
+                    type: 'line',
+                    x0: 0,
+                    y0: 1,
+                    x1: 1,
+                    y1: 1,
+                    xref: 'paper',
+                    line: {
+                        color: 'gray',
+                        width: 1,
+                        dash: 'dash',
+                        opacity: 0.5
+                    }
+                }
+            ] : [])
         };
 
         // Plotly.react updates the plot while preserving zoom/pan state
