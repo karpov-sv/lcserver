@@ -10,6 +10,7 @@ import numpy as np
 
 from astropy.wcs import WCS
 from astropy.io import fits as fits
+from astropy.io.votable import parse as votable_parse
 
 from astropy.table import Table, vstack
 from astropy.stats import mad_std
@@ -32,6 +33,53 @@ from astropy.wcs import FITSFixedWarning
 from astropy.io.fits.verify import VerifyWarning
 warnings.simplefilter(action='ignore', category=FITSFixedWarning)
 warnings.simplefilter(action='ignore', category=VerifyWarning)
+
+
+def parse_votable_lenient(xml_content):
+    """
+    Parse a VOTable from raw XML content with lenient error handling.
+
+    This function handles malformed XML that contains undefined entities,
+    which is common in some TAP service responses (e.g., APPLAUSE DR4).
+
+    Parameters
+    ----------
+    xml_content : bytes
+        Raw XML content as bytes
+
+    Returns
+    -------
+    astropy.table.Table
+        Parsed table from the VOTable
+
+    Notes
+    -----
+    Uses two strategies in order:
+    1. lxml recovery mode (if available) - automatically fixes malformed XML
+    2. Regex-based entity removal (fallback) - strips undefined entities
+
+    Examples
+    --------
+    >>> response = requests.get(tap_service_url)
+    >>> table = parse_votable_lenient(response.content)
+    """
+    try:
+        from lxml import etree
+        # Primary method: Use lxml's recovery parser to fix malformed XML
+        parser = etree.XMLParser(recover=True, encoding='utf-8')
+        tree = etree.fromstring(xml_content, parser=parser)
+        # Convert back to bytes for astropy
+        fixed_xml = etree.tostring(tree, encoding='utf-8')
+        votable = votable_parse(BytesIO(fixed_xml), verify='ignore')
+    except ImportError:
+        # Fallback method: Manually clean undefined entities with regex
+        import re
+        xml_str = xml_content.decode('utf-8', errors='ignore')
+        # Remove undefined entities (keep only standard XML entities)
+        xml_str = re.sub(r'&(?!amp;|lt;|gt;|quot;|apos;)[a-zA-Z0-9_]+;', '', xml_str)
+        votable = votable_parse(BytesIO(xml_str.encode('utf-8')), verify='ignore')
+
+    return votable.get_first_table().to_table()
 
 
 files_info = [
@@ -866,7 +914,7 @@ def target_applause(config, basepath=None, verbose=True, show=False):
             e.jd_start, e.jd_mid, e.jd_end
         FROM applause_dr4.source_calib s, applause_dr4.exposure e, applause_dr4.plate p
         WHERE
-            s.pos @ scircle(spoint(RADIANS({config['target_ra']}), RADIANS({config['target_dec']})), RADIANS({5/3600}))
+            s.pos @ scircle(spoint(RADIANS({config['target_ra']}), RADIANS({config['target_dec']})), RADIANS({applause_sr/3600}))
             AND
             s.plate_id = e.plate_id
             AND
@@ -888,8 +936,14 @@ def target_applause(config, basepath=None, verbose=True, show=False):
 
         # TODO: more intelligent error handling?
         job.raise_if_error()
-        results = job.fetch_result()
-        applause = results.to_table()
+
+        # Parse VOTable with lenient error handling
+        # The APPLAUSE TAP service sometimes returns malformed XML with undefined entities
+        result_url = job.result_uri
+        response = requests.get(result_url)
+
+        # Use helper function to parse potentially malformed VOTable
+        applause = parse_votable_lenient(response.content)
 
         try:
             os.makedirs(os.path.join(basepath, 'cache'))
