@@ -125,6 +125,9 @@ const lightcurveData = {{ lightcurve_data|safe }};
 // Track state of each series
 const seriesState = {};
 
+// Track whether plot has been initialized
+let plotInitialized = false;
+
 // Initialize series state and create controls
 function initializeControls() {
     const container = document.getElementById('source-controls');
@@ -206,39 +209,6 @@ function updatePlot() {
         });
     });
 
-    const layout = {
-        title: {
-            text: '{{ target.name }} - Multi-Survey Light Curve',
-            font: { size: 18 }
-        },
-        xaxis: {
-            title: 'Modified Julian Date (MJD)',
-            gridcolor: '#e0e0e0',
-        },
-        yaxis: {
-            title: 'Magnitude',
-            autorange: 'reversed',  // Inverted for astronomical magnitudes
-            gridcolor: '#e0e0e0',
-        },
-        hovermode: 'closest',
-        showlegend: true,
-        legend: {
-            orientation: 'v',
-            yanchor: 'top',
-            y: 1,
-            xanchor: 'right',
-            x: 1
-        },
-        margin: {
-            l: 60,
-            r: 20,
-            t: 60,
-            b: 60
-        },
-        plot_bgcolor: 'white',
-        paper_bgcolor: 'white',
-    };
-
     const config = {
         responsive: true,
         displayModeBar: true,
@@ -246,7 +216,88 @@ function updatePlot() {
         displaylogo: false,
     };
 
-    Plotly.newPlot('plotly-container', traces, layout, config);
+    // Use newPlot for initial render, react for updates to preserve zoom state
+    if (!plotInitialized) {
+        const layout = {
+            title: {
+                text: '{{ target.name }} - Multi-Survey Light Curve',
+                font: { size: 18 }
+            },
+            xaxis: {
+                title: 'Modified Julian Date (MJD)',
+                gridcolor: '#e0e0e0',
+            },
+            yaxis: {
+                title: 'Magnitude',
+                autorange: 'reversed',  // Inverted for astronomical magnitudes
+                gridcolor: '#e0e0e0',
+            },
+            hovermode: 'closest',
+            showlegend: true,
+            legend: {
+                orientation: 'v',
+                yanchor: 'top',
+                y: 1,
+                xanchor: 'right',
+                x: 1
+            },
+            margin: {
+                l: 60,
+                r: 20,
+                t: 60,
+                b: 60
+            },
+            plot_bgcolor: 'white',
+            paper_bgcolor: 'white',
+        };
+        Plotly.newPlot('plotly-container', traces, layout, config);
+        plotInitialized = true;
+    } else {
+        // Get current axis ranges to preserve zoom
+        const plotDiv = document.getElementById('plotly-container');
+        const currentLayout = plotDiv.layout;
+
+        const layout = {
+            title: {
+                text: '{{ target.name }} - Multi-Survey Light Curve',
+                font: { size: 18 }
+            },
+            xaxis: {
+                title: 'Modified Julian Date (MJD)',
+                gridcolor: '#e0e0e0',
+                // Preserve current range if it exists
+                range: currentLayout.xaxis.range,
+                autorange: currentLayout.xaxis.autorange,
+            },
+            yaxis: {
+                title: 'Magnitude',
+                gridcolor: '#e0e0e0',
+                // Preserve current range if it exists
+                range: currentLayout.yaxis.range,
+                autorange: currentLayout.yaxis.autorange,
+            },
+            hovermode: 'closest',
+            showlegend: true,
+            legend: {
+                orientation: 'v',
+                yanchor: 'top',
+                y: 1,
+                xanchor: 'right',
+                x: 1
+            },
+            margin: {
+                l: 60,
+                r: 20,
+                t: 60,
+                b: 60
+            },
+            plot_bgcolor: 'white',
+            paper_bgcolor: 'white',
+        };
+
+        // Plotly.react updates the plot while preserving zoom/pan state
+        Plotly.react('plotly-container', traces, layout, config);
+    }
 }
 
 // Toggle series visibility
