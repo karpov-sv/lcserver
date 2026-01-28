@@ -67,8 +67,11 @@
     </div>
     {% endif %}
     <div>
-      <a href="{% url 'target_files' id=target.id %}" class="text-decoration-none text-body" title="Browse task files">
+      <a href="{% url 'target_files' id=target.id %}" class="text-decoration-none text-body me-2" title="Browse task files">
         <i class="fa fa-folder-open"></i>
+      </a>
+      <a href="{% url 'target_lightcurve' id=target.id %}" class="text-decoration-none text-body me-2" title="Interactive light curve viewer">
+        <i class="fa fa-line-chart"></i>
       </a>
       Target {{ target.id }} created by <span class="text-primary fw-bold">{{ target.user|user }}</span> on {{ target.created|timestamp }} - {{ target.created|naturaltime }}
       {% if not user_may_submit %}

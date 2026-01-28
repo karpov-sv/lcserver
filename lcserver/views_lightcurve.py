@@ -77,12 +77,16 @@ def target_lightcurve(request, id):
                     label += f' {filt}'
 
                 # Prepare data for this series
+                # Convert times to ISO format strings for JavaScript
+                time_iso = [data['time'][i].iso for i in range(len(data)) if idx[i]]
+
                 series_data = {
                     'source_id': source_id,
                     'label': label,
                     'filter': str(filt) if filt else '',
                     'color': rules.get('color', '#000000'),
                     'mjd': x[idx].tolist(),
+                    'datetime': time_iso,
                     'mag': y[idx].tolist(),
                     'magerr': dy[idx].tolist(),
                     'n_points': int(np.sum(idx)),

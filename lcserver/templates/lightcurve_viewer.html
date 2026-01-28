@@ -115,6 +115,41 @@
   </div>
 </div>
 
+<!-- Phase Folding Panel -->
+<div class="control-panel mt-3">
+  <h5 class="mb-3">Phase Folding</h5>
+
+  <div class="row g-2 align-items-center">
+    <div class="col-auto">
+      <label for="period-input" class="col-form-label col-form-label-sm">Period (days):</label>
+    </div>
+    <div class="col-auto">
+      <input type="number" class="form-control form-control-sm" id="period-input"
+             style="width: 120px;" step="0.001" min="0" placeholder="0 = off"
+             onchange="updatePhaseFolding()">
+    </div>
+    <div class="col-auto">
+      <label for="epoch-input" class="col-form-label col-form-label-sm">T₀ (MJD):</label>
+    </div>
+    <div class="col-auto">
+      <input type="number" class="form-control form-control-sm" id="epoch-input"
+             style="width: 120px;" step="0.001" value="0" placeholder="0"
+             onchange="updatePhaseFolding()">
+    </div>
+    <div class="col-auto">
+      <button class="btn btn-sm btn-outline-secondary" onclick="clearPhaseFolding()">
+        <i class="fa fa-times"></i> Clear
+      </button>
+    </div>
+  </div>
+
+  <div class="mt-2">
+    <small class="text-muted">
+      Set period to enable phase folding. Phase range: -0.6 to 1.6 with wrapped data.
+    </small>
+  </div>
+</div>
+
 <!-- Plot Container -->
 <div id="plotly-container" style="width: 100%; height: 600px;"></div>
 
@@ -127,6 +162,10 @@ const seriesState = {};
 
 // Track whether plot has been initialized
 let plotInitialized = false;
+
+// Phase folding parameters
+let phasePeriod = 0;  // Period in days (0 = disabled)
+let phaseEpoch = 0;   // T0 in MJD
 
 // Initialize series state and create controls
 function initializeControls() {
@@ -172,23 +211,125 @@ function initializeControls() {
     });
 }
 
+// Calculate phase from MJD
+function calculatePhase(mjd, period, epoch) {
+    return ((mjd - epoch) % period) / period;
+}
+
+// Prepare data for phase-folded display
+function preparePhaseData(series, period, epoch) {
+    const phases = [];
+    const mags = [];
+    const errs = [];
+    const mjds = [];
+    const datetimes = [];
+
+    // Calculate phases for all points
+    for (let i = 0; i < series.mjd.length; i++) {
+        const phase = calculatePhase(series.mjd[i], period, epoch);
+
+        // Normalize phase to [0, 1)
+        const normalizedPhase = phase >= 0 ? phase : phase + 1;
+
+        phases.push(normalizedPhase);
+        mags.push(series.mag[i]);
+        errs.push(series.magerr[i]);
+        mjds.push(series.mjd[i]);
+        datetimes.push(series.datetime[i]);
+    }
+
+    // Wrap data to fill -0.6 to 1.6 range
+    const wrappedPhases = [...phases];
+    const wrappedMags = [...mags];
+    const wrappedErrs = [...errs];
+    const wrappedMjds = [...mjds];
+    const wrappedDatetimes = [...datetimes];
+
+    // Add wrapped copies for phase > 0.4 at negative phases (for -0.6 to 0 range)
+    for (let i = 0; i < phases.length; i++) {
+        if (phases[i] >= 0.4) {
+            wrappedPhases.push(phases[i] - 1);
+            wrappedMags.push(mags[i]);
+            wrappedErrs.push(errs[i]);
+            wrappedMjds.push(mjds[i]);
+            wrappedDatetimes.push(datetimes[i]);
+        }
+    }
+
+    // Add wrapped copies for phase < 0.6 at phase + 1 (for 1.0 to 1.6 range)
+    for (let i = 0; i < phases.length; i++) {
+        if (phases[i] < 0.6) {
+            wrappedPhases.push(phases[i] + 1);
+            wrappedMags.push(mags[i]);
+            wrappedErrs.push(errs[i]);
+            wrappedMjds.push(mjds[i]);
+            wrappedDatetimes.push(datetimes[i]);
+        }
+    }
+
+    return {
+        phases: wrappedPhases,
+        mags: wrappedMags,
+        errs: wrappedErrs,
+        mjds: wrappedMjds,
+        datetimes: wrappedDatetimes
+    };
+}
+
 // Update plot
 function updatePlot() {
     const traces = [];
+    const isPhaseFolded = phasePeriod > 0;
 
     lightcurveData.forEach((series, index) => {
         const state = seriesState[index];
         if (!state.visible) return;
 
-        // Apply offset to magnitudes
-        const mag_with_offset = series.mag.map(m => m + state.offset);
+        let xData, yData, errData, customData, hoverTemplate;
+
+        if (isPhaseFolded) {
+            // Phase-folded mode
+            const phaseData = preparePhaseData(series, phasePeriod, phaseEpoch);
+
+            xData = phaseData.phases;
+            yData = phaseData.mags.map(m => m + state.offset);
+            errData = phaseData.errs;
+            customData = phaseData.mjds.map((mjd, i) => [
+                mjd,
+                phaseData.errs[i],
+                phaseData.phases[i]
+            ]);
+
+            hoverTemplate =
+                '<b>%{fullData.name}</b><br>' +
+                'Phase: %{customdata[2]:.4f}<br>' +
+                'MJD: %{customdata[0]:.2f}<br>' +
+                'Magnitude: %{y:.3f} ± %{customdata[1]:.3f}<br>' +
+                '<extra></extra>';
+        } else {
+            // Time mode
+            const mag_with_offset = series.mag.map(m => m + state.offset);
+
+            xData = series.datetime;
+            yData = mag_with_offset;
+            errData = series.magerr;
+            customData = series.mjd.map((mjd, i) => [mjd, series.magerr[i]]);
+
+            hoverTemplate =
+                '<b>%{fullData.name}</b><br>' +
+                'Time: %{x}<br>' +
+                'MJD: %{customdata[0]:.2f}<br>' +
+                'Magnitude: %{y:.3f} ± %{customdata[1]:.3f}<br>' +
+                '<extra></extra>';
+        }
 
         traces.push({
-            x: series.mjd,
-            y: mag_with_offset,
+            x: xData,
+            y: yData,
+            customdata: customData,
             error_y: {
                 type: 'data',
-                array: series.magerr,
+                array: errData,
                 visible: true,
                 color: state.color,
                 thickness: 1,
@@ -201,11 +342,7 @@ function updatePlot() {
                 color: state.color,
                 size: state.markerSize,
             },
-            hovertemplate:
-                '<b>%{fullData.name}</b><br>' +
-                'MJD: %{x:.2f}<br>' +
-                'Magnitude: %{y:.3f}<br>' +
-                '<extra></extra>',
+            hovertemplate: hoverTemplate,
         });
     });
 
@@ -223,14 +360,21 @@ function updatePlot() {
                 text: '{{ target.name }} - Multi-Survey Light Curve',
                 font: { size: 18 }
             },
-            xaxis: {
-                title: 'Modified Julian Date (MJD)',
+            xaxis: isPhaseFolded ? {
+                title: `Phase (P = ${phasePeriod.toFixed(6)} days, T₀ = ${phaseEpoch.toFixed(2)} MJD)`,
                 gridcolor: '#e0e0e0',
+                range: [-0.6, 1.6],
+                zeroline: false,
+            } : {
+                title: 'Universal Time (UT)',
+                gridcolor: '#e0e0e0',
+                zeroline: false,
             },
             yaxis: {
                 title: 'Magnitude',
                 autorange: 'reversed',  // Inverted for astronomical magnitudes
                 gridcolor: '#e0e0e0',
+                zeroline: false,
             },
             hovermode: 'closest',
             showlegend: true,
@@ -249,6 +393,34 @@ function updatePlot() {
             },
             plot_bgcolor: 'white',
             paper_bgcolor: 'white',
+            shapes: isPhaseFolded ? [
+                {
+                    type: 'line',
+                    x0: 0,
+                    y0: 0,
+                    x1: 0,
+                    y1: 1,
+                    yref: 'paper',
+                    line: {
+                        color: 'gray',
+                        width: 1,
+                        dash: 'dash'
+                    }
+                },
+                {
+                    type: 'line',
+                    x0: 1,
+                    y0: 0,
+                    x1: 1,
+                    y1: 1,
+                    yref: 'paper',
+                    line: {
+                        color: 'gray',
+                        width: 1,
+                        dash: 'dash'
+                    }
+                }
+            ] : []
         };
         Plotly.newPlot('plotly-container', traces, layout, config);
         plotInitialized = true;
@@ -262,12 +434,18 @@ function updatePlot() {
                 text: '{{ target.name }} - Multi-Survey Light Curve',
                 font: { size: 18 }
             },
-            xaxis: {
-                title: 'Modified Julian Date (MJD)',
+            xaxis: isPhaseFolded ? {
+                title: `Phase (P = ${phasePeriod.toFixed(6)} days, T₀ = ${phaseEpoch.toFixed(2)} MJD)`,
                 gridcolor: '#e0e0e0',
-                // Preserve current range if it exists
+                range: [-0.6, 1.6],
+                zeroline: false,
+            } : {
+                title: 'Universal Time (UT)',
+                gridcolor: '#e0e0e0',
+                // Preserve current range if it exists (only in time mode)
                 range: currentLayout.xaxis.range,
                 autorange: currentLayout.xaxis.autorange,
+                zeroline: false,
             },
             yaxis: {
                 title: 'Magnitude',
@@ -275,6 +453,7 @@ function updatePlot() {
                 // Preserve current range if it exists
                 range: currentLayout.yaxis.range,
                 autorange: currentLayout.yaxis.autorange,
+                zeroline: false,
             },
             hovermode: 'closest',
             showlegend: true,
@@ -293,10 +472,69 @@ function updatePlot() {
             },
             plot_bgcolor: 'white',
             paper_bgcolor: 'white',
+            shapes: isPhaseFolded ? [
+                {
+                    type: 'line',
+                    x0: 0,
+                    y0: 0,
+                    x1: 0,
+                    y1: 1,
+                    yref: 'paper',
+                    line: {
+                        color: 'gray',
+                        width: 1,
+                        dash: 'dash'
+                    }
+                },
+                {
+                    type: 'line',
+                    x0: 1,
+                    y0: 0,
+                    x1: 1,
+                    y1: 1,
+                    yref: 'paper',
+                    line: {
+                        color: 'gray',
+                        width: 1,
+                        dash: 'dash'
+                    }
+                }
+            ] : []
         };
 
         // Plotly.react updates the plot while preserving zoom/pan state
         Plotly.react('plotly-container', traces, layout, config);
+    }
+}
+
+// Update phase folding parameters and redraw plot
+function updatePhaseFolding() {
+    const periodInput = document.getElementById('period-input');
+    const epochInput = document.getElementById('epoch-input');
+
+    phasePeriod = parseFloat(periodInput.value) || 0;
+    phaseEpoch = parseFloat(epochInput.value) || 0;
+
+    // Force reinitialize plot when switching modes
+    if (plotInitialized) {
+        plotInitialized = false;
+        updatePlot();
+        plotInitialized = true;
+    }
+}
+
+// Clear phase folding
+function clearPhaseFolding() {
+    document.getElementById('period-input').value = '';
+    document.getElementById('epoch-input').value = '0';
+    phasePeriod = 0;
+    phaseEpoch = 0;
+
+    // Force reinitialize plot
+    if (plotInitialized) {
+        plotInitialized = false;
+        updatePlot();
+        plotInitialized = true;
     }
 }
 
