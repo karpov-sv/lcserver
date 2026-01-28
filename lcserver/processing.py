@@ -125,6 +125,11 @@ files_applause = [
     'applause_lc.png',
 ]
 
+files_mmt9 = [
+    'mmt9.log',
+    'mmt9_lc.png',
+]
+
 files_combined = [
     'combined.log',
     'combined_lc.png',
@@ -136,6 +141,7 @@ cleanup_asas = files_asas
 cleanup_tess = files_tess
 cleanup_dasch = files_dasch
 cleanup_applause = files_applause
+cleanup_mmt9 = files_mmt9
 cleanup_combined = files_combined
 
 
@@ -1078,12 +1084,150 @@ def target_applause(config, basepath=None, verbose=True, show=False):
     log("APPLAUSE data written to file:applause.txt")
 
 
+# Get Mini-MegaTORTORA lightcurve
+def target_mmt9(config, basepath=None, verbose=True, show=False):
+    # Simple wrapper around print for logging in verbose mode only
+    log = (verbose if callable(verbose) else print) if verbose else lambda *args,**kwargs: None
+
+    # Cleanup stale plots
+    cleanup_paths(cleanup_mmt9, basepath=basepath)
+
+    if 'target_ra' not in config or 'target_dec' not in config:
+        raise RuntimeError("Cannot operate without target coordinates")
+
+    cachename = f"mmt9_{config['target_ra']:.4f}_{config['target_dec']:.4f}.vot"
+
+    if os.path.exists(os.path.join(basepath, 'cache', cachename)):
+        log(f"Loading Mini-MegaTORTORA lightcurve from the cache")
+        mmt9 = Table.read(os.path.join(basepath, 'cache', cachename))
+    else:
+        mmt9_sr = config.get('mmt9_sr', 5.0)  # Search radius in arcsec
+
+        log(f"Requesting Mini-MegaTORTORA lightcurve for {config['target_name']} within {mmt9_sr:.1f} arcsec")
+
+        # Convert search radius to degrees
+        sr_deg = mmt9_sr / 3600.0
+
+        # Query API
+        api_url = f"http://survey.favor2.info/favor2/photometry/mjd"
+        params = {
+            "sr": sr_deg,
+            "ra": config['target_ra'],
+            "dec": config['target_dec']
+        }
+
+        log(f"Querying Mini-MegaTORTORA at RA={config['target_ra']:.4f}, Dec={config['target_dec']:.4f}")
+
+        try:
+            response = requests.get(api_url, params=params, timeout=60)
+            response.raise_for_status()
+        except requests.exceptions.RequestException as e:
+            raise RuntimeError(f'Error downloading Mini-MegaTORTORA lightcurve: {e}')
+
+        # Parse whitespace-separated table with commented header
+        from io import StringIO
+        try:
+            mmt9 = Table.read(response.text, format='ascii.commented_header', delimiter=' ')
+            mmt9.rename_column('MJD', 'mjd')
+            mmt9.rename_column('Mag', 'mag')
+            mmt9.rename_column('Magerr', 'magerr')
+
+        except Exception as e:
+            raise RuntimeError(f'Error parsing Mini-MegaTORTORA data: {e}')
+
+        if not len(mmt9):
+            raise RuntimeError('No data returned from Mini-MegaTORTORA')
+
+        log(f"Downloaded {len(mmt9)} data points from Mini-MegaTORTORA")
+
+        try:
+            os.makedirs(os.path.join(basepath, 'cache'))
+        except:
+            pass
+
+        mmt9.write(os.path.join(basepath, 'cache', cachename),
+                   format='votable', overwrite=True)
+
+    log(f"{len(mmt9)} original data points")
+
+    # Convert time to MJD if not already
+    if 'mjd' not in mmt9.colnames:
+        if 'time' in mmt9.colnames:
+            mmt9['mjd'] = mmt9['time']
+        else:
+            raise RuntimeError('Cannot find time column in Mini-MegaTORTORA data')
+
+    mmt9['time'] = Time(mmt9['mjd'], format='mjd')
+    mmt9.sort('time')
+
+    # Identify magnitude and error columns
+    # Common column names: mag, mag_V, V, flux, etc.
+    mag_col = None
+    err_col = None
+
+    for col in ['mag', 'mag_V', 'V', 'magnitude']:
+        if col in mmt9.colnames:
+            mag_col = col
+            break
+
+    for col in ['magerr', 'mag_err', 'err', 'error']:
+        if col in mmt9.colnames:
+            err_col = col
+            break
+
+    if mag_col is None:
+        raise RuntimeError('Cannot find magnitude column in Mini-MegaTORTORA data')
+
+    # Filter out bad data
+    mmt9 = mmt9[np.isfinite(mmt9[mag_col])]
+    mmt9 = mmt9[mmt9[mag_col] > 0]
+
+    if err_col:
+        mmt9 = mmt9[np.isfinite(mmt9[err_col])]
+        mmt9 = mmt9[mmt9[err_col] > 0]
+        mmt9 = mmt9[mmt9[err_col] < 1.0]  # Filter out large errors
+
+    # Standardize column names
+    mmt9['mag_g'] = mmt9[mag_col]
+    if err_col:
+        mmt9['magerr'] = mmt9[err_col]
+    else:
+        # Use default error if not provided
+        mmt9['magerr'] = np.full(len(mmt9), 0.1)
+
+    log(f"{len(mmt9)} data points after filtering")
+    if not len(mmt9):
+        return
+
+    # Plot lightcurve
+    with plots.figure_saver(os.path.join(basepath, 'mmt9_lc.png'), figsize=(12, 4), show=show) as fig:
+        ax = fig.add_subplot(1, 1, 1)
+
+        ax.errorbar(mmt9['time'].datetime, mmt9['mag_g'], mmt9['magerr'], fmt='.', label='V')
+
+        ax.invert_yaxis()
+        ax.grid(alpha=0.2)
+
+        ax.set_ylabel('V magnitude')
+        ax.set_xlabel('Time')
+        ax.set_title(f"{config['target_name']} - Mini-MegaTORTORA")
+
+    # Time cannot be serialized to VOTable
+    mmt9[[_ for _ in mmt9.columns if _ != 'time']].write(os.path.join(basepath, 'mmt9.vot'),
+                                                          format='votable', overwrite=True)
+    mmt9[[_ for _ in mmt9.columns if _ != 'time']].write(os.path.join(basepath, 'mmt9.txt'),
+                                                          format='ascii.commented_header', overwrite=True)
+    log("Mini-MegaTORTORA data written to file:mmt9.vot")
+    log("Mini-MegaTORTORA data written to file:mmt9.txt")
+
+
 combined_lc_rules = {
     'asas': {'name': 'ASAS-SN', 'filename': 'asas.vot', 'mag': 'mag_g', 'err': 'mag_err', 'filter': 'phot_filter', 'short': True},
     'ztf': {'name': 'ZTF', 'filename': 'ztf.vot', 'mag': 'mag_g', 'err': 'magerr', 'filter': 'zg', 'short': True},
     'ps1': {'name': 'Pan-STARRS', 'filename': 'ps1.vot', 'mag': 'mag_g', 'err': 'magerr', 'filter': 'g', 'short': True},
     'dasch': {'name': 'DASCH', 'filename': 'dasch.vot', 'mag': 'mag_g', 'err': 'magerr'},
     'applause': {'name': 'APPLAUSE', 'filename': 'applause.vot', 'mag': 'mag_g', 'err': 'magerr'},
+    'mmt9': {'name': 'Mini-MegaTORTORA', 'filename': 'mmt9.vot', 'mag': 'mag_g', 'err': 'magerr'},
 }
 
 # Get combined lightcurve

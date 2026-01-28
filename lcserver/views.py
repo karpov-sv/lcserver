@@ -308,6 +308,7 @@ def targets(request, id=None):
         all_forms['target_tess'] = forms.TargetTESSForm(request.POST or None, initial = target.config)
         all_forms['target_dasch'] = forms.TargetDASCHForm(request.POST or None, initial = target.config)
         all_forms['target_applause'] = forms.TargetAPPLAUSEForm(request.POST or None, initial = target.config)
+        all_forms['target_mmt9'] = forms.TargetMMT9Form(request.POST or None, initial = target.config)
         all_forms['target_combined'] = forms.TargetCombinedForm(request.POST or None, initial = target.config)
 
         for name,form in all_forms.items():
@@ -396,6 +397,12 @@ def targets(request, id=None):
                     target.save()
                     messages.success(request, f"Started getting APPLAUSE lightcurve for target {target.id}")
 
+                if action == 'target_mmt9':
+                    target.celery_id = celery_tasks.task_mmt9.delay(target.id).id
+                    target.state = 'acquiring Mini-MegaTORTORA lightcurve'
+                    target.save()
+                    messages.success(request, f"Started getting Mini-MegaTORTORA lightcurve for target {target.id}")
+
                 if action == 'target_combined':
                     target.celery_id = celery_tasks.task_combined.delay(target.id).id
                     target.state = 'acquiring combined lightcurve'
@@ -410,6 +417,7 @@ def targets(request, id=None):
                         celery_tasks.task_tess.subtask(args=[target.id], immutable=True),
                         celery_tasks.task_dasch.subtask(args=[target.id], immutable=True),
                         celery_tasks.task_applause.subtask(args=[target.id], immutable=True),
+                        celery_tasks.task_mmt9.subtask(args=[target.id], immutable=True),
                         celery_tasks.task_combined.subtask(args=[target.id], immutable=True),
                     ).apply_async().id
 

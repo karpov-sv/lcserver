@@ -306,6 +306,33 @@ def task_applause(self, id, finalize=True):
 
 
 @shared_task(bind=True, acks_late=True, reject_on_worker_lost=True)
+def task_mmt9(self, id, finalize=True):
+    with TaskProcessContext(self, id, finalize=finalize) as ctx:
+        if ctx.cancelled:
+            return
+
+        target = ctx.target
+        basepath = ctx.basepath
+        config = target.config
+        config['target_name'] = target.name
+
+        log = partial(processing.print_to_file, logname=os.path.join(basepath, 'mmt9.log'))
+        log(clear=True)
+
+        # Start processing
+        try:
+            processing.target_mmt9(config, basepath=basepath, verbose=log)
+            target.state = 'Mini-MegaTORTORA lightcurve acquired'
+        except:
+            import traceback
+            log("\nError!\n", traceback.format_exc())
+            target.state = 'failed'
+
+        fix_config(config)
+        # Context manager handles finalize and save
+
+
+@shared_task(bind=True, acks_late=True, reject_on_worker_lost=True)
 def task_combined(self, id, finalize=True):
     with TaskProcessContext(self, id, finalize=finalize) as ctx:
         if ctx.cancelled:

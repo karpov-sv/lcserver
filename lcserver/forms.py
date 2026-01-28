@@ -143,6 +143,21 @@ class TargetAPPLAUSEForm(forms.Form):
         )
 
 
+class TargetMMT9Form(forms.Form):
+    form_type = forms.CharField(initial='target_mmt9', widget=forms.HiddenInput())
+    mmt9_sr = forms.FloatField(label='Search radius, arcsec', initial=5.0, required=False)
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.helper = FormHelper()
+        self.helper.form_tag = False
+        self.helper.field_template = 'crispy_field.html'
+        self.helper.layout = Layout(
+            'form_type',
+            'mmt9_sr',
+        )
+
+
 class TargetCombinedForm(forms.Form):
     form_type = forms.CharField(initial='target_combined', widget=forms.HiddenInput())
 

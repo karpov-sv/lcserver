@@ -25,6 +25,7 @@ LIGHTCURVE_SOURCES = {
     'ps1': {'name': 'Pan-STARRS', 'filename': 'ps1.vot', 'mag': 'mag_g', 'err': 'magerr', 'filter': 'g', 'color': '#2ca02c'},
     'dasch': {'name': 'DASCH', 'filename': 'dasch.vot', 'mag': 'mag_g', 'err': 'magerr', 'filter': None, 'color': '#d62728'},
     'applause': {'name': 'APPLAUSE', 'filename': 'applause.vot', 'mag': 'mag_g', 'err': 'magerr', 'filter': None, 'color': '#9467bd'},
+    'mmt9': {'name': 'Mini-MegaTORTORA', 'filename': 'mmt9.vot', 'mag': 'mag_g', 'err': 'magerr', 'filter': None, 'color': '#8c564b'},
 }
 
 # Flux-based sources (TESS)
@@ -84,16 +85,14 @@ def load_magnitude_data(basepath):
                     label += f' {filt}'
 
                 # Prepare data for this series
-                # Convert times to ISO format strings for JavaScript
-                time_iso = [data['time'][i].iso for i in range(len(data)) if idx[i]]
-
+                # Note: datetime conversion moved to frontend for performance
+                # Use numpy array indexing for efficiency
                 series_data = {
                     'source_id': source_id,
                     'label': label,
                     'filter': str(filt) if filt else '',
                     'color': rules.get('color', '#000000'),
                     'mjd': x[idx].tolist(),
-                    'datetime': time_iso,
                     'mag': y[idx].tolist(),
                     'magerr': dy[idx].tolist(),
                     'n_points': int(np.sum(idx)),
@@ -180,9 +179,8 @@ def load_flux_data(basepath):
             # Assign color from palette (cycle if >5 sectors)
             color = color_palette[i % len(color_palette)]
 
-            # Convert times to ISO format strings for JavaScript
-            time_iso = [data['time'][i].iso for i in range(len(data)) if idx[i]]
-
+            # Note: datetime conversion moved to frontend for performance
+            # Use numpy array indexing for efficiency
             series_data = {
                 'source_id': 'tess',
                 'label': label,
@@ -191,7 +189,6 @@ def load_flux_data(basepath):
                 'exptime': exptime,
                 'color': color,
                 'mjd': x[idx].tolist(),
-                'datetime': time_iso,
                 'flux': flux_normalized[idx].tolist(),
                 'flux_err': flux_err_normalized[idx].tolist(),
                 'n_points': int(np.sum(idx)),
@@ -299,9 +296,15 @@ def fit_period(request, id):
         # Parse request data
         data = json.loads(request.body)
         series_list = data.get('series', [])
+        period_min = data.get('period_min', 0.1)  # Default: 0.1 days
+        period_max = data.get('period_max', 100)  # Default: 100 days
 
         if not series_list:
             return JsonResponse({'error': 'No series data provided'}, status=400)
+
+        # Validate period range
+        if period_min <= 0 or period_max <= period_min:
+            return JsonResponse({'error': 'Invalid period range'}, status=400)
 
         # Collect all data points from visible series
         times = []
@@ -337,18 +340,25 @@ def fit_period(request, id):
         # Create LombScargleMultiband object
         ls = LombScargleMultiband(t_all, y_all, bands_all, dy=dy_all)
 
-        print('starting the fit')
+        # Convert period range to frequency range
+        # frequency = 1 / period, so:
+        # minimum_frequency = 1 / period_max
+        # maximum_frequency = 1 / period_min
+        minimum_frequency = 1.0 / period_max
+        maximum_frequency = 1.0 / period_min
+
+        print(f'Starting period fit: {period_min:.3f} - {period_max:.3f} days ({minimum_frequency:.6f} - {maximum_frequency:.6f} 1/day)')
         # Compute periodogram with automatic frequency grid
         # Use autopower for sensible defaults
         freq, power = ls.autopower(
-            minimum_frequency=0.01,  # Minimum period ~100 days
-            maximum_frequency=10.0,  # Maximum period ~0.1 days
+            minimum_frequency=minimum_frequency,
+            maximum_frequency=maximum_frequency,
             samples_per_peak=10,
             method="fast",
             sb_method="fastnifty",
         )
+        print('Fit finished')
 
-        print('fit finished')
         # Find best period
         best_idx = np.argmax(power)
         best_freq = freq[best_idx]
@@ -379,6 +389,8 @@ def fit_period(request, id):
             'frequency': float(best_freq),
             'n_points': int(len(t_all)),
             'n_series': len(times),
+            'period_min': float(period_min),
+            'period_max': float(period_max),
         }
 
         if fap is not None:

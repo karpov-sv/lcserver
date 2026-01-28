@@ -73,10 +73,32 @@
     margin-right: 0.5rem;
 }
 
+.maxerr-control {
+    width: 80px;
+    margin-right: 0.5rem;
+}
+
 .control-label {
     font-size: 0.875rem;
     color: var(--bs-secondary-color);
     margin-right: 0.5rem;
+}
+
+#loading-indicator {
+    padding: 1rem;
+    background-color: var(--bs-light);
+    border: 1px solid var(--bs-border-color);
+    border-radius: 0.375rem;
+}
+
+#loading-indicator .progress {
+    box-shadow: inset 0 1px 2px rgba(0,0,0,.1);
+}
+
+#loading-status {
+    font-weight: 500;
+    font-size: 0.9rem;
+    text-shadow: 0 1px 2px rgba(0,0,0,0.3);
 }
 </style>
 {% endblock %}
@@ -108,8 +130,21 @@
 </div>
 
 <!-- Loading indicator -->
-<div id="loading-indicator" class="alert alert-info mt-3">
-  <i class="fa fa-spinner fa-spin"></i> Loading lightcurve data...
+<div id="loading-indicator" class="mt-3" style="display: none;">
+  <div class="d-flex align-items-center mb-2">
+    <strong>Loading lightcurve data...</strong>
+    <div class="spinner-border spinner-border-sm ms-auto" role="status" aria-hidden="true"></div>
+  </div>
+  <div class="progress" style="height: 25px;">
+    <div class="progress-bar progress-bar-striped progress-bar-animated bg-info"
+         role="progressbar"
+         style="width: 100%"
+         aria-valuenow="100"
+         aria-valuemin="0"
+         aria-valuemax="100">
+      <span id="loading-status">Fetching data from server...</span>
+    </div>
+  </div>
 </div>
 
 <!-- No data warning (hidden initially) -->
@@ -175,12 +210,45 @@
         <i class="fa fa-calculator"></i> Fit Period
       </button>
     </div>
+    <div class="col-auto">
+      <button class="btn btn-sm btn-outline-secondary" onclick="multiplyPeriod()" title="Multiply period by 2">
+        <i class="fa fa-arrow-up"></i> ×2
+      </button>
+    </div>
+    <div class="col-auto">
+      <button class="btn btn-sm btn-outline-secondary" onclick="dividePeriod()" title="Divide period by 2">
+        <i class="fa fa-arrow-down"></i> ÷2
+      </button>
+    </div>
+  </div>
+
+  <div class="row g-2 align-items-center mt-2">
+    <div class="col-auto">
+      <label class="col-form-label col-form-label-sm text-muted">Period Search Range:</label>
+    </div>
+    <div class="col-auto">
+      <label for="period-min-input" class="col-form-label col-form-label-sm">Min:</label>
+    </div>
+    <div class="col-auto">
+      <input type="number" class="form-control form-control-sm" id="period-min-input"
+             style="width: 100px;" step="0.01" min="0.01" value="0.1" placeholder="0.1">
+    </div>
+    <div class="col-auto">
+      <label for="period-max-input" class="col-form-label col-form-label-sm">Max:</label>
+    </div>
+    <div class="col-auto">
+      <input type="number" class="form-control form-control-sm" id="period-max-input"
+             style="width: 100px;" step="0.1" min="0.1" value="100" placeholder="100">
+    </div>
+    <div class="col-auto">
+      <small class="text-muted">days</small>
+    </div>
   </div>
 
   <div class="mt-2">
     <small class="text-muted">
       Set period to enable phase folding. Phase range: -0.6 to 1.6 with wrapped data.
-      Use "Fit Period" to automatically find the best period using visible data sources.
+      Use "Fit Period" to automatically find the best period using visible data sources and error filters.
     </small>
   </div>
 </div>
@@ -206,8 +274,30 @@ let plotInitialized = false;
 let phasePeriod = 0;  // Period in days (0 = disabled)
 let phaseEpoch = 0;   // T0 in MJD
 
+// Cache for phase-folded data (key: seriesIndex-period-epoch-mode)
+const phaseDataCache = {};
+
 // Track data loading state
 let dataLoaded = false;
+
+// Convert MJD to JavaScript Date object
+// MJD 0 = November 17, 1858, 00:00 UTC
+// JavaScript uses milliseconds since January 1, 1970, 00:00 UTC
+function mjdToDate(mjd) {
+    // Days between Nov 17, 1858 and Jan 1, 1970 = 40587 days
+    const daysSinceEpoch = mjd - 40587.0;
+    const milliseconds = daysSinceEpoch * 86400000; // 86400000 ms per day
+    return new Date(milliseconds);
+}
+
+// Convert MJD array to Date objects (faster than ISO strings)
+// Only computed when needed, cached in series data
+function ensureDatetimes(series) {
+    if (!series._datetimes) {
+        series._datetimes = series.mjd.map(mjd => mjdToDate(mjd));
+    }
+    return series._datetimes;
+}
 
 // Initialize series state and create controls
 function initializeControls() {
@@ -220,6 +310,7 @@ function initializeControls() {
             visible: true,
             offset: 0,
             markerSize: 4,
+            maxError: null,  // null = no filtering
             color: series.color,
             defaultColor: series.color,
             data: series
@@ -228,17 +319,32 @@ function initializeControls() {
         // Create control element
         const control = document.createElement('div');
         control.className = 'source-control';
-        control.innerHTML = `
+
+        // Build HTML with conditional max error control (magnitude mode only)
+        let html = `
             <div class="source-color" style="background-color: ${series.color};" id="color-display-${index}">
                 <input type="color" class="color-input" id="color-${index}"
                        value="${series.color}" onchange="updateColor(${index})">
             </div>
             <div class="source-label">${series.label}</div>
-            <div class="source-info">${series.n_points} points</div>
+            <div class="source-info" id="info-${index}">${series.n_points} points</div>
             <span class="control-label">Offset:</span>
             <input type="number" class="form-control form-control-sm offset-control"
                    id="offset-${index}" value="0" step="0.1"
                    onchange="updateOffset(${index})">
+        `;
+
+        // Add max error control only in magnitude mode
+        if (isMagnitudeMode) {
+            html += `
+            <span class="control-label">Max Err:</span>
+            <input type="number" class="form-control form-control-sm maxerr-control"
+                   id="maxerr-${index}" placeholder="∞" step="0.01" min="0"
+                   onchange="updateMaxError(${index})">
+            `;
+        }
+
+        html += `
             <span class="control-label">Size:</span>
             <input type="number" class="form-control form-control-sm size-control"
                    id="size-${index}" value="4" step="0.5" min="0.5" max="20"
@@ -249,6 +355,8 @@ function initializeControls() {
                        onchange="toggleSeries(${index})">
             </div>
         `;
+
+        control.innerHTML = html;
         container.appendChild(control);
     });
 }
@@ -258,8 +366,16 @@ function calculatePhase(mjd, period, epoch) {
     return ((mjd - epoch) % period) / period;
 }
 
-// Prepare data for phase-folded display
-function preparePhaseData(series, period, epoch) {
+// Prepare data for phase-folded display (with caching)
+function preparePhaseData(series, seriesIndex, period, epoch) {
+    // Create cache key from series index, period, epoch, and mode
+    const cacheKey = `${seriesIndex}-${period.toFixed(10)}-${epoch.toFixed(10)}-${dataMode}`;
+
+    // Check cache first
+    if (phaseDataCache[cacheKey]) {
+        return phaseDataCache[cacheKey];
+    }
+
     const phases = [];
     const values = [];
     const errs = [];
@@ -269,6 +385,9 @@ function preparePhaseData(series, period, epoch) {
     // Use appropriate data keys based on mode
     const dataKey = isMagnitudeMode ? 'mag' : 'flux';
     const errKey = isMagnitudeMode ? 'magerr' : 'flux_err';
+
+    // Convert MJD to datetime strings on demand (with caching)
+    const seriesDatetimes = ensureDatetimes(series);
 
     // Calculate phases for all points
     for (let i = 0; i < series.mjd.length; i++) {
@@ -281,7 +400,7 @@ function preparePhaseData(series, period, epoch) {
         values.push(series[dataKey][i]);
         errs.push(series[errKey][i]);
         mjds.push(series.mjd[i]);
-        datetimes.push(series.datetime[i]);
+        datetimes.push(seriesDatetimes[i]);
     }
 
     // Wrap data to fill -0.6 to 1.6 range
@@ -313,13 +432,18 @@ function preparePhaseData(series, period, epoch) {
         }
     }
 
-    return {
+    const result = {
         phases: wrappedPhases,
         values: wrappedValues,
         errs: wrappedErrs,
         mjds: wrappedMjds,
         datetimes: wrappedDatetimes
     };
+
+    // Cache the result
+    phaseDataCache[cacheKey] = result;
+
+    return result;
 }
 
 // Update plot
@@ -332,24 +456,43 @@ function updatePlot() {
     const dataKey = isMagnitudeMode ? 'mag' : 'flux';
     const errKey = isMagnitudeMode ? 'magerr' : 'flux_err';
 
+    // Check if any series has >5000 points (use MJD mode for performance)
+    const useMJDMode = !isPhaseFolded && lightcurveData.some(series => series.mjd.length > 5000);
+
     lightcurveData.forEach((series, index) => {
         const state = seriesState[index];
         if (!state.visible) return;
 
         let xData, yData, errData, customData, hoverTemplate;
+        let totalPoints, filteredCount;
 
         if (isPhaseFolded) {
-            // Phase-folded mode
-            const phaseData = preparePhaseData(series, phasePeriod, phaseEpoch);
+            // Phase-folded mode (with caching for performance)
+            const phaseData = preparePhaseData(series, index, phasePeriod, phaseEpoch);
+            totalPoints = phaseData.phases.length;
 
-            xData = phaseData.phases;
-            yData = phaseData.values.map(v => v + state.offset);
-            errData = phaseData.errs;
-            customData = phaseData.mjds.map((mjd, i) => [
-                mjd,
-                phaseData.errs[i],
-                phaseData.phases[i]
-            ]);
+            // Filter and build arrays in a single pass (more efficient)
+            xData = [];
+            yData = [];
+            errData = [];
+            customData = [];
+
+            const hasMaxErrorFilter = isMagnitudeMode && state.maxError !== null;
+
+            for (let i = 0; i < totalPoints; i++) {
+                if (!hasMaxErrorFilter || phaseData.errs[i] <= state.maxError) {
+                    xData.push(phaseData.phases[i]);
+                    yData.push(phaseData.values[i] + state.offset);
+                    errData.push(phaseData.errs[i]);
+                    customData.push([
+                        phaseData.mjds[i],
+                        phaseData.errs[i],
+                        phaseData.phases[i]
+                    ]);
+                }
+            }
+
+            filteredCount = xData.length;
 
             hoverTemplate =
                 '<b>%{fullData.name}</b><br>' +
@@ -359,20 +502,68 @@ function updatePlot() {
                 '<extra></extra>';
         } else {
             // Time mode
-            const values_with_offset = series[dataKey].map(v => v + state.offset);
+            totalPoints = series[dataKey].length;
 
-            xData = series.datetime;
-            yData = values_with_offset;
-            errData = series[errKey];
-            customData = series.mjd.map((mjd, i) => [mjd, series[errKey][i]]);
+            // Filter and build arrays in a single pass (more efficient)
+            xData = [];
+            yData = [];
+            errData = [];
+            customData = [];
 
-            hoverTemplate =
-                '<b>%{fullData.name}</b><br>' +
-                'Time: %{x}<br>' +
-                'MJD: %{customdata[0]:.2f}<br>' +
-                valueLabel + ': %{y:.3f} ± %{customdata[1]:.3f}<br>' +
-                '<extra></extra>';
+            const hasMaxErrorFilter = isMagnitudeMode && state.maxError !== null;
+
+            if (useMJDMode) {
+                // Use MJD directly (no datetime conversion needed)
+                for (let i = 0; i < totalPoints; i++) {
+                    if (!hasMaxErrorFilter || series[errKey][i] <= state.maxError) {
+                        xData.push(series.mjd[i]);
+                        yData.push(series[dataKey][i] + state.offset);
+                        errData.push(series[errKey][i]);
+                        customData.push([series.mjd[i], series[errKey][i]]);
+                    }
+                }
+
+                hoverTemplate =
+                    '<b>%{fullData.name}</b><br>' +
+                    'MJD: %{x:.2f}<br>' +
+                    valueLabel + ': %{y:.3f} ± %{customdata[1]:.3f}<br>' +
+                    '<extra></extra>';
+            } else {
+                // Convert MJD to dates (computed once and cached)
+                const datetimes = ensureDatetimes(series);
+
+                for (let i = 0; i < totalPoints; i++) {
+                    if (!hasMaxErrorFilter || series[errKey][i] <= state.maxError) {
+                        xData.push(datetimes[i]);
+                        yData.push(series[dataKey][i] + state.offset);
+                        errData.push(series[errKey][i]);
+                        customData.push([series.mjd[i], series[errKey][i]]);
+                    }
+                }
+
+                hoverTemplate =
+                    '<b>%{fullData.name}</b><br>' +
+                    'Time: %{x}<br>' +
+                    'MJD: %{customdata[0]:.2f}<br>' +
+                    valueLabel + ': %{y:.3f} ± %{customdata[1]:.3f}<br>' +
+                    '<extra></extra>';
+            }
+
+            filteredCount = xData.length;
         }
+
+        // Update point count display
+        const infoElement = document.getElementById(`info-${index}`);
+        if (infoElement) {
+            if (filteredCount < totalPoints) {
+                infoElement.textContent = `${filteredCount}/${totalPoints} points`;
+            } else {
+                infoElement.textContent = `${totalPoints} points`;
+            }
+        }
+
+        // Use WebGL rendering (scattergl) for large datasets (>1000 points)
+        const useWebGL = xData.length > 1000;
 
         traces.push({
             x: xData,
@@ -387,7 +578,7 @@ function updatePlot() {
                 width: 0
             },
             mode: 'markers',
-            type: 'scatter',
+            type: useWebGL ? 'scattergl' : 'scatter',
             name: series.label,
             marker: {
                 color: state.color,
@@ -425,7 +616,7 @@ function updatePlot() {
                 range: [-0.6, 1.6],
                 zeroline: false,
             } : {
-                title: 'Universal Time (UT)',
+                title: useMJDMode ? 'Modified Julian Date (MJD)' : 'Universal Time (UT)',
                 gridcolor: '#e0e0e0',
                 zeroline: false,
             },
@@ -514,7 +705,7 @@ function updatePlot() {
                 range: [-0.6, 1.6],
                 zeroline: false,
             } : {
-                title: 'Universal Time (UT)',
+                title: useMJDMode ? 'Modified Julian Date (MJD)' : 'Universal Time (UT)',
                 gridcolor: '#e0e0e0',
                 // Preserve current range if it exists (only in time mode)
                 range: currentLayout.xaxis.range,
@@ -627,6 +818,40 @@ function clearPhaseFolding() {
     }
 }
 
+// Multiply period by 2
+function multiplyPeriod() {
+    const periodInput = document.getElementById('period-input');
+    const currentPeriod = parseFloat(periodInput.value) || 0;
+
+    if (currentPeriod <= 0) {
+        alert('No period set! Set a period first or use "Fit Period".');
+        return;
+    }
+
+    const newPeriod = currentPeriod * 2;
+    periodInput.value = newPeriod.toFixed(6);
+    phasePeriod = newPeriod;
+
+    updatePhaseFolding();
+}
+
+// Divide period by 2
+function dividePeriod() {
+    const periodInput = document.getElementById('period-input');
+    const currentPeriod = parseFloat(periodInput.value) || 0;
+
+    if (currentPeriod <= 0) {
+        alert('No period set! Set a period first or use "Fit Period".');
+        return;
+    }
+
+    const newPeriod = currentPeriod / 2;
+    periodInput.value = newPeriod.toFixed(6);
+    phasePeriod = newPeriod;
+
+    updatePhaseFolding();
+}
+
 // Get CSRF token from cookies
 function getCookie(name) {
     let cookieValue = null;
@@ -651,7 +876,7 @@ function fitPeriod() {
         return;
     }
 
-    // Collect visible series data
+    // Collect visible series data with max error filtering applied
     const visibleSeries = [];
     const dataKey = isMagnitudeMode ? 'mag' : 'flux';
     const errKey = isMagnitudeMode ? 'magerr' : 'flux_err';
@@ -660,16 +885,39 @@ function fitPeriod() {
         const state = seriesState[index];
         if (!state.visible) return;
 
+        // Apply max error filter if set (magnitude mode only)
+        let filteredIndices = [...Array(series[dataKey].length).keys()];
+        if (isMagnitudeMode && state.maxError !== null) {
+            filteredIndices = filteredIndices.filter(i => series[errKey][i] <= state.maxError);
+        }
+
+        // Only include series if we have data points after filtering
+        if (filteredIndices.length === 0) return;
+
+        // Collect filtered data
+        const filteredMjd = filteredIndices.map(i => series.mjd[i]);
+        const filteredValues = filteredIndices.map(i => series[dataKey][i]);
+        const filteredErrors = filteredIndices.map(i => series[errKey][i]);
+
         visibleSeries.push({
-            mjd: series.mjd,
-            values: series[dataKey],
-            errors: series[errKey],
+            mjd: filteredMjd,
+            values: filteredValues,
+            errors: filteredErrors,
             label: series.label
         });
     });
 
     if (visibleSeries.length === 0) {
-        alert('No visible series to fit! Please enable at least one data source.');
+        alert('No visible series to fit! Please enable at least one data source with valid data points.');
+        return;
+    }
+
+    // Get period search range
+    const periodMin = parseFloat(document.getElementById('period-min-input').value) || 0.1;
+    const periodMax = parseFloat(document.getElementById('period-max-input').value) || 100;
+
+    if (periodMin <= 0 || periodMax <= periodMin) {
+        alert('Invalid period range! Minimum must be positive and less than maximum.');
         return;
     }
 
@@ -687,7 +935,9 @@ function fitPeriod() {
             'X-CSRFToken': getCookie('csrftoken')
         },
         body: JSON.stringify({
-            series: visibleSeries
+            series: visibleSeries,
+            period_min: periodMin,
+            period_max: periodMax
         })
     })
     .then(response => {
@@ -720,7 +970,8 @@ function fitPeriod() {
             message += `False Alarm Prob: N/A (multiband fit)\n`;
         }
 
-        message += `\nFitted ${data.n_points} points from ${data.n_series} series.`;
+        message += `\nSearch range: ${data.period_min.toFixed(2)} - ${data.period_max.toFixed(2)} days\n`;
+        message += `Fitted ${data.n_points} points from ${data.n_series} series.`;
 
         alert(message);
 
@@ -759,6 +1010,14 @@ function updateMarkerSize(index) {
     updatePlot();
 }
 
+// Update maximum error filter for a series
+function updateMaxError(index) {
+    const input = document.getElementById(`maxerr-${index}`);
+    const value = parseFloat(input.value);
+    seriesState[index].maxError = (value > 0) ? value : null;  // null = no filtering
+    updatePlot();
+}
+
 // Update color for a series
 function updateColor(index) {
     const input = document.getElementById(`color-${index}`);
@@ -768,16 +1027,23 @@ function updateColor(index) {
     updatePlot();
 }
 
-// Reset all offsets, marker sizes, and colors
+// Reset all offsets, marker sizes, colors, and max error
 function resetOffsets() {
     lightcurveData.forEach((series, index) => {
         seriesState[index].offset = 0;
         seriesState[index].markerSize = 4;
+        seriesState[index].maxError = null;
         seriesState[index].color = seriesState[index].defaultColor;
         document.getElementById(`offset-${index}`).value = 0;
         document.getElementById(`size-${index}`).value = 4;
         document.getElementById(`color-${index}`).value = seriesState[index].defaultColor;
         document.getElementById(`color-display-${index}`).style.backgroundColor = seriesState[index].defaultColor;
+
+        // Reset max error if it exists (magnitude mode only)
+        const maxErrInput = document.getElementById(`maxerr-${index}`);
+        if (maxErrInput) {
+            maxErrInput.value = '';
+        }
     });
     updatePlot();
 }
@@ -859,10 +1125,19 @@ function getUrlParameter(name) {
     return results === null ? '' : decodeURIComponent(results[1].replace(/\+/g, ' '));
 }
 
+// Update loading status text
+function updateLoadingStatus(message) {
+    const statusElement = document.getElementById('loading-status');
+    if (statusElement) {
+        statusElement.textContent = message;
+    }
+}
+
 // Load lightcurve data asynchronously
 function loadLightcurveData() {
     // Get mode from URL or use default
     const mode = getUrlParameter('mode') || '{{ data_mode }}';
+    const modeLabel = mode === 'flux' ? 'TESS flux' : 'magnitude';
 
     // Show loading indicator
     document.getElementById('loading-indicator').style.display = 'block';
@@ -871,15 +1146,28 @@ function loadLightcurveData() {
     document.getElementById('control-panel').style.display = 'none';
     document.getElementById('phase-panel').style.display = 'none';
 
+    updateLoadingStatus(`Requesting ${modeLabel} data from server...`);
+
     // Make AJAX request to load data
+    const startTime = Date.now();
     fetch(`/targets/{{ target_id }}/lightcurve_data/?mode=${mode}`)
         .then(response => {
+            updateLoadingStatus('Receiving data...');
+
             if (!response.ok) {
                 return response.json().then(err => {
                     throw new Error(err.error || 'Server error');
                 });
             }
             return response.json();
+        })
+        .then(result => {
+            updateLoadingStatus('Processing lightcurve data...');
+
+            // Small delay to show the processing message
+            return new Promise(resolve => {
+                setTimeout(() => resolve(result), 100);
+            });
         })
         .then(result => {
             // Hide loading indicator
@@ -890,6 +1178,9 @@ function loadLightcurveData() {
             dataMode = result.mode;
             isMagnitudeMode = dataMode === 'magnitude';
             dataLoaded = true;
+
+            const loadTime = ((Date.now() - startTime) / 1000).toFixed(1);
+            console.log(`Loaded ${result.data.length} series in ${loadTime}s`);
 
             if (result.no_data) {
                 // Show no-data warning
@@ -920,9 +1211,15 @@ function loadLightcurveData() {
                     phaseEpoch = parseFloat(urlEpoch) || 0;
                 }
 
+                updateLoadingStatus('Initializing visualization...');
+
+                console.log(`before initializeControls`);
+
                 // Initialize controls and plot
                 initializeControls();
+                console.log(`before updatePlot`);
                 updatePlot();
+                console.log(`after updatePlot`);
             }
         })
         .catch(error => {
