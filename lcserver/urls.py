@@ -32,6 +32,7 @@ urlpatterns = [
     path('targets/<int:id>', views.targets, name='targets'),
 
     path('targets/<int:id>/lightcurve/', views_lightcurve.target_lightcurve, name='target_lightcurve'),
+    path('targets/<int:id>/fit_period/', views_lightcurve.fit_period, name='fit_period'),
     path('targets/<int:id>/files/', views.target_files, {'path': ''}, name='target_files'),
     path('targets/<int:id>/files/<path:path>', views.target_files, name='target_files'),
     path('targets/<int:id>/preview/<path:path>', views.target_preview, name='target_preview'),

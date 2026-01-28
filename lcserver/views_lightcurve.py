@@ -1,6 +1,7 @@
-from django.http import HttpResponse
+from django.http import HttpResponse, JsonResponse
 from django.template.response import TemplateResponse
 from django.contrib.auth.decorators import login_required
+from django.views.decorators.http import require_http_methods
 
 import os
 import json
@@ -10,6 +11,8 @@ import re
 import numpy as np
 from astropy.table import Table
 from astropy.time import Time
+import nifty_ls
+from astropy.timeseries import LombScargleMultiband
 
 from . import models
 
@@ -258,3 +261,113 @@ def target_lightcurve(request, id):
     }
 
     return TemplateResponse(request, 'lightcurve_viewer.html', context=context)
+
+
+@login_required
+@require_http_methods(["POST"])
+def fit_period(request, id):
+    """Fit period using Lomb-Scargle multiband periodogram"""
+    target = models.Target.objects.get(id=id)
+
+    # Check permissions
+    if not (request.user.is_staff or target.user == request.user):
+        return JsonResponse({'error': 'Forbidden'}, status=403)
+
+    try:
+        # Parse request data
+        data = json.loads(request.body)
+        series_list = data.get('series', [])
+
+        if not series_list:
+            return JsonResponse({'error': 'No series data provided'}, status=400)
+
+        # Collect all data points from visible series
+        times = []
+        values = []
+        errors = []
+        bands = []
+
+        for i, series in enumerate(series_list):
+            t = np.array(series['mjd'])
+            y = np.array(series['values'])
+            dy = np.array(series['errors'])
+
+            # Filter out non-finite values
+            valid = np.isfinite(t) & np.isfinite(y) & np.isfinite(dy)
+
+            if not np.any(valid):
+                continue
+
+            times.append(t[valid])
+            values.append(y[valid])
+            errors.append(dy[valid])
+            bands.append(np.full(np.sum(valid), i, dtype=int))
+
+        if not times:
+            return JsonResponse({'error': 'No valid data points to fit'}, status=400)
+
+        # Concatenate all data
+        t_all = np.concatenate(times)
+        y_all = np.concatenate(values)
+        dy_all = np.concatenate(errors)
+        bands_all = np.concatenate(bands)
+
+        # Create LombScargleMultiband object
+        ls = LombScargleMultiband(t_all, y_all, bands_all, dy=dy_all)
+
+        print('starting the fit')
+        # Compute periodogram with automatic frequency grid
+        # Use autopower for sensible defaults
+        freq, power = ls.autopower(
+            minimum_frequency=0.01,  # Minimum period ~100 days
+            maximum_frequency=10.0,  # Maximum period ~0.1 days
+            samples_per_peak=10,
+            method="fast",
+            sb_method="fastnifty",
+        )
+
+        print('fit finished')
+        # Find best period
+        best_idx = np.argmax(power)
+        best_freq = freq[best_idx]
+        best_period = 1.0 / best_freq
+        best_power = power[best_idx]
+
+        # Compute false alarm probability (if single band, use LombScargle)
+        # Note: LombScargleMultiband doesn't have FAP calculation implemented
+        fap = None
+        if len(times) == 1:
+            # Use single-band LombScargle for FAP calculation
+            from astropy.timeseries import LombScargle
+            ls_single = LombScargle(t_all, y_all, dy=dy_all)
+            fap = ls_single.false_alarm_probability(best_power)
+        else:
+            # For multiband, FAP is not available
+            # Could use bootstrap or other methods, but skip for now
+            pass
+
+        # Estimate epoch (time of maximum) using phase folding
+        # Use median time as initial guess
+        epoch = np.median(t_all)
+
+        result = {
+            'period': float(best_period),
+            'epoch': float(epoch),
+            'power': float(best_power),
+            'frequency': float(best_freq),
+            'n_points': int(len(t_all)),
+            'n_series': len(times),
+        }
+
+        if fap is not None:
+            result['fap'] = float(fap)
+
+        return JsonResponse(result)
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return JsonResponse({
+            'error': str(e),
+            'traceback': traceback.format_exc()
+        }, status=500)

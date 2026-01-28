@@ -161,11 +161,17 @@
         <i class="fa fa-times"></i> Clear
       </button>
     </div>
+    <div class="col-auto">
+      <button class="btn btn-sm btn-primary" onclick="fitPeriod()" id="fit-period-btn">
+        <i class="fa fa-calculator"></i> Fit Period
+      </button>
+    </div>
   </div>
 
   <div class="mt-2">
     <small class="text-muted">
       Set period to enable phase folding. Phase range: -0.6 to 1.6 with wrapped data.
+      Use "Fit Period" to automatically find the best period using visible data sources.
     </small>
   </div>
 </div>
@@ -607,6 +613,111 @@ function clearPhaseFolding() {
         updatePlot();
         plotInitialized = true;
     }
+}
+
+// Get CSRF token from cookies
+function getCookie(name) {
+    let cookieValue = null;
+    if (document.cookie && document.cookie !== '') {
+        const cookies = document.cookie.split(';');
+        for (let i = 0; i < cookies.length; i++) {
+            const cookie = cookies[i].trim();
+            if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                break;
+            }
+        }
+    }
+    return cookieValue;
+}
+
+// Fit period using Lomb-Scargle multiband periodogram
+function fitPeriod() {
+    // Collect visible series data
+    const visibleSeries = [];
+    const dataKey = isMagnitudeMode ? 'mag' : 'flux';
+    const errKey = isMagnitudeMode ? 'magerr' : 'flux_err';
+
+    lightcurveData.forEach((series, index) => {
+        const state = seriesState[index];
+        if (!state.visible) return;
+
+        visibleSeries.push({
+            mjd: series.mjd,
+            values: series[dataKey],
+            errors: series[errKey],
+            label: series.label
+        });
+    });
+
+    if (visibleSeries.length === 0) {
+        alert('No visible series to fit! Please enable at least one data source.');
+        return;
+    }
+
+    // Disable button and show loading state
+    const btn = document.getElementById('fit-period-btn');
+    const originalHtml = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fa fa-spinner fa-spin"></i> Fitting...';
+
+    // Make AJAX request
+    fetch(`/targets/{{ target_id }}/fit_period/`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': getCookie('csrftoken')
+        },
+        body: JSON.stringify({
+            series: visibleSeries
+        })
+    })
+    .then(response => {
+        if (!response.ok) {
+            return response.json().then(err => {
+                throw new Error(err.error || 'Server error');
+            });
+        }
+        return response.json();
+    })
+    .then(data => {
+        // Update period and epoch inputs
+        document.getElementById('period-input').value = data.period.toFixed(6);
+        document.getElementById('epoch-input').value = data.epoch.toFixed(2);
+
+        // Update global variables
+        phasePeriod = data.period;
+        phaseEpoch = data.epoch;
+
+        // Show results
+        let message = `Period fit successful!\n\n` +
+            `Best period: ${data.period.toFixed(6)} days\n` +
+            `Epoch (T₀): ${data.epoch.toFixed(2)} MJD\n` +
+            `Power: ${data.power.toFixed(4)}\n`;
+
+        if (data.fap !== undefined) {
+            const fapStr = data.fap < 0.0001 ? data.fap.toExponential(2) : data.fap.toFixed(4);
+            message += `False Alarm Prob: ${fapStr}\n`;
+        } else {
+            message += `False Alarm Prob: N/A (multiband fit)\n`;
+        }
+
+        message += `\nFitted ${data.n_points} points from ${data.n_series} series.`;
+
+        alert(message);
+
+        // Update plot with phase folding
+        updatePhaseFolding();
+    })
+    .catch(error => {
+        console.error('Error fitting period:', error);
+        alert(`Error fitting period: ${error.message}\n\nSee console for details.`);
+    })
+    .finally(() => {
+        // Re-enable button
+        btn.disabled = false;
+        btn.innerHTML = originalHtml;
+    });
 }
 
 // Toggle series visibility

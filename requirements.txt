@@ -18,3 +18,4 @@ lightkurve
 watchdog
 plotly
 lxml
+nifty_ls

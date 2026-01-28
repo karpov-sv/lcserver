@@ -121,6 +121,10 @@
 
           <button type="submit" name="action" value="target_everything" class="btn btn-secondary">Run everything</button>
 
+          <a href="{% url 'target_lightcurve' id=target.id %}" class="btn btn-info ms-4" title="Interactive light curve viewer">
+            <i class="fa fa-line-chart"></i> Light curves
+          </a>
+
           <button type="submit" name="action" value="cleanup_target" class="btn btn-danger ms-4"
                   title="Delete all processing results and configurations">Cleanup</button>
 
