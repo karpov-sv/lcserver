@@ -15,39 +15,24 @@ import nifty_ls
 from astropy.timeseries import LombScargleMultiband
 
 from . import models
-
-
-# Light curve sources configuration (matching processing.py combined_lc_rules)
-# Note: TESS is excluded as it uses normalized flux instead of magnitudes
-LIGHTCURVE_SOURCES = {
-    'asas': {'name': 'ASAS-SN', 'filename': 'asas.vot', 'mag': 'mag_g', 'err': 'mag_err', 'filter': 'phot_filter', 'color': '#1f77b4'},
-    'ztf': {'name': 'ZTF', 'filename': 'ztf.vot', 'mag': 'mag_g', 'err': 'magerr', 'filter': 'zg', 'color': '#ff7f0e'},
-    'ps1': {'name': 'Pan-STARRS', 'filename': 'ps1.vot', 'mag': 'mag_g', 'err': 'magerr', 'filter': 'g', 'color': '#2ca02c'},
-    'dasch': {'name': 'DASCH', 'filename': 'dasch.vot', 'mag': 'mag_g', 'err': 'magerr', 'filter': None, 'color': '#d62728'},
-    'applause': {'name': 'APPLAUSE', 'filename': 'applause.vot', 'mag': 'mag_g', 'err': 'magerr', 'filter': None, 'color': '#9467bd'},
-    'mmt9': {'name': 'Mini-MegaTORTORA', 'filename': 'mmt9.vot', 'mag': 'mag_g', 'err': 'magerr', 'filter': None, 'color': '#8c564b'},
-}
-
-# Flux-based sources (TESS)
-FLUX_SOURCES = {
-    'tess': {
-        'name': 'TESS',
-        'pattern': 'tess_lc_*.vot',
-        'flux': 'flux',
-        'err': 'flux_err',
-        'quality': 'quality',
-        'color_palette': ['#e74c3c', '#8e44ad', '#3498db', '#e67e22', '#1abc9c'],
-    }
-}
+from . import surveys
 
 
 def load_magnitude_data(basepath):
     """Load magnitude-based light curve data from multiple surveys"""
     lightcurve_data = []
 
-    for source_id, rules in LIGHTCURVE_SOURCES.items():
-        fullname = os.path.join(basepath, rules['filename'])
+    # Iterate over registry directly
+    for source_id, survey_config in surveys.SURVEY_SOURCES.items():
+        # Skip if not magnitude mode
+        if survey_config.get('lc_mode') != 'magnitude':
+            continue
 
+        votable_file = survey_config.get('votable_file')
+        if not votable_file:
+            continue
+
+        fullname = os.path.join(basepath, votable_file)
         if not os.path.exists(fullname):
             continue
 
@@ -59,14 +44,21 @@ def load_magnitude_data(basepath):
 
             # Get time in MJD for plotting
             x = data['mjd']
-            y = data[rules.get('mag', 'mag_g')]
-            dy = data[rules.get('err', 'magerr')]
+
+            # Use registry values with defaults
+            mag_col = survey_config.get('lc_mag_column', 'mag_g')
+            err_col = survey_config.get('lc_err_column', 'magerr')
+            filter_col_name = survey_config.get('lc_filter_column')
+            color = survey_config.get('lc_color', '#000000')
+
+            y = data[mag_col]
+            dy = data[err_col]
 
             # Handle filters if present
-            if rules.get('filter') and rules['filter'] in data.colnames:
-                filter_col = data[rules['filter']]
+            if filter_col_name and filter_col_name in data.colnames:
+                filter_col = data[filter_col_name]
             else:
-                filter_col = np.repeat(rules.get('filter', '') if rules.get('filter') else '', len(data))
+                filter_col = np.repeat('', len(data))
 
             # Group by filter
             unique_filters = np.unique(filter_col)
@@ -80,7 +72,7 @@ def load_magnitude_data(basepath):
                     continue
 
                 # Create label
-                label = rules['name']
+                label = survey_config['short_name']
                 if filt:
                     label += f' {filt}'
 
@@ -91,7 +83,7 @@ def load_magnitude_data(basepath):
                     'source_id': source_id,
                     'label': label,
                     'filter': str(filt) if filt else '',
-                    'color': rules.get('color', '#000000'),
+                    'color': color,
                     'mjd': x[idx].tolist(),
                     'mag': y[idx].tolist(),
                     'magerr': dy[idx].tolist(),
@@ -111,94 +103,109 @@ def load_flux_data(basepath):
     """Load flux-based light curve data from TESS"""
     lightcurve_data = []
 
-    rules = FLUX_SOURCES['tess']
-    color_palette = rules['color_palette']
+    # Color palette for multiple TESS sectors
+    color_palette = ['#e74c3c', '#8e44ad', '#3498db', '#e67e22', '#1abc9c']
 
-    # Find all TESS lightcurve files
-    pattern = os.path.join(basepath, rules['pattern'])
-    tess_files = glob.glob(pattern)
-
-    # Parse filename to extract sector, author, exptime
-    filename_pattern = re.compile(r'tess_lc_(\d+)_([^_]+)_(\d+)\.vot')
-
-    for i, filepath in enumerate(sorted(tess_files)):
-        filename = os.path.basename(filepath)
-        match = filename_pattern.match(filename)
-
-        if not match:
+    # Iterate over registry to find flux sources
+    for source_id, survey_config in surveys.SURVEY_SOURCES.items():
+        # Skip if not flux mode
+        if survey_config.get('lc_mode') != 'flux':
             continue
 
-        sector = int(match.group(1))
-        author = match.group(2)
-        exptime = int(match.group(3))
-
-        try:
-            data = Table.read(filepath)
-
-            # Check for required columns
-            if 'mjd' not in data.colnames or rules['flux'] not in data.colnames:
-                continue
-
-            # Convert MJD to datetime
-            data['time'] = Time(data['mjd'], format='mjd')
-
-            # Get flux data
-            x = data['mjd']
-            flux = data[rules['flux']]
-
-            # Handle missing flux_err column
-            if rules['err'] in data.colnames:
-                flux_err = data[rules['err']]
-            else:
-                flux_err = np.zeros_like(flux)
-
-            # Filter bad data
-            idx = np.isfinite(x) & np.isfinite(flux)
-
-            # Filter by quality flag if present
-            if rules['quality'] in data.colnames:
-                quality = data[rules['quality']]
-                idx &= (quality == 0)
-
-            if not np.sum(idx):
-                continue
-
-            # Normalize flux to median = 1.0
-            valid_flux = flux[idx]
-            median_flux = np.median(valid_flux)
-            if median_flux > 0:
-                flux_normalized = flux / median_flux
-                flux_err_normalized = flux_err / median_flux
-            else:
-                flux_normalized = flux
-                flux_err_normalized = flux_err
-
-            # Create label
-            label = f'TESS Sector {sector} ({author}, {exptime}s)'
-
-            # Assign color from palette (cycle if >5 sectors)
-            color = color_palette[i % len(color_palette)]
-
-            # Note: datetime conversion moved to frontend for performance
-            # Use numpy array indexing for efficiency
-            series_data = {
-                'source_id': 'tess',
-                'label': label,
-                'sector': sector,
-                'author': author,
-                'exptime': exptime,
-                'color': color,
-                'mjd': x[idx].tolist(),
-                'flux': flux_normalized[idx].tolist(),
-                'flux_err': flux_err_normalized[idx].tolist(),
-                'n_points': int(np.sum(idx)),
-            }
-
-            lightcurve_data.append(series_data)
-
-        except Exception as e:
-            # Skip files that can't be read
+        votable_pattern = survey_config.get('votable_file')
+        if not votable_pattern:
             continue
+
+        # Find all matching files
+        pattern_path = os.path.join(basepath, votable_pattern)
+        source_files = glob.glob(pattern_path)
+
+        # Parse filename to extract sector, author, exptime (TESS-specific)
+        filename_pattern = re.compile(r'tess_lc_(\d+)_([^_]+)_(\d+)\.vot')
+
+        for i, filepath in enumerate(sorted(source_files)):
+            filename = os.path.basename(filepath)
+            match = filename_pattern.match(filename)
+
+            if not match:
+                continue
+
+            sector = int(match.group(1))
+            author = match.group(2)
+            exptime = int(match.group(3))
+
+            try:
+                data = Table.read(filepath)
+
+                # Use registry values
+                flux_col = survey_config.get('lc_flux_column', 'flux')
+                err_col = survey_config.get('lc_err_column', 'flux_err')
+                quality_col = survey_config.get('lc_quality_column')
+
+                # Check for required columns
+                if 'mjd' not in data.colnames or flux_col not in data.colnames:
+                    continue
+
+                # Convert MJD to datetime
+                data['time'] = Time(data['mjd'], format='mjd')
+
+                # Get flux data
+                x = data['mjd']
+                flux = data[flux_col]
+
+                # Handle missing flux_err column
+                if err_col in data.colnames:
+                    flux_err = data[err_col]
+                else:
+                    flux_err = np.zeros_like(flux)
+
+                # Filter bad data
+                idx = np.isfinite(x) & np.isfinite(flux)
+
+                # Filter by quality flag if present
+                if quality_col and quality_col in data.colnames:
+                    quality = data[quality_col]
+                    idx &= (quality == 0)
+
+                if not np.sum(idx):
+                    continue
+
+                # Normalize flux to median = 1.0
+                valid_flux = flux[idx]
+                median_flux = np.median(valid_flux)
+                if median_flux > 0:
+                    flux_normalized = flux / median_flux
+                    flux_err_normalized = flux_err / median_flux
+                else:
+                    flux_normalized = flux
+                    flux_err_normalized = flux_err
+
+                # Create label
+                label = f'TESS Sector {sector} ({author}, {exptime}s)'
+
+                # Assign color from palette (cycle if >5 sectors)
+                color = color_palette[i % len(color_palette)]
+
+                # Note: datetime conversion moved to frontend for performance
+                # Use numpy array indexing for efficiency
+                series_data = {
+                    'source_id': source_id,
+                    'label': label,
+                    'sector': sector,
+                    'author': author,
+                    'exptime': exptime,
+                    'color': color,
+                    'mjd': x[idx].tolist(),
+                    'flux': flux_normalized[idx].tolist(),
+                    'flux_err': flux_err_normalized[idx].tolist(),
+                    'n_points': int(np.sum(idx)),
+                }
+
+                lightcurve_data.append(series_data)
+
+            except Exception as e:
+                # Skip files that can't be read
+                continue
 
     return lightcurve_data
 
@@ -219,15 +226,25 @@ def target_lightcurve(request, id):
     if mode == 'auto':
         basepath = target.path()
 
-        # Check for magnitude data
-        has_magnitude_data = any(
-            os.path.exists(os.path.join(basepath, rules['filename']))
-            for rules in LIGHTCURVE_SOURCES.values()
-        )
+        # Check for magnitude data from registry
+        has_magnitude_data = False
+        for survey_config in surveys.SURVEY_SOURCES.values():
+            if survey_config.get('lc_mode') == 'magnitude':
+                votable_file = survey_config.get('votable_file')
+                if votable_file and os.path.exists(os.path.join(basepath, votable_file)):
+                    has_magnitude_data = True
+                    break
 
-        # Check for TESS flux data
-        tess_pattern = os.path.join(basepath, FLUX_SOURCES['tess']['pattern'])
-        has_flux_data = bool(glob.glob(tess_pattern))
+        # Check for flux data from registry
+        has_flux_data = False
+        for survey_config in surveys.SURVEY_SOURCES.values():
+            if survey_config.get('lc_mode') == 'flux':
+                votable_pattern = survey_config.get('votable_file')
+                if votable_pattern:
+                    pattern_path = os.path.join(basepath, votable_pattern)
+                    if glob.glob(pattern_path):
+                        has_flux_data = True
+                        break
 
         # Prefer magnitude mode if both exist
         if has_magnitude_data:

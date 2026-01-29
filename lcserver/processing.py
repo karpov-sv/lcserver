@@ -451,6 +451,14 @@ def gaussian_smoothing(x, y, dy, scale=100, nsteps=1000):
     },
     help_text='ZTF optical transient survey (g/r bands)',
     order=10,
+    # Lightcurve metadata
+    votable_file='ztf.vot',
+    lc_mag_column='mag_g',
+    lc_err_column='magerr',
+    lc_filter_column='zg',
+    lc_color='#ff7f0e',
+    lc_mode='magnitude',
+    lc_short=True,
 )
 def target_ztf(config, basepath=None, verbose=True, show=False):
     # Simple wrapper around print for logging in verbose mode only
@@ -651,6 +659,14 @@ from pyasassn.client import SkyPatrolClient # Installed via %pip install skypatr
     button_text='Get ASAS-SN lightcurve',
     help_text='All-Sky Automated Survey for Supernovae',
     order=20,
+    # Lightcurve metadata
+    votable_file='asas.vot',
+    lc_mag_column='mag_g',
+    lc_err_column='mag_err',
+    lc_filter_column='phot_filter',
+    lc_color='#1f77b4',
+    lc_mode='magnitude',
+    lc_short=True,
 )
 def target_asas(config, basepath=None, verbose=True, show=False):
     # Simple wrapper around print for logging in verbose mode only
@@ -754,6 +770,14 @@ import lightkurve as lk
     button_text='Get TESS lightcurves',
     help_text='NASA TESS space telescope',
     order=30,
+    # Lightcurve metadata
+    votable_file='tess_lc_*.vot',
+    lc_flux_column='flux',
+    lc_err_column='flux_err',
+    lc_quality_column='quality',
+    lc_color='#e74c3c',
+    lc_mode='flux',
+    lc_short=False,
 )
 def target_tess(config, basepath=None, verbose=True, show=False):
     # Simple wrapper around print for logging in verbose mode only
@@ -854,6 +878,13 @@ def target_tess(config, basepath=None, verbose=True, show=False):
     button_text='Get DASCH lightcurve',
     help_text='Harvard plate archive (historical data)',
     order=40,
+    # Lightcurve metadata
+    votable_file='dasch.vot',
+    lc_mag_column='mag_g',
+    lc_err_column='magerr',
+    lc_color='#d62728',
+    lc_mode='magnitude',
+    lc_short=False,
 )
 def target_dasch(config, basepath=None, verbose=True, show=False):
     # Simple wrapper around print for logging in verbose mode only
@@ -1043,6 +1074,13 @@ import pyvo as vo
     button_text='Get APPLAUSE lightcurve',
     help_text='European plate archive (Dec > -30 deg)',
     order=50,
+    # Lightcurve metadata
+    votable_file='applause.vot',
+    lc_mag_column='mag_g',
+    lc_err_column='magerr',
+    lc_color='#9467bd',
+    lc_mode='magnitude',
+    lc_short=False,
 )
 def target_applause(config, basepath=None, verbose=True, show=False):
     # Simple wrapper around print for logging in verbose mode only
@@ -1181,6 +1219,13 @@ def target_applause(config, basepath=None, verbose=True, show=False):
     },
     help_text='Russian wide-field optical survey',
     order=60,
+    # Lightcurve metadata
+    votable_file='mmt9.vot',
+    lc_mag_column='mag_g',
+    lc_err_column='magerr',
+    lc_color='#8c564b',
+    lc_mode='magnitude',
+    lc_short=False,
 )
 def target_mmt9(config, basepath=None, verbose=True, show=False):
     # Simple wrapper around print for logging in verbose mode only
@@ -1318,15 +1363,6 @@ def target_mmt9(config, basepath=None, verbose=True, show=False):
     log("Mini-MegaTORTORA data written to file:mmt9.txt")
 
 
-combined_lc_rules = {
-    'asas': {'name': 'ASAS-SN', 'filename': 'asas.vot', 'mag': 'mag_g', 'err': 'mag_err', 'filter': 'phot_filter', 'short': True},
-    'ztf': {'name': 'ZTF', 'filename': 'ztf.vot', 'mag': 'mag_g', 'err': 'magerr', 'filter': 'zg', 'short': True},
-    'ps1': {'name': 'Pan-STARRS', 'filename': 'ps1.vot', 'mag': 'mag_g', 'err': 'magerr', 'filter': 'g', 'short': True},
-    'dasch': {'name': 'DASCH', 'filename': 'dasch.vot', 'mag': 'mag_g', 'err': 'magerr'},
-    'applause': {'name': 'APPLAUSE', 'filename': 'applause.vot', 'mag': 'mag_g', 'err': 'magerr'},
-    'mmt9': {'name': 'Mini-MegaTORTORA', 'filename': 'mmt9.vot', 'mag': 'mag_g', 'err': 'magerr'},
-}
-
 # Get combined lightcurve
 @survey_source(
     name='Combined Lightcurve',
@@ -1346,6 +1382,10 @@ def target_combined(config, basepath=None, verbose=True, show=False):
 
     # Cleanup stale plots
     cleanup_paths(cleanup_combined, basepath=basepath)
+
+    # Get rules from registry instead of hardcoded dict
+    from . import surveys
+    combined_lc_rules = surveys.get_combined_lc_rules()
 
     for short,lcname in [[True, 'combined_short_lc.png'], [False, 'combined_lc.png']]:
         log(f"\n---- Plotting {'short ' if short else ''}lightcurve ----\n")
@@ -1371,7 +1411,7 @@ def target_combined(config, basepath=None, verbose=True, show=False):
                     if 'filter' in rules and rules['filter'] in data.colnames:
                         fnames = data[rules['filter']]
                     else:
-                        fnames = np.repeat(rules.get('filter', ''), len(data))
+                        fnames = np.repeat(rules.get('filter') or '', len(data))
 
                     for fn in np.unique(fnames):
                         idx = fnames == fn
@@ -1389,3 +1429,21 @@ def target_combined(config, basepath=None, verbose=True, show=False):
             ax.set_ylabel('g magnitude')
             ax.set_xlabel('Time')
             ax.set_title(f"{config['target_name']}")
+
+
+# Register lightcurve-only sources (no processing function)
+# These sources have data files but no automated acquisition
+from . import surveys
+
+surveys.register_lightcurve_source(
+    source_id='ps1',
+    name='Pan-STARRS',
+    short_name='Pan-STARRS',
+    votable_file='ps1.vot',
+    lc_mag_column='mag_g',
+    lc_err_column='magerr',
+    lc_filter_column='g',
+    lc_color='#2ca02c',
+    lc_mode='magnitude',
+    lc_short=True,
+)
