@@ -301,6 +301,9 @@ def targets(request, id=None):
         # Auto-generate forms from registry
         for source_id in surveys.SURVEY_SOURCES.keys():
             form_class = forms.get_survey_form(source_id)
+            # Skip sources without forms (lightcurve-only sources)
+            if form_class is None:
+                continue
             # Special case for info form which includes name and title
             if source_id == 'info':
                 params = target.config.copy()

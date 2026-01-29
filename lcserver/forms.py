@@ -147,12 +147,16 @@ def create_survey_form(source_id, survey_config):
 # Auto-generate forms for all survey sources
 _survey_forms = {}
 for source_id, config in surveys.SURVEY_SOURCES.items():
+    # Skip sources without processing functions (lightcurve-only sources)
+    if config.get('processing_function') is None:
+        continue
     _survey_forms[source_id] = create_survey_form(source_id, config)
 
 # Named references for backward compatibility
 TargetInfoForm = _survey_forms['info']
 TargetZTFForm = _survey_forms['ztf']
 TargetASASForm = _survey_forms['asas']
+TargetCSSForm = _survey_forms['css']
 TargetTESSForm = _survey_forms['tess']
 TargetDASCHForm = _survey_forms['dasch']
 TargetAPPLAUSEForm = _survey_forms['applause']

@@ -130,12 +130,16 @@ def create_survey_task(source_id, survey_config):
 # Auto-register all survey tasks
 _survey_tasks = {}
 for source_id, config in surveys.SURVEY_SOURCES.items():
+    # Skip sources without processing functions (lightcurve-only sources)
+    if config.get('processing_function') is None:
+        continue
     _survey_tasks[source_id] = create_survey_task(source_id, config)
 
 # Create named references for backward compatibility
 task_info = _survey_tasks['info']
 task_ztf = _survey_tasks['ztf']
 task_asas = _survey_tasks['asas']
+task_css = _survey_tasks['css']
 task_tess = _survey_tasks['tess']
 task_dasch = _survey_tasks['dasch']
 task_applause = _survey_tasks['applause']
