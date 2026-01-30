@@ -34,6 +34,19 @@ def survey_source(
     lc_color=None,
     lc_mode=None,  # 'magnitude' or 'flux'
     lc_short=False,
+    # Template metadata
+    template_layout='simple',  # 'simple', 'with_cutout', 'complex', 'custom'
+    requires_coordinates=True,  # False for name-based sources like KWS
+    declination_min=None,       # Minimum declination (e.g., -30 for APPLAUSE)
+    declination_max=None,       # Maximum declination
+    show_cutout=False,          # Show HiPS/SkyView cutout image
+    cutout_hips=None,           # HiPS survey for cutout (e.g., "CDS/P/ZTF/DR7/color")
+    cutout_skyview=None,        # SkyView survey for cutout (e.g., "TESS")
+    cutout_fov=0.03,            # Field of view for cutout (degrees)
+    show_color_mag=False,       # Show color-magnitude diagram
+    color_mag_file=None,        # Color-magnitude diagram filename
+    main_plot=None,             # Main lightcurve plot (auto-detected if None)
+    additional_plots=None,      # Additional plots to display (list or pattern)
 ):
     """
     Decorator to register a survey data source.
@@ -140,6 +153,19 @@ def survey_source(
             'lc_color': lc_color,
             'lc_mode': lc_mode,
             'lc_short': lc_short,
+            # Template metadata
+            'template_layout': template_layout,
+            'requires_coordinates': requires_coordinates,
+            'declination_min': declination_min,
+            'declination_max': declination_max,
+            'show_cutout': show_cutout,
+            'cutout_hips': cutout_hips,
+            'cutout_skyview': cutout_skyview,
+            'cutout_fov': cutout_fov,
+            'show_color_mag': show_color_mag,
+            'color_mag_file': color_mag_file,
+            'main_plot': main_plot or f'{source_id}_lc.png',  # Auto-detect main plot
+            'additional_plots': additional_plots or [],
         }
 
         # Return function unchanged

@@ -26,7 +26,7 @@ from .utils import cleanup_paths
     state_acquiring='acquiring DASCH lightcurve',
     state_acquired='DASCH lightcurve acquired',
     log_file='dasch.log',
-    output_files=['dasch.log', 'dasch_lc.png'],
+    output_files=['dasch.log', 'dasch_lc.png', 'dasch_color_mag.png'],
     button_text='Get DASCH lightcurve',
     help_text='Harvard plate archive (historical data)',
     order=40,
@@ -37,6 +37,10 @@ from .utils import cleanup_paths
     lc_color='#d62728',
     lc_mode='magnitude',
     lc_short=False,
+    # Template metadata
+    template_layout='with_cutout',
+    show_color_mag=True,
+    color_mag_file='dasch_color_mag.png',
 )
 def target_dasch(config, basepath=None, verbose=True, show=False):
     """

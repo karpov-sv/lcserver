@@ -1,0 +1,36 @@
+{% load tags %}
+{# Layout with cutout: log + cutout/color-mag + plot #}
+
+<div class="row mb-2">
+  <div class="col-md">
+    {% include "target_block_text.html" with file=source_config.log_file %}
+  </div>
+
+  <div class="col-md">
+    <div class="row">
+      {% if source_config.show_cutout %}
+        <!-- Cutout image -->
+        <div class="col" style="max-width: 256px">
+          {% if source_config.cutout_hips %}
+            {% include "target_block_image.html" with hips=source_config.cutout_hips ra=target.config.target_ra dec=target.config.target_dec width=256 height=256 fov=source_config.cutout_fov only %}
+          {% elif source_config.cutout_skyview %}
+            {% include "target_block_image.html" with skyview=source_config.cutout_skyview ra=target.config.target_ra dec=target.config.target_dec width=256 fov=source_config.cutout_fov only %}
+          {% endif %}
+        </div>
+      {% endif %}
+
+      {% if source_config.show_color_mag and source_config.color_mag_file in files %}
+        <!-- Color-magnitude diagram -->
+        <div class="col" style="max-width: 256px">
+          {% include "target_block_image.html" with image=source_config.color_mag_file target=target only %}
+        </div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+{% if source_config.main_plot in files %}
+  <div class="text-center">
+    {% include "target_block_image.html" with image=source_config.main_plot target=target width="800px" noclick=1 only %}
+  </div>
+{% endif %}

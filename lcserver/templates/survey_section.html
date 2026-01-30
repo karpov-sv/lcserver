@@ -1,0 +1,35 @@
+{% load survey_tags %}
+{% load crispy_forms_tags %}
+
+{# Generic survey section template - auto-generates UI from registry metadata #}
+
+{% if source_config|survey_condition_met:target %}
+  <hr>
+  <h3>{{ source_config.name }}</h3>
+
+  {% if user_may_submit and form %}
+    <form action="" method="POST" class="mb-2">
+      <fieldset class="small" {% if target.celery_id %}disabled{% endif %}>
+        {% crispy form %}
+        <button type="submit" name="action" value="target_{{ source_id }}"
+                class="btn {{ source_config.button_class }}">
+          {{ source_config.button_text }}
+        </button>
+      </fieldset>
+    </form>
+  {% endif %}
+
+  {% if source_config.log_file in files %}
+    <hr style="border-style: dotted">
+
+    {% if source_config.template_layout == 'simple' %}
+      {% include "survey_layout_simple.html" %}
+    {% elif source_config.template_layout == 'with_cutout' %}
+      {% include "survey_layout_cutout.html" %}
+    {% elif source_config.template_layout == 'complex' %}
+      {% include "survey_layout_complex.html" %}
+    {% elif source_config.template_layout == 'custom' %}
+      {% include "survey_layout_custom.html" %}
+    {% endif %}
+  {% endif %}
+{% endif %}

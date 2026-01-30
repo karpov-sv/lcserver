@@ -42,6 +42,8 @@ from .utils import cleanup_paths
     lc_color='#8c564b',
     lc_mode='magnitude',
     lc_short=False,
+    # Template metadata
+    template_layout='simple',
 )
 def target_mmt9(config, basepath=None, verbose=True, show=False):
     """

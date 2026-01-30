@@ -97,6 +97,13 @@ def gaussian_smoothing(x, y, dy, scale=100, nsteps=1000):
     lc_color='#ff7f0e',
     lc_mode='magnitude',
     lc_short=True,
+    # Template metadata
+    template_layout='with_cutout',
+    show_cutout=True,
+    cutout_hips='CDS/P/ZTF/DR7/color',
+    cutout_fov=0.03,
+    show_color_mag=True,
+    color_mag_file='ztf_color_mag.png',
 )
 def target_ztf(config, basepath=None, verbose=True, show=False):
     """

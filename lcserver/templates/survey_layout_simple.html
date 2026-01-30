@@ -1,0 +1,10 @@
+{% load tags %}
+{# Simple layout: log + single plot #}
+
+{% include "target_block_text.html" with file=source_config.log_file %}
+
+{% if source_config.main_plot in files %}
+  <div class="text-center">
+    {% include "target_block_image.html" with image=source_config.main_plot target=target width="800px" noclick=1 only %}
+  </div>
+{% endif %}

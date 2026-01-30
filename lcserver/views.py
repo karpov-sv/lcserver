@@ -312,6 +312,14 @@ def targets(request, id=None):
         for name,form in all_forms.items():
             context['form_'+name] = form
 
+        # Also provide forms indexed by source_id for template loop
+        survey_forms = {}
+        for source_id in surveys.SURVEY_SOURCES.keys():
+            form_name = f'target_{source_id}'
+            if form_name in all_forms:
+                survey_forms[source_id] = all_forms[form_name]
+        context['survey_forms'] = survey_forms
+
         # Form actions
         if request.method == 'POST':
             # Handle forms

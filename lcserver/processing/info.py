@@ -33,6 +33,8 @@ from .utils import cleanup_paths
     button_class='btn-info',
     help_text='Resolve target coordinates and fetch catalog photometry',
     order=1,
+    # Template metadata
+    template_layout='custom',
 )
 def target_info(config, basepath=None, verbose=True, show=False):
     """

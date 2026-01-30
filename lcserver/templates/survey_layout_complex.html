@@ -1,0 +1,46 @@
+{% load tags %}
+{% load filters %}
+{# Complex layout: log + multiple cutouts + multiple plots (TESS) #}
+
+<div class="row mb-2">
+  <div class="col-md">
+    {% include "target_block_text.html" with file=source_config.log_file %}
+  </div>
+
+  <div class="col-md">
+    <div class="row">
+      {% if source_config.show_cutout %}
+        <!-- Multiple cutouts -->
+        {% if source_config.cutout_skyview %}
+          <div class="col p-0 me-1" style="min-width: 256px; max-width: 256px">
+            {% include "target_block_image.html" with skyview=source_config.cutout_skyview ra=target.config.target_ra dec=target.config.target_dec width=256 fov=source_config.cutout_fov only %}
+          </div>
+        {% endif %}
+        {% if source_config.cutout_hips %}
+          <div class="col p-0 me-1" style="min-width: 256px; max-width: 256px">
+            {% include "target_block_image.html" with hips=source_config.cutout_hips ra=target.config.target_ra dec=target.config.target_dec width=256 height=256 fov=source_config.cutout_fov only %}
+          </div>
+        {% endif %}
+      {% endif %}
+
+      <!-- Additional plots (e.g., tess_lc_*.png) -->
+      {% if source_config.additional_plots %}
+        {% for pattern in source_config.additional_plots %}
+          {% for name in files|grep:pattern|sort %}
+            {% if name in files %}
+              <div class="col" style="max-width: 256px">
+                {% include "target_block_image.html" with image=name target=target only %}
+              </div>
+            {% endif %}
+          {% endfor %}
+        {% endfor %}
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+{% if source_config.main_plot in files %}
+  <div class="text-center">
+    {% include "target_block_image.html" with image=source_config.main_plot target=target width="800px" noclick=1 only %}
+  </div>
+{% endif %}

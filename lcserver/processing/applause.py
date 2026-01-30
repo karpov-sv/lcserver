@@ -26,7 +26,7 @@ from .utils import cleanup_paths, parse_votable_lenient
     state_acquiring='acquiring APPLAUSE lightcurve',
     state_acquired='APPLAUSE lightcurve acquired',
     log_file='applause.log',
-    output_files=['applause.log', 'applause_lc.png'],
+    output_files=['applause.log', 'applause_lc.png', 'applause_color_mag.png'],
     button_text='Get APPLAUSE lightcurve',
     help_text='European plate archive (Dec > -30 deg)',
     order=50,
@@ -37,6 +37,11 @@ from .utils import cleanup_paths, parse_votable_lenient
     lc_color='#9467bd',
     lc_mode='magnitude',
     lc_short=False,
+    # Template metadata
+    template_layout='with_cutout',
+    declination_min=-30,
+    show_color_mag=True,
+    color_mag_file='applause_color_mag.png',
 )
 def target_applause(config, basepath=None, verbose=True, show=False):
     """

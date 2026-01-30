@@ -37,6 +37,13 @@ from .utils import cleanup_paths
     lc_color='#e74c3c',
     lc_mode='flux',
     lc_short=False,
+    # Template metadata
+    template_layout='complex',
+    show_cutout=True,
+    cutout_skyview='TESS',
+    cutout_hips='DSS2/color',
+    cutout_fov=0.06,
+    additional_plots=['tess_lc_*.png'],
 )
 def target_tess(config, basepath=None, verbose=True, show=False):
     """

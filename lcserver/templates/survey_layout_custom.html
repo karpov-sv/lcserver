@@ -1,0 +1,48 @@
+{% load tags %}
+{% load filters %}
+{# Custom layout for special cases (Combined, Info) #}
+{# These sections have unique layouts that don't fit standard patterns #}
+
+{% if source_id == 'combined' %}
+  {# Combined lightcurve layout #}
+  <div class="row mb-2">
+    <div class="col-md">
+      {% include "target_block_text.html" with file=source_config.log_file %}
+    </div>
+
+    <div class="col-md">
+      <div class="row">
+        {% if source_config.show_color_mag and source_config.color_mag_file in files %}
+          <div class="col" style="max-width: 256px">
+            {% include "target_block_image.html" with image=source_config.color_mag_file target=target only %}
+          </div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  {# Show both short and long lightcurves #}
+  {% for plot in source_config.additional_plots %}
+    {% if plot in files %}
+      <div class="text-center">
+        {% include "target_block_image.html" with image=plot target=target width="800px" noclick=1 only %}
+      </div>
+    {% endif %}
+  {% endfor %}
+
+  {% if source_config.main_plot in files %}
+    <div class="text-center">
+      {% include "target_block_image.html" with image=source_config.main_plot target=target width="800px" noclick=1 only %}
+    </div>
+  {% endif %}
+
+{% else %}
+  {# Fallback for other custom layouts #}
+  {% include "target_block_text.html" with file=source_config.log_file %}
+
+  {% if source_config.main_plot in files %}
+    <div class="text-center">
+      {% include "target_block_image.html" with image=source_config.main_plot target=target width="800px" noclick=1 only %}
+    </div>
+  {% endif %}
+{% endif %}

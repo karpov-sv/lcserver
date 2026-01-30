@@ -44,6 +44,8 @@ from .utils import cleanup_paths
     lc_color='#17becf',
     lc_mode='magnitude',
     lc_short=False,
+    # Template metadata
+    template_layout='simple',
 )
 def target_css(config, basepath=None, verbose=True, show=False):
     """Acquire Catalina Sky Survey lightcurve."""

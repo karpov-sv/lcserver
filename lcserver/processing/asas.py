@@ -36,6 +36,10 @@ from .utils import cleanup_paths
     lc_color='#1f77b4',
     lc_mode='magnitude',
     lc_short=True,
+    # Template metadata
+    template_layout='with_cutout',
+    show_color_mag=True,
+    color_mag_file='asas_color_mag.png',
 )
 def target_asas(config, basepath=None, verbose=True, show=False):
     """

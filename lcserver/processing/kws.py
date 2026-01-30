@@ -35,6 +35,9 @@ from .utils import cleanup_paths
     lc_color='#e377c2',
     lc_mode='magnitude',
     lc_short=False,
+    # Template metadata
+    template_layout='simple',
+    requires_coordinates=False,
 )
 def target_kws(config, basepath=None, verbose=True, show=False):
     """Acquire Kamogata Wide-field Survey lightcurve."""
