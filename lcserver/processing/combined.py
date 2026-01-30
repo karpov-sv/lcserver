@@ -22,7 +22,7 @@ from .utils import cleanup_paths
     state_acquiring='acquiring combined lightcurve',
     state_acquired='combined lightcurve acquired',
     log_file='combined.log',
-    output_files=['combined.log', 'combined_lc.png', 'combined_short_lc.png', 'combined_color_mag.png'],
+    output_files=['combined.log', 'combined_lc.png', 'combined_short_lc.png'],
     button_text='Get combined lightcurve',
     button_class='btn-success',
     help_text='Multi-survey combined plot',
@@ -32,8 +32,6 @@ from .utils import cleanup_paths
     declination_min=-30,
     main_plot='combined_short_lc.png',
     additional_plots=['combined_lc.png'],
-    show_color_mag=True,
-    color_mag_file='combined_color_mag.png',
 )
 def target_combined(config, basepath=None, verbose=True, show=False):
     """

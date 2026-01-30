@@ -19,7 +19,7 @@ from astroquery.simbad import Simbad
 from stdpipe import catalogs, resolve, plots
 
 from ..surveys import survey_source, get_all_output_files
-from .utils import cleanup_paths
+from .utils import cleanup_paths, cached_votable_query
 
 
 @survey_source(
@@ -28,7 +28,7 @@ from .utils import cleanup_paths
     state_acquiring='acquiring info',
     state_acquired='info acquired',
     log_file='info.log',
-    output_files=['info.log', 'galaxy_map.png'],
+    output_files=['info.log', 'galaxy_map.png', 'ps1.vot', 'ps1.txt'],
     button_text='Get Target Info',
     button_class='btn-info',
     help_text='Resolve target coordinates and fetch catalog photometry',
@@ -77,10 +77,25 @@ def target_info(config, basepath=None, verbose=True, show=False):
 
     log("\n---- SIMBAD ----\n")
 
-    sim = Simbad()
-    sim.add_votable_fields('otype', 'otypes', 'alltypes', 'ids', 'distance', 'sptype')
+    # Create safe name for caching
+    import re
+    safe_name = re.sub(r'[^\w\-.]', '_', config['target_name'])
+    cache_name = f"simbad_{safe_name}.vot"
 
-    res = sim.query_region(target, radius=5*u.arcsec)
+    with cached_votable_query(cache_name, basepath, log, 'SIMBAD') as cache:
+        if not cache.hit:
+            # Query SIMBAD - only if not cached
+            sim = Simbad()
+            sim.add_votable_fields('otype', 'otypes', 'alltypes', 'ids', 'distance', 'sptype')
+
+            res = sim.query_region(target, radius=5*u.arcsec)
+
+            if res and len(res):
+                cache.save(res)
+            else:
+                res = None
+        else:
+            res = cache.data
 
     if not res or not len(res):
         log("No SIMBAD objects within 5 arcsec")
@@ -99,8 +114,22 @@ def target_info(config, basepath=None, verbose=True, show=False):
 
     # Catalogues to get photometry
     for catname in ['gaiadr3syn', 'ps1', 'skymapper']:
-        cat = catalogs.get_cat_vizier(config.get('target_ra'), config.get('target_dec'), 5/3600,
-                                      catname, get_distance=True, verbose=False)
+        ra = config.get('target_ra')
+        dec = config.get('target_dec')
+        cache_name = f"{catname}_{ra:.4f}_{dec:.4f}.vot"
+
+        with cached_votable_query(cache_name, basepath, log, catalogs.catalogs[catname]['name']) as cache:
+            if not cache.hit:
+                # Query catalog - only if not cached
+                cat = catalogs.get_cat_vizier(ra, dec, 5/3600,
+                                              catname, get_distance=True, verbose=False)
+                if cat and len(cat):
+                    cache.save(cat)
+                else:
+                    cat = None
+            else:
+                cat = cache.data
+
         if not cat or not len(cat):
             continue
 
@@ -130,10 +159,24 @@ def target_info(config, basepath=None, verbose=True, show=False):
             # break
 
     # Gaia DR3 photometry
-    cat = catalogs.get_cat_vizier(config.get('target_ra'), config.get('target_dec'), 5/3600,
-                                  'I/355/gaiadr3',
-                                  extra=['_RAJ2000', '_DEJ2000', 'e_Gmag', 'e_BPmag', 'e_RPmag'],
-                                  get_distance=True, verbose=False)
+    ra = config.get('target_ra')
+    dec = config.get('target_dec')
+    cache_name = f"gaiadr3_phot_{ra:.4f}_{dec:.4f}.vot"
+
+    with cached_votable_query(cache_name, basepath, log, 'Gaia DR3 photometry') as cache:
+        if not cache.hit:
+            # Query Gaia DR3 - only if not cached
+            cat = catalogs.get_cat_vizier(ra, dec, 5/3600,
+                                          'I/355/gaiadr3',
+                                          extra=['_RAJ2000', '_DEJ2000', 'e_Gmag', 'e_BPmag', 'e_RPmag'],
+                                          get_distance=True, verbose=False)
+            if cat and len(cat):
+                cache.save(cat)
+            else:
+                cat = None
+        else:
+            cat = cache.data
+
     if cat:
         star = dict(cat[cat['_r'] == np.min(cat['_r'])][0])
 
@@ -151,9 +194,23 @@ def target_info(config, basepath=None, verbose=True, show=False):
                 config['BP_minus_RP'] = BP_minus_RP
 
     # Gaia DR3 distances by Bailer-Jones
-    cat = catalogs.get_cat_vizier(config.get('target_ra'), config.get('target_dec'), 5/3600,
-                                  'I/352/gedr3dis', extra=['_RAJ2000', '_DEJ2000'],
-                                  get_distance=True, verbose=False)
+    ra = config.get('target_ra')
+    dec = config.get('target_dec')
+    cache_name = f"gaiadr3_dist_{ra:.4f}_{dec:.4f}.vot"
+
+    with cached_votable_query(cache_name, basepath, log, 'Gaia DR3 distances') as cache:
+        if not cache.hit:
+            # Query Gaia DR3 distances - only if not cached
+            cat = catalogs.get_cat_vizier(ra, dec, 5/3600,
+                                          'I/352/gedr3dis', extra=['_RAJ2000', '_DEJ2000'],
+                                          get_distance=True, verbose=False)
+            if cat and len(cat):
+                cache.save(cat)
+            else:
+                cat = None
+        else:
+            cat = cache.data
+
     if cat:
         star = cat[cat['_r'] == np.min(cat['_r'])][0]
 
@@ -205,17 +262,35 @@ def target_info(config, basepath=None, verbose=True, show=False):
     # Pan-STARRS DR2 warp photometry
     log("\n---- Pan-STARRS DR2 warp photometry ----\n")
 
-    try:
-        res = requests.get('https://catalogs.mast.stsci.edu/api/v0.1/panstarrs/dr2/detection.csv', params={'ra':config['target_ra'], 'dec':config['target_dec'], 'radius':2/3600, 'format':'csv', 'columns':['obsTime', 'filterID', 'psfQfPerfect', 'psfFlux', 'psfFluxErr']})
-        ps1 = Table.read(BytesIO(res.content), format='csv')
-    except:
-        import traceback
-        traceback.print_exc()
-        log("Error while downloading the data")
-        ps1 = None
+    ra = config.get('target_ra')
+    dec = config.get('target_dec')
+    cache_name = f"ps1_warp_{ra:.4f}_{dec:.4f}.vot"
 
-    if ps1 and len(ps1):
-        ps1 = ps1[ps1['psfQfPerfect'] > 0.95] # Quality cut
+    with cached_votable_query(cache_name, basepath, log, 'Pan-STARRS DR2 warp') as cache:
+        if not cache.hit:
+            # Query Pan-STARRS DR2 - only if not cached
+            try:
+                res = requests.get('https://catalogs.mast.stsci.edu/api/v0.1/panstarrs/dr2/detection.csv',
+                                   params={'ra': ra, 'dec': dec, 'radius': 2/3600, 'format': 'csv',
+                                          'columns': ['obsTime', 'filterID', 'psfQfPerfect', 'psfFlux', 'psfFluxErr']})
+                ps1_raw = Table.read(BytesIO(res.content), format='csv')
+
+                if ps1_raw and len(ps1_raw):
+                    cache.save(ps1_raw)
+                else:
+                    ps1_raw = None
+            except:
+                import traceback
+                traceback.print_exc()
+                log("Error while downloading the data")
+                ps1_raw = None
+        else:
+            ps1_raw = cache.data
+
+    # Apply quality cut
+    ps1 = None
+    if ps1_raw and len(ps1_raw):
+        ps1 = ps1_raw[ps1_raw['psfQfPerfect'] > 0.95]  # Quality cut
 
     if ps1 and len(ps1):
         ps1.sort('obsTime')

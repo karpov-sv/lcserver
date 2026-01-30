@@ -331,8 +331,8 @@ def get_cache_files():
     return cache_patterns
 
 
-def get_all_output_files():
-    """Get all output files from all survey sources.
+def get_all_output_files(cache=False):
+    """Get all output files from all survey sources, and optionally a cache.
 
     Used by info step to clean up everything when re-run.
     Includes all output files from all sources plus cache files.
@@ -343,8 +343,9 @@ def get_all_output_files():
     for source_id, config in SURVEY_SOURCES.items():
         all_files.extend(config.get('output_files', []))
 
-    # Add cache files
-    all_files.extend(get_cache_files())
+    if cache:
+        # Add cache files
+        all_files.extend(get_cache_files())
 
     # Add info-specific files not in output_files
     all_files.extend(['galaxy_map.png'])

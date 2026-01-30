@@ -26,7 +26,7 @@ from .utils import cleanup_paths, parse_votable_lenient, cached_votable_query
     state_acquiring='acquiring APPLAUSE lightcurve',
     state_acquired='APPLAUSE lightcurve acquired',
     log_file='applause.log',
-    output_files=['applause.log', 'applause_lc.png', 'applause_color_mag.png'],
+    output_files=['applause.log', 'applause_lc.png', 'applause.vot', 'applause.txt'],
     button_text='Get APPLAUSE lightcurve',
     help_text='European plate archive (Dec > -30 deg)',
     order=50,
@@ -40,8 +40,6 @@ from .utils import cleanup_paths, parse_votable_lenient, cached_votable_query
     # Template metadata
     template_layout='with_cutout',
     declination_min=-30,
-    show_color_mag=True,
-    color_mag_file='applause_color_mag.png',
 )
 def target_applause(config, basepath=None, verbose=True, show=False):
     """
@@ -67,10 +65,13 @@ def target_applause(config, basepath=None, verbose=True, show=False):
     if 'target_ra' not in config or 'target_dec' not in config:
         raise RuntimeError("Cannot operate without target coordinates")
 
+    ra = config.get('target_ra')
+    dec = config.get('target_dec')
+    applause_sr = config.get('applause_sr', 2.0)
+    cache_name = f"applause_{ra:.4f}_{dec:.4f}_{applause_sr:.1f}.vot"
 
-    with cached_votable_query("applause.vot", basepath, log, 'APPLAUSE') as cache:
+    with cached_votable_query(cache_name, basepath, log, 'APPLAUSE') as cache:
         if not cache.hit:
-            applause_sr = config.get('applause_sr', 2.0)
 
             log(f"for {config['target_name']} within {applause_sr:.1f} arcsec")
 

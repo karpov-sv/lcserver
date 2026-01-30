@@ -25,7 +25,7 @@ from .utils import cleanup_paths
     state_acquiring='acquiring TESS lightcurves',
     state_acquired='TESS lightcurves acquired',
     log_file='tess.log',
-    output_files=['tess.log', 'tess_lc_*.vot', 'tess_lc_*.png'],
+    output_files=['tess.log', 'tess_lc_*.vot', 'tess_lc_*.txt', 'tess_lc_*.png'],
     button_text='Get TESS lightcurves',
     help_text='NASA TESS space telescope',
     order=30,

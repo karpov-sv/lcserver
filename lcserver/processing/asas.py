@@ -15,7 +15,7 @@ from pyasassn.client import SkyPatrolClient
 from stdpipe import plots
 
 from ..surveys import survey_source, get_output_files
-from .utils import cleanup_paths
+from .utils import cleanup_paths, cached_votable_query
 
 
 @survey_source(
@@ -24,7 +24,7 @@ from .utils import cleanup_paths
     state_acquiring='acquiring ASAS-SN lightcurve',
     state_acquired='ASAS-SN lightcurve acquired',
     log_file='asas.log',
-    output_files=['asas.log', 'asas_lc.png', 'asas_color_mag.png'],
+    output_files=['asas.log', 'asas_lc.png', 'asas.vot', 'asas.txt'],
     button_text='Get ASAS-SN lightcurve',
     help_text='All-Sky Automated Survey for Supernovae',
     order=20,
@@ -38,8 +38,6 @@ from .utils import cleanup_paths
     lc_short=True,
     # Template metadata
     template_layout='with_cutout',
-    show_color_mag=True,
-    color_mag_file='asas_color_mag.png',
 )
 def target_asas(config, basepath=None, verbose=True, show=False):
     """
@@ -65,28 +63,46 @@ def target_asas(config, basepath=None, verbose=True, show=False):
     if 'target_ra' not in config or 'target_dec' not in config:
         raise RuntimeError("Cannot operate without target coordinates")
 
+    # Check if processed data already exists
     if os.path.exists(os.path.join(basepath, 'asas.vot')):
-        log(f"Loading ASAS-SN lightcurve from asas.vot")
+        log(f"Loading processed ASAS-SN lightcurve from asas.vot")
         asas = Table.read(os.path.join(basepath, 'asas.vot'))
     else:
+        # Cache raw query results before color conversion
+        ra = config.get('target_ra')
+        dec = config.get('target_dec')
         asas_sr = config.get('asas_sr', 10.0)
+        cache_name = f"asas_{ra:.4f}_{dec:.4f}_{asas_sr:.1f}.vot"
 
-        log(f"Requesting ASAS-SN lightcurve for {config['target_name']} within {asas_sr:.1f} arcsec")
+        with cached_votable_query(cache_name, basepath, log, 'ASAS-SN') as cache:
+            if not cache.hit:
+                # Query ASAS-SN - only if not cached
+                log(f"Requesting ASAS-SN lightcurve for {config['target_name']} within {asas_sr:.1f} arcsec")
 
-        try:
-            client = SkyPatrolClient()
-            lcq = client.cone_search(ra_deg=config.get('target_ra'), dec_deg=config.get('target_dec'), radius=asas_sr/3600, catalog='master_list', download=True)
-        except:
-            import traceback
-            traceback.print_exc()
+                try:
+                    client = SkyPatrolClient()
+                    lcq = client.cone_search(
+                        ra_deg=ra,
+                        dec_deg=dec,
+                        radius=asas_sr/3600,
+                        catalog='master_list',
+                        download=True
+                    )
+                except:
+                    import traceback
+                    traceback.print_exc()
+                    lcq = None
 
-            lcq = None
+                if not lcq or not len(lcq.data):
+                    log("Warning: No ASAS-SN data found")
+                    return
 
-        if not lcq or not len(lcq.data):
-            log("Warning: No ASAS-SN data found")
-            return
+                # Cache raw query results
+                asas_raw = Table.from_pandas(lcq.data)
+                cache.save(asas_raw)
 
-        asas = Table.from_pandas(lcq.data)
+            # Use cached or freshly queried raw data
+            asas = cache.data
 
     log(f"{len(asas)} ASAS-SN data points found")
 

@@ -943,7 +943,17 @@ function fitPeriod() {
     .then(response => {
         if (!response.ok) {
             return response.json().then(err => {
-                throw new Error(err.error || 'Server error');
+                // Create detailed error message
+                let errorMsg = err.error || 'Server error';
+                if (err.details) {
+                    errorMsg += '\n\n' + err.details;
+                }
+                // Include best_period info if convergence error
+                if (err.best_period !== undefined) {
+                    errorMsg += `\n\nBest period found: ${err.best_period.toFixed(4)} days`;
+                    errorMsg += `\nSearch range: ${err.period_min.toFixed(2)} - ${err.period_max.toFixed(2)} days`;
+                }
+                throw new Error(errorMsg);
             });
         }
         return response.json();
@@ -971,7 +981,16 @@ function fitPeriod() {
         }
 
         message += `\nSearch range: ${data.period_min.toFixed(2)} - ${data.period_max.toFixed(2)} days\n`;
+        message += `Time span: ${data.time_span.toFixed(2)} days\n`;
         message += `Fitted ${data.n_points} points from ${data.n_series} series.`;
+
+        // Add warnings if present
+        if (data.warnings && data.warnings.length > 0) {
+            message += '\n\n⚠️  Warnings:\n';
+            data.warnings.forEach(warning => {
+                message += '  • ' + warning + '\n';
+            });
+        }
 
         alert(message);
 
@@ -980,7 +999,7 @@ function fitPeriod() {
     })
     .catch(error => {
         console.error('Error fitting period:', error);
-        alert(`Error fitting period: ${error.message}\n\nSee console for details.`);
+        alert(`Period fitting failed:\n\n${error.message}\n\nSee console for details.`);
     })
     .finally(() => {
         // Re-enable button

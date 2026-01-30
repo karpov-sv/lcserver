@@ -23,7 +23,7 @@ from .utils import cleanup_paths, cached_votable_query
     state_acquiring='acquiring Mini-MegaTORTORA lightcurve',
     state_acquired='Mini-MegaTORTORA lightcurve acquired',
     log_file='mmt9.log',
-    output_files=['mmt9.log', 'mmt9_lc.png'],
+    output_files=['mmt9.log', 'mmt9_lc.png', 'mmt9.vot', 'mmt9.txt'],
     button_text='Get Mini-MegaTORTORA lightcurve',
     form_fields={
         'mmt9_sr': {
@@ -69,9 +69,13 @@ def target_mmt9(config, basepath=None, verbose=True, show=False):
     if 'target_ra' not in config or 'target_dec' not in config:
         raise RuntimeError("Cannot operate without target coordinates")
 
-    with cached_votable_query("mmt9.vot", basepath, log, 'Mini-MegaTORTORA') as cache:
+    ra = config.get('target_ra')
+    dec = config.get('target_dec')
+    mmt9_sr = config.get('mmt9_sr', 15.0)  # Search radius in arcsec
+    cache_name = f"mmt9_{ra:.4f}_{dec:.4f}_{mmt9_sr:.1f}.vot"
+
+    with cached_votable_query(cache_name, basepath, log, 'Mini-MegaTORTORA') as cache:
         if not cache.hit:
-            mmt9_sr = config.get('mmt9_sr', 15.0)  # Search radius in arcsec
 
             log(f"for {config['target_name']} within {mmt9_sr:.1f} arcsec")
 
@@ -92,7 +96,8 @@ def target_mmt9(config, basepath=None, verbose=True, show=False):
                 response = requests.get(api_url, params=params, timeout=60)
                 response.raise_for_status()
             except requests.exceptions.RequestException as e:
-                raise RuntimeError(f'Error downloading Mini-MegaTORTORA lightcurve: {e}')
+                log(f'Error: Error downloading Mini-MegaTORTORA lightcurve: {e}')
+                return
 
             # Parse whitespace-separated table with commented header
             from io import StringIO
@@ -103,7 +108,8 @@ def target_mmt9(config, basepath=None, verbose=True, show=False):
                 mmt9.rename_column('Magerr', 'magerr')
 
             except Exception as e:
-                raise RuntimeError(f'Error parsing Mini-MegaTORTORA data: {e}')
+                log(f'Error: Error parsing Mini-MegaTORTORA data: {e}')
+                return
 
             if not len(mmt9):
                 log("Warning: No Mini-MegaTORTORA data found")
@@ -122,7 +128,8 @@ def target_mmt9(config, basepath=None, verbose=True, show=False):
         if 'time' in mmt9.colnames:
             mmt9['mjd'] = mmt9['time']
         else:
-            raise RuntimeError('Cannot find time column in Mini-MegaTORTORA data')
+            log('Error: Cannot find time column in Mini-MegaTORTORA data')
+            return
 
     mmt9['time'] = Time(mmt9['mjd'], format='mjd')
     mmt9.sort('time')

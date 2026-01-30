@@ -302,7 +302,7 @@ def load_lightcurve_data(request, id):
 @login_required
 @require_http_methods(["POST"])
 def fit_period(request, id):
-    """Fit period using Lomb-Scargle multiband periodogram"""
+    """Fit period using Lomb-Scargle multiband periodogram with comprehensive error handling"""
     target = models.Target.objects.get(id=id)
 
     # Check permissions
@@ -320,8 +320,17 @@ def fit_period(request, id):
             return JsonResponse({'error': 'No series data provided'}, status=400)
 
         # Validate period range
-        if period_min <= 0 or period_max <= period_min:
-            return JsonResponse({'error': 'Invalid period range'}, status=400)
+        if period_min <= 0:
+            return JsonResponse({
+                'error': 'Invalid period range',
+                'details': f'Minimum period must be positive (got {period_min})'
+            }, status=400)
+
+        if period_max <= period_min:
+            return JsonResponse({
+                'error': 'Invalid period range',
+                'details': f'Maximum period ({period_max}) must be greater than minimum period ({period_min})'
+            }, status=400)
 
         # Collect all data points from visible series
         times = []
@@ -330,12 +339,18 @@ def fit_period(request, id):
         bands = []
 
         for i, series in enumerate(series_list):
-            t = np.array(series['mjd'])
-            y = np.array(series['values'])
-            dy = np.array(series['errors'])
+            try:
+                t = np.array(series['mjd'])
+                y = np.array(series['values'])
+                dy = np.array(series['errors'])
+            except (KeyError, ValueError) as e:
+                return JsonResponse({
+                    'error': 'Invalid series data format',
+                    'details': f'Series {i}: {str(e)}'
+                }, status=400)
 
             # Filter out non-finite values
-            valid = np.isfinite(t) & np.isfinite(y) & np.isfinite(dy)
+            valid = np.isfinite(t) & np.isfinite(y) & np.isfinite(dy) & (dy > 0)
 
             if not np.any(valid):
                 continue
@@ -346,7 +361,10 @@ def fit_period(request, id):
             bands.append(np.full(np.sum(valid), i, dtype=int))
 
         if not times:
-            return JsonResponse({'error': 'No valid data points to fit'}, status=400)
+            return JsonResponse({
+                'error': 'No valid data points to fit',
+                'details': 'All data points were invalid (NaN, Inf, or non-positive errors)'
+            }, status=400)
 
         # Concatenate all data
         t_all = np.concatenate(times)
@@ -354,8 +372,42 @@ def fit_period(request, id):
         dy_all = np.concatenate(errors)
         bands_all = np.concatenate(bands)
 
+        # Validation: Check minimum number of data points
+        n_points = len(t_all)
+        if n_points < 10:
+            return JsonResponse({
+                'error': 'Insufficient data',
+                'details': f'Need at least 10 data points for reliable period fitting (got {n_points})'
+            }, status=400)
+
+        # Validation: Check data time span
+        time_span = np.max(t_all) - np.min(t_all)
+        if time_span <= 0:
+            return JsonResponse({
+                'error': 'Invalid data',
+                'details': 'All data points have the same time'
+            }, status=400)
+
+        # Warn if searching for periods longer than data span
+        if period_max > time_span:
+            # This is a warning, not an error - still allow the fit
+            pass
+
+        # Check if data span is too short compared to minimum period
+        if time_span < 2 * period_min:
+            return JsonResponse({
+                'error': 'Insufficient time coverage',
+                'details': f'Data span ({time_span:.2f} days) should be at least 2× minimum period ({period_min:.2f} days) for reliable fitting'
+            }, status=400)
+
         # Create LombScargleMultiband object
-        ls = LombScargleMultiband(t_all, y_all, bands_all, dy=dy_all)
+        try:
+            ls = LombScargleMultiband(t_all, y_all, bands_all, dy=dy_all)
+        except Exception as e:
+            return JsonResponse({
+                'error': 'Failed to create periodogram object',
+                'details': str(e)
+            }, status=400)
 
         # Convert period range to frequency range
         # frequency = 1 / period, so:
@@ -365,16 +417,37 @@ def fit_period(request, id):
         maximum_frequency = 1.0 / period_min
 
         print(f'Starting period fit: {period_min:.3f} - {period_max:.3f} days ({minimum_frequency:.6f} - {maximum_frequency:.6f} 1/day)')
+        print(f'Data: {n_points} points, span {time_span:.2f} days, {len(times)} series')
+
         # Compute periodogram with automatic frequency grid
-        # Use autopower for sensible defaults
-        freq, power = ls.autopower(
-            minimum_frequency=minimum_frequency,
-            maximum_frequency=maximum_frequency,
-            samples_per_peak=10,
-            method="fast",
-            sb_method="fastnifty",
-        )
+        try:
+            freq, power = ls.autopower(
+                minimum_frequency=minimum_frequency,
+                maximum_frequency=maximum_frequency,
+                samples_per_peak=10,
+                method="fast",
+                sb_method="fastnifty",
+            )
+        except Exception as e:
+            return JsonResponse({
+                'error': 'Periodogram computation failed',
+                'details': str(e)
+            }, status=500)
+
         print('Fit finished')
+
+        # Validate periodogram output
+        if len(freq) == 0 or len(power) == 0:
+            return JsonResponse({
+                'error': 'Periodogram computation failed',
+                'details': 'Empty frequency or power array'
+            }, status=500)
+
+        if not np.any(np.isfinite(power)):
+            return JsonResponse({
+                'error': 'Periodogram computation failed',
+                'details': 'All power values are invalid (NaN or Inf)'
+            }, status=500)
 
         # Find best period
         best_idx = np.argmax(power)
@@ -382,14 +455,60 @@ def fit_period(request, id):
         best_period = 1.0 / best_freq
         best_power = power[best_idx]
 
+        # Error detection: Check if fit converged to period limits
+        # Allow 5% tolerance at edges
+        period_tolerance = 0.05  # 5% tolerance
+        lower_threshold = period_min * (1 + period_tolerance)
+        upper_threshold = period_max * (1 - period_tolerance)
+
+        warnings = []
+
+        if best_period < lower_threshold:
+            return JsonResponse({
+                'error': 'Period fit converged to lower limit',
+                'details': f'Best period ({best_period:.4f} days) is at the lower edge of search range ({period_min:.4f} days). Try decreasing minimum period or the signal may have a shorter period.',
+                'best_period': float(best_period),
+                'power': float(best_power),
+                'period_min': float(period_min),
+                'period_max': float(period_max),
+            }, status=400)
+
+        if best_period > upper_threshold:
+            return JsonResponse({
+                'error': 'Period fit converged to upper limit',
+                'details': f'Best period ({best_period:.4f} days) is at the upper edge of search range ({period_max:.4f} days). Try increasing maximum period or the signal may have a longer period.',
+                'best_period': float(best_period),
+                'power': float(best_power),
+                'period_min': float(period_min),
+                'period_max': float(period_max),
+            }, status=400)
+
+        # Warn if best period is close to data span (aliasing risk)
+        if best_period > 0.8 * time_span:
+            warnings.append(f'Best period ({best_period:.2f} days) is close to data span ({time_span:.2f} days). Period may be poorly constrained.')
+
+        # Check if power is suspiciously low (weak or no periodicity)
+        # Typical significant peaks have power > 0.1, but this is data-dependent
+        if best_power < 0.05:
+            warnings.append(f'Low periodogram power ({best_power:.4f}). Signal may be very weak or non-periodic.')
+
         # Compute false alarm probability (if single band, use LombScargle)
         # Note: LombScargleMultiband doesn't have FAP calculation implemented
         fap = None
         if len(times) == 1:
-            # Use single-band LombScargle for FAP calculation
-            from astropy.timeseries import LombScargle
-            ls_single = LombScargle(t_all, y_all, dy=dy_all)
-            fap = ls_single.false_alarm_probability(best_power)
+            try:
+                # Use single-band LombScargle for FAP calculation
+                from astropy.timeseries import LombScargle
+                ls_single = LombScargle(t_all, y_all, dy=dy_all)
+                fap = ls_single.false_alarm_probability(best_power)
+
+                # Warn if FAP is high (not significant)
+                if fap > 0.01:  # 1% FAP threshold
+                    warnings.append(f'High false alarm probability ({fap:.4f}). Detection may not be significant.')
+            except Exception as e:
+                # FAP calculation failed, but don't fail the whole fit
+                print(f'FAP calculation failed: {e}')
+                pass
         else:
             # For multiband, FAP is not available
             # Could use bootstrap or other methods, but skip for now
@@ -399,26 +518,38 @@ def fit_period(request, id):
         # Use median time as initial guess
         epoch = np.median(t_all)
 
+        # Build result
         result = {
             'period': float(best_period),
             'epoch': float(epoch),
             'power': float(best_power),
             'frequency': float(best_freq),
-            'n_points': int(len(t_all)),
+            'n_points': int(n_points),
             'n_series': len(times),
             'period_min': float(period_min),
             'period_max': float(period_max),
+            'time_span': float(time_span),
         }
 
         if fap is not None:
             result['fap'] = float(fap)
 
+        if warnings:
+            result['warnings'] = warnings
+
         return JsonResponse(result)
+
+    except json.JSONDecodeError as e:
+        return JsonResponse({
+            'error': 'Invalid JSON in request body',
+            'details': str(e)
+        }, status=400)
 
     except Exception as e:
         import traceback
         traceback.print_exc()
         return JsonResponse({
-            'error': str(e),
+            'error': 'Unexpected error during period fitting',
+            'details': str(e),
             'traceback': traceback.format_exc()
         }, status=500)

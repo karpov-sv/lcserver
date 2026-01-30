@@ -76,7 +76,7 @@ def gaussian_smoothing(x, y, dy, scale=100, nsteps=1000):
     state_acquiring='acquiring ZTF lightcurve',
     state_acquired='ZTF lightcurve acquired',
     log_file='ztf.log',
-    output_files=['ztf.log', 'ztf_lc.png', 'ztf_color_mag.png'],
+    output_files=['ztf.log', 'ztf_lc.png', 'ztf_color_mag.png', 'ztf.vot', 'ztf.txt'],
     button_text='Get ZTF lightcurve',
     form_fields={
         'ztf_color_model': {
@@ -140,8 +140,9 @@ def target_ztf(config, basepath=None, verbose=True, show=False):
     ra = config.get('target_ra')
     dec = config.get('target_dec')
     ztf_sr = config.get('ztf_sr', 2.0)
+    cache_name = f"ztf_raw_{ra:.4f}_{dec:.4f}_{ztf_sr:.1f}.vot"
 
-    with cached_votable_query("ztf.vot", basepath, log, 'ZTF raw data') as cache:
+    with cached_votable_query(cache_name, basepath, log, 'ZTF raw data') as cache:
         if not cache.hit:
             # Query ZTF - only if not cached
             log(f"Requesting ZTF lightcurve for {config['target_name']} within {ztf_sr:.1f} arcsec")

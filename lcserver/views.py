@@ -490,7 +490,7 @@ def targets_actions(request):
                     from . import processing
                     from .surveys import get_all_output_files
 
-                    cleanup_files = get_all_output_files()
+                    cleanup_files = get_all_output_files(cache=True)
                     processing.cleanup_paths(cleanup_files, basepath=target.path())
 
                     # Clear configuration

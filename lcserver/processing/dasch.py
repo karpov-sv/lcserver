@@ -26,7 +26,7 @@ from .utils import cleanup_paths, cached_votable_query
     state_acquiring='acquiring DASCH lightcurve',
     state_acquired='DASCH lightcurve acquired',
     log_file='dasch.log',
-    output_files=['dasch.log', 'dasch_lc.png', 'dasch_color_mag.png'],
+    output_files=['dasch.log', 'dasch_lc.png', 'dasch.vot', 'dasch.txt'],
     button_text='Get DASCH lightcurve',
     help_text='Harvard plate archive (historical data)',
     order=40,
@@ -39,8 +39,6 @@ from .utils import cleanup_paths, cached_votable_query
     lc_short=False,
     # Template metadata
     template_layout='with_cutout',
-    show_color_mag=True,
-    color_mag_file='dasch_color_mag.png',
 )
 def target_dasch(config, basepath=None, verbose=True, show=False):
     """
@@ -66,9 +64,13 @@ def target_dasch(config, basepath=None, verbose=True, show=False):
     if 'target_ra' not in config or 'target_dec' not in config:
         raise RuntimeError("Cannot operate without target coordinates")
 
-    with cached_votable_query("dasch.vot", basepath, log, 'DASCH') as cache:
+    ra = config.get('target_ra')
+    dec = config.get('target_dec')
+    dasch_sr = config.get('dasch_sr', 5.0)
+    cache_name = f"dasch_{ra:.4f}_{dec:.4f}_{dasch_sr:.1f}.vot"
+
+    with cached_votable_query(cache_name, basepath, log, 'DASCH') as cache:
         if not cache.hit:
-            dasch_sr = config.get('dasch_sr', 5.0)
 
             log(f"for {config['target_name']} within {dasch_sr:.1f} arcsec")
 
@@ -91,12 +93,14 @@ def target_dasch(config, basepath=None, verbose=True, show=False):
                 response = requests.post(querycat_url, json=querycat_payload, timeout=30)
                 response.raise_for_status()
             except requests.exceptions.RequestException as e:
-                raise RuntimeError(f'Error querying DASCH catalog: {e}')
+                log(f'Error: Error querying DASCH catalog: {e}')
+                return
 
             # Parse CSV response
             csv_lines = response.json()
             if not csv_lines or len(csv_lines) < 2:
-                raise RuntimeError('No sources found in DASCH catalog')
+                log('No sources found in DASCH catalog')
+                return
 
             # Parse CSV to table
             csv_text = '\n'.join(csv_lines)
@@ -104,7 +108,8 @@ def target_dasch(config, basepath=None, verbose=True, show=False):
             sources = list(reader)
 
             if not sources:
-                raise RuntimeError('No sources found in DASCH catalog')
+                log('No sources found in DASCH catalog')
+                return
 
             # Find closest source based on angular separation
             separations = []
@@ -136,12 +141,14 @@ def target_dasch(config, basepath=None, verbose=True, show=False):
                 response = requests.post(lightcurve_url, json=lightcurve_payload, timeout=60)
                 response.raise_for_status()
             except requests.exceptions.RequestException as e:
-                raise RuntimeError(f'Error downloading DASCH lightcurve: {e}')
+                log(f'Error: Error downloading DASCH lightcurve: {e}')
+                return
 
             # Parse CSV response
             csv_lines = response.json()
             if not csv_lines or len(csv_lines) < 2:
-                raise RuntimeError('No lightcurve data returned from DASCH')
+                log('No lightcurve data returned from DASCH')
+                return
 
             # Parse CSV to table
             csv_text = '\n'.join(csv_lines)
@@ -149,7 +156,8 @@ def target_dasch(config, basepath=None, verbose=True, show=False):
             rows = list(reader)
 
             if not rows:
-                raise RuntimeError('No lightcurve data points found')
+                log('No lightcurve data points found')
+                return
 
             # Convert to astropy Table with proper column names
             # Note: API returns snake_case column names

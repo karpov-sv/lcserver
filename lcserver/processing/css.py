@@ -24,7 +24,7 @@ from .utils import cleanup_paths, cached_votable_query
     state_acquiring='acquiring CSS lightcurve',
     state_acquired='CSS lightcurve acquired',
     log_file='css.log',
-    output_files=['css.log', 'css_lc.png'],
+    output_files=['css.log', 'css_lc.png', 'css.vot', 'css.txt'],
     button_text='Get CSS lightcurve',
     form_fields={
         'css_radius': {
@@ -55,10 +55,13 @@ def target_css(config, basepath=None, verbose=True, show=False):
     # Cleanup stale plots
     cleanup_paths(get_output_files('css'), basepath=basepath)
 
-    with cached_votable_query("css.vot", basepath, log, 'Catalina Sky Survey') as cache:
+    ra = config.get('target_ra')
+    dec = config.get('target_dec')
+    radius_arcsec = config.get('css_radius', 2.0)
+    cache_name = f"css_{ra:.4f}_{dec:.4f}_{radius_arcsec:.1f}.vot"
+
+    with cached_votable_query(cache_name, basepath, log, 'Catalina Sky Survey') as cache:
         if not cache.hit:
-            # Get search radius from config or use default
-            radius_arcsec = config.get('css_radius', 2.0)
 
             log(f"within {radius_arcsec} arcsec")
 
@@ -83,8 +86,8 @@ def target_css(config, basepath=None, verbose=True, show=False):
                 )
                 res.raise_for_status()
             except requests.RequestException as e:
-                log(f"Error querying CSS: {e}")
-                raise RuntimeError(f"CSS query failed: {e}")
+                log(f"Error: Error querying CSS: {e}")
+                return
 
             # Parse response
             # CSS returns CSV data embedded in HTML with a specific format
@@ -124,9 +127,9 @@ def target_css(config, basepath=None, verbose=True, show=False):
 
             except Exception as e:
                 import traceback
-                log(f"Error parsing CSS response: {e}")
+                log(f"Error: Error parsing CSS response: {e}")
                 log(traceback.format_exc())
-                raise RuntimeError(f"Failed to parse CSS data: {e}")
+                return
 
         css = cache.data
 

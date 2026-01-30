@@ -23,7 +23,7 @@ from .utils import cleanup_paths, cached_votable_query
     state_acquiring='acquiring KWS lightcurve',
     state_acquired='KWS lightcurve acquired',
     log_file='kws.log',
-    output_files=['kws.log', 'kws_lc.png'],
+    output_files=['kws.log', 'kws_lc.png', 'kws.vot', 'kws.txt'],
     button_text='Get KWS lightcurve',
     help_text='Kamogata Wide-field Survey',
     order=23,
@@ -57,8 +57,9 @@ def target_kws(config, basepath=None, verbose=True, show=False):
     # Sanitize the name for use in filename
     safe_name = "".join(c if c.isalnum() or c in (' ', '-', '_') else '_' for c in target_name)
     safe_name = safe_name.replace(' ', '_')
+    cache_name = f"kws_{safe_name}.vot"
 
-    with cached_votable_query("kws.vot", basepath, log, 'Kamogata Wide-field Survey') as cache:
+    with cached_votable_query(cache_name, basepath, log, 'Kamogata Wide-field Survey') as cache:
         if not cache.hit:
             log(f"for {target_name}")
 
@@ -84,8 +85,8 @@ def target_kws(config, basepath=None, verbose=True, show=False):
                 )
                 res.raise_for_status()
             except requests.RequestException as e:
-                log(f"Error querying KWS: {e}")
-                raise RuntimeError(f"KWS query failed: {e}")
+                log(f"Error: Error querying KWS: {e}")
+                return
 
             # Parse response
             # KWS returns HTML with embedded table
@@ -133,9 +134,9 @@ def target_kws(config, basepath=None, verbose=True, show=False):
 
             except Exception as e:
                 import traceback
-                log(f"Error parsing KWS response: {e}")
+                log(f"Error: Error parsing KWS response: {e}")
                 log(traceback.format_exc())
-                raise RuntimeError(f"Failed to parse KWS data: {e}")
+                return
 
         kws = cache.data
 
