@@ -348,6 +348,33 @@
     {% endif %}
 
 
+    <!-- KWS (Kamogata Wide-field Survey) -->
+    {% if 'target_name' in target.config %}
+      <hr>
+      <h3>Kamogata Wide-field Survey</h3>
+
+      {% if user_may_submit %}
+        <form action="" method="POST" class="mb-2">
+          <fieldset class="small" {% if target.celery_id %}disabled{% endif %}>
+            {% crispy form_target_kws %}
+            <button type="submit" name="action" value="target_kws" class="btn btn-primary">Get KWS lightcurve</button>
+          </fieldset>
+        </form>
+      {% endif %}
+
+      {% if 'kws.log' in files %}
+        <hr style="border-style: dotted">
+        {% include "target_block_text.html" with file='kws.log' %}
+
+        {% if 'kws_lc.png' in files %}
+          <div class="text-center">
+            {% include "target_block_image.html" with image='kws_lc.png' target=target width="800px" noclick=1 only %}
+          </div>
+        {% endif %}
+      {% endif %}
+    {% endif %}
+
+
     <!-- TESS -->
     {% if 'target_ra' in target.config and 'target_dec' in target.config %}
       <hr>

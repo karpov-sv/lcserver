@@ -13,6 +13,7 @@ The module is organized into separate files:
 - applause.py: APPLAUSE lightcurve acquisition
 - mmt9.py: Mini-MegaTORTORA lightcurve acquisition
 - css.py: Catalina Sky Survey lightcurve acquisition
+- kws.py: Kamogata Wide-field Survey lightcurve acquisition
 - combined.py: Combined lightcurve plotting
 """
 
@@ -32,6 +33,7 @@ from .utils import (
     files_applause,
     files_mmt9,
     files_css,
+    files_kws,
     files_combined,
     cleanup_info,
     cleanup_ztf,
@@ -41,6 +43,7 @@ from .utils import (
     cleanup_applause,
     cleanup_mmt9,
     cleanup_css,
+    cleanup_kws,
     cleanup_combined,
 )
 
@@ -50,6 +53,7 @@ from .ztf import target_ztf
 from .asas import target_asas
 from .mmt9 import target_mmt9
 from .css import target_css
+from .kws import target_kws
 from .tess import target_tess
 from .dasch import target_dasch
 from .applause import target_applause
@@ -91,6 +95,7 @@ __all__ = [
     'files_applause',
     'files_mmt9',
     'files_css',
+    'files_kws',
     'files_combined',
     # Cleanup lists
     'cleanup_info',
@@ -101,12 +106,14 @@ __all__ = [
     'cleanup_applause',
     'cleanup_mmt9',
     'cleanup_css',
+    'cleanup_kws',
     'cleanup_combined',
     # Processing functions
     'target_info',
     'target_ztf',
     'target_asas',
     'target_css',
+    'target_kws',
     'target_tess',
     'target_dasch',
     'target_applause',

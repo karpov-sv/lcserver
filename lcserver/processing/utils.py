@@ -68,6 +68,7 @@ files_cache = [
     'ztf.vot',
     'asas.vot',
     'css.vot',
+    'kws.vot',
     'dasch.vot',
     'applause.vot',
 ]
@@ -112,12 +113,17 @@ files_css = [
     'css_lc.png',
 ]
 
+files_kws = [
+    'kws.log',
+    'kws_lc.png',
+]
+
 files_combined = [
     'combined.log',
     'combined_lc.png',
 ]
 
-cleanup_info = files_info + files_cache + files_ztf + files_asas + files_tess + files_dasch + files_applause + files_mmt9 + files_css + files_combined
+cleanup_info = files_info + files_cache + files_ztf + files_asas + files_tess + files_dasch + files_applause + files_mmt9 + files_css + files_kws + files_combined
 cleanup_ztf = files_ztf
 cleanup_asas = files_asas
 cleanup_tess = files_tess
@@ -125,6 +131,7 @@ cleanup_dasch = files_dasch
 cleanup_applause = files_applause
 cleanup_mmt9 = files_mmt9
 cleanup_css = files_css
+cleanup_kws = files_kws
 cleanup_combined = files_combined
 
 
