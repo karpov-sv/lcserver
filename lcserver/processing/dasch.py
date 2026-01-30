@@ -16,8 +16,8 @@ from astropy.time import Time
 # STDPipe
 from stdpipe import plots
 
-from ..surveys import survey_source
-from .utils import cleanup_paths, cleanup_dasch
+from ..surveys import survey_source, get_output_files
+from .utils import cleanup_paths
 
 
 @survey_source(
@@ -57,7 +57,7 @@ def target_dasch(config, basepath=None, verbose=True, show=False):
     log = (verbose if callable(verbose) else print) if verbose else lambda *args,**kwargs: None
 
     # Cleanup stale plots
-    cleanup_paths(cleanup_dasch, basepath=basepath)
+    cleanup_paths(get_output_files('dasch'), basepath=basepath)
 
     if 'target_ra' not in config or 'target_dec' not in config:
         raise RuntimeError("Cannot operate without target coordinates")

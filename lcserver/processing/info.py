@@ -18,8 +18,8 @@ from astroquery.simbad import Simbad
 # STDPipe
 from stdpipe import catalogs, resolve, plots
 
-from ..surveys import survey_source
-from .utils import cleanup_paths, cleanup_info
+from ..surveys import survey_source, get_all_output_files
+from .utils import cleanup_paths
 
 
 @survey_source(
@@ -53,7 +53,7 @@ def target_info(config, basepath=None, verbose=True, show=False):
     log = (verbose if callable(verbose) else print) if verbose else lambda *args,**kwargs: None
 
     # Cleanup stale plots
-    cleanup_paths(cleanup_info, basepath=basepath)
+    cleanup_paths(get_all_output_files(), basepath=basepath)
 
     log(f"Acquiring the info on {config['target_name']}")
 
@@ -257,53 +257,19 @@ def target_info(config, basepath=None, verbose=True, show=False):
         log("No Pan-STARRS DR2 warp data found")
 
 
-# Some convenience code for gaussian process based smoothing of unevenly spaced 1d data
-import george
-from george import kernels
-from scipy.optimize import minimize
-from scipy.interpolate import interp1d
+# Register lightcurve-only sources (no processing function)
+# These sources have data files but no automated acquisition
+from .. import surveys
 
-def gaussian_smoothing(x, y, dy, scale=100, nsteps=1000):
-    """
-    Gaussian process based smoothing of unevenly spaced 1d data.
-
-    Parameters
-    ----------
-    x : array
-        Input x coordinates
-    y : array
-        Input y values
-    dy : array
-        Input y errors
-    scale : float, optional
-        Initial scale parameter
-    nsteps : int, optional
-        Number of steps for prediction
-
-    Returns
-    -------
-    callable
-        Interpolation function
-    """
-    y0 = np.median(y)
-    y = y - y0
-
-    kernel = 10*np.var(y)*kernels.Matern32Kernel(100, ndim=1)
-    gp = george.GP(kernel)
-    gp.compute(x, dy)
-
-    def neg_ln_like(p):
-        gp.set_parameter_vector(p)
-        return -gp.log_likelihood(y)
-
-    def grad_neg_ln_like(p):
-        gp.set_parameter_vector(p)
-        return -gp.grad_log_likelihood(y)
-
-    result = minimize(neg_ln_like, gp.get_parameter_vector(), jac=grad_neg_ln_like)
-    gp.set_parameter_vector(result.x)
-
-    x_pred = np.linspace(np.min(x), np.max(x), 1000)
-    pred, pred_var = gp.predict(y, x_pred, return_var=True)
-
-    return interp1d(x_pred, pred + y0, fill_value='extrapolate')
+surveys.register_lightcurve_source(
+    source_id='ps1',
+    name='Pan-STARRS',
+    short_name='Pan-STARRS',
+    votable_file='ps1.vot',
+    lc_mag_column='mag_g',
+    lc_err_column='magerr',
+    lc_filter_column='g',
+    lc_color='#2ca02c',
+    lc_mode='magnitude',
+    lc_short=True,
+)

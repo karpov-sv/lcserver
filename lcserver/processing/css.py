@@ -14,8 +14,8 @@ from astropy.coordinates import SkyCoord
 # STDPipe
 from stdpipe import plots
 
-from ..surveys import survey_source
-from .utils import cleanup_paths, cleanup_css
+from ..surveys import survey_source, get_output_files
+from .utils import cleanup_paths
 
 
 @survey_source(
@@ -51,7 +51,7 @@ def target_css(config, basepath=None, verbose=True, show=False):
     log = (verbose if callable(verbose) else print) if verbose else lambda *args,**kwargs: None
 
     # Cleanup stale plots
-    cleanup_paths(cleanup_css, basepath=basepath)
+    cleanup_paths(get_output_files('css'), basepath=basepath)
 
     cachename = f"css_{config['target_ra']:.4f}_{config['target_dec']:.4f}.vot"
 

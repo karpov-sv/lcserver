@@ -24,32 +24,11 @@ from .utils import (
     print_to_file,
     pickle_to_file,
     pickle_from_file,
-    files_info,
-    files_cache,
-    files_ztf,
-    files_asas,
-    files_tess,
-    files_dasch,
-    files_applause,
-    files_mmt9,
-    files_css,
-    files_kws,
-    files_combined,
-    cleanup_info,
-    cleanup_ztf,
-    cleanup_asas,
-    cleanup_tess,
-    cleanup_dasch,
-    cleanup_applause,
-    cleanup_mmt9,
-    cleanup_css,
-    cleanup_kws,
-    cleanup_combined,
 )
 
 # Import all processing functions
-from .info import target_info, gaussian_smoothing
-from .ztf import target_ztf
+from .info import target_info
+from .ztf import target_ztf, gaussian_smoothing
 from .asas import target_asas
 from .mmt9 import target_mmt9
 from .css import target_css
@@ -58,23 +37,6 @@ from .tess import target_tess
 from .dasch import target_dasch
 from .applause import target_applause
 from .combined import target_combined
-
-# Register lightcurve-only sources (no processing function)
-# These sources have data files but no automated acquisition
-from .. import surveys
-
-surveys.register_lightcurve_source(
-    source_id='ps1',
-    name='Pan-STARRS',
-    short_name='Pan-STARRS',
-    votable_file='ps1.vot',
-    lc_mag_column='mag_g',
-    lc_err_column='magerr',
-    lc_filter_column='g',
-    lc_color='#2ca02c',
-    lc_mode='magnitude',
-    lc_short=True,
-)
 
 # Export all functions and utilities
 __all__ = [
@@ -85,29 +47,6 @@ __all__ = [
     'pickle_to_file',
     'pickle_from_file',
     'gaussian_smoothing',
-    # File lists
-    'files_info',
-    'files_cache',
-    'files_ztf',
-    'files_asas',
-    'files_tess',
-    'files_dasch',
-    'files_applause',
-    'files_mmt9',
-    'files_css',
-    'files_kws',
-    'files_combined',
-    # Cleanup lists
-    'cleanup_info',
-    'cleanup_ztf',
-    'cleanup_asas',
-    'cleanup_tess',
-    'cleanup_dasch',
-    'cleanup_applause',
-    'cleanup_mmt9',
-    'cleanup_css',
-    'cleanup_kws',
-    'cleanup_combined',
     # Processing functions
     'target_info',
     'target_ztf',

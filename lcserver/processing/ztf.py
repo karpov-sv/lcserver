@@ -14,9 +14,60 @@ from ztfquery import lightcurve
 # STDPipe
 from stdpipe import plots
 
-from ..surveys import survey_source
-from .utils import cleanup_paths, cleanup_ztf
-from .info import gaussian_smoothing
+from ..surveys import survey_source, get_output_files
+from .utils import cleanup_paths
+
+
+# Some convenience code for gaussian process based smoothing of unevenly spaced 1d data
+import george
+from george import kernels
+from scipy.optimize import minimize
+from scipy.interpolate import interp1d
+
+def gaussian_smoothing(x, y, dy, scale=100, nsteps=1000):
+    """
+    Gaussian process based smoothing of unevenly spaced 1d data.
+
+    Parameters
+    ----------
+    x : array
+        Input x coordinates
+    y : array
+        Input y values
+    dy : array
+        Input y errors
+    scale : float, optional
+        Initial scale parameter
+    nsteps : int, optional
+        Number of steps for prediction
+
+    Returns
+    -------
+    callable
+        Interpolation function
+    """
+    y0 = np.median(y)
+    y = y - y0
+
+    kernel = 10*np.var(y)*kernels.Matern32Kernel(100, ndim=1)
+    gp = george.GP(kernel)
+    gp.compute(x, dy)
+
+    def neg_ln_like(p):
+        gp.set_parameter_vector(p)
+        return -gp.log_likelihood(y)
+
+    def grad_neg_ln_like(p):
+        gp.set_parameter_vector(p)
+        return -gp.grad_log_likelihood(y)
+
+    result = minimize(neg_ln_like, gp.get_parameter_vector(), jac=grad_neg_ln_like)
+    gp.set_parameter_vector(result.x)
+
+    x_pred = np.linspace(np.min(x), np.max(x), 1000)
+    pred, pred_var = gp.predict(y, x_pred, return_var=True)
+
+    return interp1d(x_pred, pred + y0, fill_value='extrapolate')
 
 
 @survey_source(
@@ -66,7 +117,7 @@ def target_ztf(config, basepath=None, verbose=True, show=False):
     log = (verbose if callable(verbose) else print) if verbose else lambda *args,**kwargs: None
 
     # Cleanup stale plots
-    cleanup_paths(cleanup_ztf, basepath=basepath)
+    cleanup_paths(get_output_files('ztf'), basepath=basepath)
 
     if 'target_ra' not in config or 'target_dec' not in config:
         raise RuntimeError("Cannot operate without target coordinates")

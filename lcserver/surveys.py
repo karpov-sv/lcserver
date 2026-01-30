@@ -276,3 +276,57 @@ def get_combined_lc_rules():
                 'short': config.get('lc_short', False),
             }
     return rules
+
+
+def get_output_files(source_id):
+    """Get list of output files for a survey source from registry."""
+    config = SURVEY_SOURCES.get(source_id)
+    return config.get('output_files', []) if config else []
+
+
+def get_cache_files():
+    """Get list of cache files/patterns used by all surveys.
+
+    Cache files live in targets/{id}/cache/ directory and are shared
+    across processing runs. Returns glob patterns to match coordinate-based
+    and name-based cache files.
+
+    Note: Processing functions use patterns like:
+    - dasch_{ra}_{dec}.vot (coordinate-based)
+    - kws_{safe_name}.vot (name-based)
+    - mastDownload/ directory (TESS)
+    """
+    cache_patterns = [
+        # Glob patterns for coordinate/name-based cache files
+        'cache/applause_*.vot',
+        'cache/css_*.vot',
+        'cache/dasch_*.vot',
+        'cache/mmt9_*.vot',
+        'cache/kws_*.vot',
+        # TESS mastDownload directory
+        'cache/mastDownload',
+    ]
+    # Include .txt versions for VOTable caches
+    txt_patterns = [p.replace('.vot', '.txt') for p in cache_patterns if '.vot' in p]
+    return cache_patterns + txt_patterns
+
+
+def get_all_output_files():
+    """Get all output files from all survey sources.
+
+    Used by info step to clean up everything when re-run.
+    Includes all output files from all sources plus cache files.
+    """
+    all_files = []
+
+    # Add all output files from all sources
+    for source_id, config in SURVEY_SOURCES.items():
+        all_files.extend(config.get('output_files', []))
+
+    # Add cache files
+    all_files.extend(get_cache_files())
+
+    # Add info-specific files not in output_files
+    all_files.extend(['galaxy_map.png'])
+
+    return all_files

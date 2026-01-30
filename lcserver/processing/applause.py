@@ -16,8 +16,8 @@ import pyvo as vo
 # STDPipe
 from stdpipe import plots
 
-from ..surveys import survey_source
-from .utils import cleanup_paths, cleanup_applause, parse_votable_lenient
+from ..surveys import survey_source, get_output_files
+from .utils import cleanup_paths, parse_votable_lenient
 
 
 @survey_source(
@@ -57,7 +57,7 @@ def target_applause(config, basepath=None, verbose=True, show=False):
     log = (verbose if callable(verbose) else print) if verbose else lambda *args,**kwargs: None
 
     # Cleanup stale plots
-    cleanup_paths(cleanup_applause, basepath=basepath)
+    cleanup_paths(get_output_files('applause'), basepath=basepath)
 
     if 'target_ra' not in config or 'target_dec' not in config:
         raise RuntimeError("Cannot operate without target coordinates")
