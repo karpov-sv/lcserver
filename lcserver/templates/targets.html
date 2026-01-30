@@ -56,7 +56,7 @@
       {% csrf_token %}
       <input type="hidden" name="referer" value="{{ request.path }}?{{ request.GET.urlencode }}"/>
 
-      {% paginate 10 targets %}
+      {% paginate 3 targets %}
 
       <div class="list-group mb-4">
 

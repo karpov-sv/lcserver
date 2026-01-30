@@ -74,18 +74,23 @@
                     </li>
                   {% endif %}
 
+                  <li>
+                    <a class="dropdown-item" href="{% url 'profile' %}"><i class="fa fa-user"></i> Profile</a>
+                  </li>
+
                   {% if user.is_staff %}
                     <li>
                       <a class="dropdown-item" href="{% url 'queue' %}">Running Tasks</a>
                     </li>
                   {% endif %}
 
-
                   {% if user.is_staff %}
                     <li>
                       <a class="dropdown-item" href="{% url 'admin:index' %}">Admin Panel</a>
                     </li>
                   {% endif %}
+
+                  <li><hr class="dropdown-divider"></li>
 
                   <!-- Logout requires POST -->
                   <li>

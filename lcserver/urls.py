@@ -15,7 +15,7 @@ Including another URLconf
     2. Add a URL to urlpatterns:  path('blog/', include('blog.urls'))
 """
 from django.contrib import admin
-from django.urls import path, re_path, include
+from django.urls import path, re_path, include, reverse_lazy
 from django.conf import settings
 
 from django.contrib.auth import views as auth_views
@@ -50,6 +50,9 @@ urlpatterns = [
     # Auth
     path('login/', auth_views.LoginView.as_view(), name='login'),
     path('logout/', auth_views.LogoutView.as_view(), name='logout'),
+    path('password/', auth_views.PasswordChangeView.as_view(success_url=reverse_lazy('password_change_done')), name='password'),
+    path('password/done/', auth_views.PasswordChangeDoneView.as_view(), name='password_change_done'),
+    path('profile/', views.profile, name='profile'),
 
     # Admin panel
     path('admin/', admin.site.urls),

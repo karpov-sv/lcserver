@@ -517,3 +517,27 @@ def target_state(request, id):
         'id': target.id,
         'celery_id': target.celery_id
     })
+
+
+@login_required
+def profile(request):
+    """User profile page with account info and statistics."""
+    # Get user's target statistics
+    user_targets = models.Target.objects.filter(user=request.user)
+
+    target_count = user_targets.count()
+    completed_count = user_targets.filter(
+        state__in=['info acquired', 'combined acquired', 'ZTF acquired',
+                   'ASAS acquired', 'TESS acquired', 'DASCH acquired',
+                   'APPLAUSE acquired', 'PTF acquired', 'CSS acquired',
+                   'KWS acquired', 'MMT9 acquired']
+    ).count()
+    failed_count = user_targets.filter(state='failed').count()
+
+    context = {
+        'target_count': target_count,
+        'completed_count': completed_count,
+        'failed_count': failed_count,
+    }
+
+    return TemplateResponse(request, 'profile.html', context=context)

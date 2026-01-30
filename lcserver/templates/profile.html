@@ -1,0 +1,116 @@
+{% extends "template.html" %}
+
+{% block ptitle %}User Profile : LCServer{% endblock %}
+
+{% block title %}User Profile{% endblock %}
+
+{% block content %}
+  <div class="row">
+    <div class="col-lg-8">
+
+      <!-- Account Information -->
+      <div class="card mb-4">
+        <div class="card-header">
+          <i class="fa fa-user"></i> Account Information
+        </div>
+        <div class="card-body">
+          <table class="table table-borderless mb-0">
+            <tbody>
+              <tr>
+                <th scope="row" style="width: 200px;">Username</th>
+                <td>{{ user.username }}</td>
+              </tr>
+              <tr>
+                <th scope="row">Email</th>
+                <td>{{ user.email|default:"Not set" }}</td>
+              </tr>
+              <tr>
+                <th scope="row">First Name</th>
+                <td>{{ user.first_name|default:"Not set" }}</td>
+              </tr>
+              <tr>
+                <th scope="row">Last Name</th>
+                <td>{{ user.last_name|default:"Not set" }}</td>
+              </tr>
+              <tr>
+                <th scope="row">Date Joined</th>
+                <td>{{ user.date_joined|date:"F j, Y" }}</td>
+              </tr>
+              <tr>
+                <th scope="row">Last Login</th>
+                <td>{{ user.last_login|date:"F j, Y, g:i a"|default:"Never" }}</td>
+              </tr>
+              {% if user.is_staff %}
+                <tr>
+                  <th scope="row">Staff Status</th>
+                  <td><span class="badge bg-primary">Staff</span></td>
+                </tr>
+              {% endif %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Password -->
+      <div class="card mb-4">
+        <div class="card-header">
+          <i class="fa fa-lock"></i> Password
+        </div>
+        <div class="card-body">
+          <p class="mb-3">Change your account password.</p>
+          <a href="{% url 'password' %}" class="btn btn-outline-primary">
+            <i class="fa fa-key"></i> Change Password
+          </a>
+        </div>
+      </div>
+
+    </div>
+
+    <div class="col-lg-4">
+      <!-- Quick Links -->
+      <div class="card mb-4">
+        <div class="card-header">
+          <i class="fa fa-link"></i> Quick Links
+        </div>
+        <ul class="list-group list-group-flush">
+          <li class="list-group-item">
+            <a href="{% url 'targets' %}"><i class="fa fa-list"></i> My Targets</a>
+          </li>
+          {% if user.is_staff %}
+            <li class="list-group-item">
+              <a href="{% url 'queue' %}"><i class="fa fa-tasks"></i> Running Tasks</a>
+            </li>
+            <li class="list-group-item">
+              <a href="{% url 'admin:index' %}"><i class="fa fa-cog"></i> Admin Panel</a>
+            </li>
+          {% endif %}
+        </ul>
+      </div>
+
+      <!-- Statistics -->
+      <div class="card mb-4">
+        <div class="card-header">
+          <i class="fa fa-chart-bar"></i> Your Statistics
+        </div>
+        <div class="card-body">
+          <table class="table table-sm table-borderless mb-0">
+            <tbody>
+              <tr>
+                <th scope="row">Total Targets</th>
+                <td class="text-end">{{ target_count }}</td>
+              </tr>
+              <tr>
+                <th scope="row">Completed</th>
+                <td class="text-end">{{ completed_count }}</td>
+              </tr>
+              <tr>
+                <th scope="row">Failed</th>
+                <td class="text-end">{{ failed_count }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+{% endblock %}
