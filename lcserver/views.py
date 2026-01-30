@@ -6,6 +6,7 @@ from django.urls import reverse
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.conf import settings
+from django.shortcuts import get_object_or_404
 
 import os, io, glob
 
@@ -454,10 +455,52 @@ def targets(request, id=None):
     return TemplateResponse(request, 'targets.html', context=context)
 
 
+def targets_actions(request):
+    """Handle bulk operations on targets (cleanup, delete)."""
+    form = forms.TargetsActionsForm(request.POST)
+
+    if request.method == 'POST':
+        if form.is_valid():
+            target_ids = form.cleaned_data['targets']
+            action = request.POST.get('action')
+
+            for id in target_ids:
+                target = get_object_or_404(models.Target, id=id)
+
+                # Permission check: only owner or staff can perform actions
+                if not (request.user.is_staff or request.user == target.user):
+                    messages.error(request, f"Cannot perform action on target {id} belonging to {target.user.username}")
+                    continue
+
+                if action == 'cleanup':
+                    # Clear cache and output files
+                    from . import processing
+                    from .surveys import get_all_output_files
+
+                    cleanup_files = get_all_output_files()
+                    processing.cleanup_paths(cleanup_files, basepath=target.path())
+
+                    # Clear configuration
+                    target.config = {}
+                    target.state = 'created'
+                    target.save()
+
+                    messages.success(request, f"Cleaned up target {id}")
+
+                elif action == 'delete':
+                    if request.user.is_staff or request.user == target.user:
+                        target.delete()
+                        messages.success(request, f"Target {id} is deleted")
+                    else:
+                        messages.error(request, f"Cannot delete target {id} belonging to {target.user.username}")
+
+            return HttpResponseRedirect(form.cleaned_data['referer'])
+
+    return HttpResponseRedirect(reverse('targets'))
+
+
 def target_state(request, id):
     """AJAX endpoint to get current target state."""
-    from django.shortcuts import get_object_or_404
-
     target = get_object_or_404(models.Target, id=id)
 
     # Permission check

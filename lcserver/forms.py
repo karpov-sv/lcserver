@@ -8,6 +8,12 @@ from . import surveys
 from . import processing  # Import to trigger decorator registration
 
 
+class MultipleChoiceFieldNoValidation(forms.MultipleChoiceField):
+    """Multiple choice field that doesn't validate choices (for dynamic IDs)."""
+    def validate(self, value):
+        pass
+
+
 class TargetsFilterForm(forms.Form):
     form_type = forms.CharField(initial='filter', widget=forms.HiddenInput())
     query = forms.CharField(max_length=100, required=False, label="Filter Targets")
@@ -44,6 +50,19 @@ class TargetNewForm(forms.Form):
             ),
             Submit('submit', 'New target', css_class='btn-primary')
         )
+
+
+class TargetsActionsForm(forms.Form):
+    """Form for bulk operations on targets."""
+    targets = MultipleChoiceFieldNoValidation(required=False, widget=forms.CheckboxSelectMultiple)
+    referer = forms.CharField(widget=forms.HiddenInput())
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.helper = FormHelper()
+        self.helper.form_tag = False
+        self.helper.form_action = 'targets_actions'
+        self.helper.layout = Layout()
 
 
 def create_survey_form(source_id, survey_config):

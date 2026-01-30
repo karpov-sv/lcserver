@@ -29,6 +29,7 @@ urlpatterns = [
 
     # Targets
     path('targets/', views.targets, {'id':None}, name='targets'),
+    path('targets/actions/', views.targets_actions, name='targets_actions'),
     path('targets/<int:id>', views.targets, name='targets'),
     path('targets/<int:id>/state', views.target_state, name='target_state'),
 
