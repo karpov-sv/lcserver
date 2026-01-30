@@ -14,6 +14,7 @@ The module is organized into separate files:
 - mmt9.py: Mini-MegaTORTORA lightcurve acquisition
 - css.py: Catalina Sky Survey lightcurve acquisition
 - kws.py: Kamogata Wide-field Survey lightcurve acquisition
+- ptf.py: Palomar Transient Factory lightcurve acquisition
 - combined.py: Combined lightcurve plotting
 """
 
@@ -33,6 +34,7 @@ from .asas import target_asas
 from .mmt9 import target_mmt9
 from .css import target_css
 from .kws import target_kws
+from .ptf import target_ptf
 from .tess import target_tess
 from .dasch import target_dasch
 from .applause import target_applause
@@ -53,6 +55,7 @@ __all__ = [
     'target_asas',
     'target_css',
     'target_kws',
+    'target_ptf',
     'target_tess',
     'target_dasch',
     'target_applause',

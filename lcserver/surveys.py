@@ -329,6 +329,7 @@ def get_cache_files():
         'cache/dasch_*.vot',
         'cache/mmt9_*.vot',
         'cache/kws_*.vot',
+        'cache/ptf_*.vot',
         # TESS mastDownload directory
         'cache/mastDownload',
     ]
