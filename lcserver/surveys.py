@@ -307,35 +307,28 @@ def get_combined_lc_rules():
 def get_output_files(source_id):
     """Get list of output files for a survey source from registry."""
     config = SURVEY_SOURCES.get(source_id)
-    return config.get('output_files', []) if config else []
+
+    files = config.get('output_files', []) if config else []
+    # Also .txt versions of .vot files
+    txt_files = [p.replace('.vot', '.txt') for p in files if '.vot' in p]
+
+    return files + txt_files
 
 
 def get_cache_files():
     """Get list of cache files/patterns used by all surveys.
 
     Cache files live in targets/{id}/cache/ directory and are shared
-    across processing runs. Returns glob patterns to match coordinate-based
-    and name-based cache files.
-
-    Note: Processing functions use patterns like:
-    - dasch_{ra}_{dec}.vot (coordinate-based)
-    - kws_{safe_name}.vot (name-based)
-    - mastDownload/ directory (TESS)
+    across processing runs. Returns glob patterns to match cache files.
     """
     cache_patterns = [
         # Glob patterns for coordinate/name-based cache files
-        'cache/applause_*.vot',
-        'cache/css_*.vot',
-        'cache/dasch_*.vot',
-        'cache/mmt9_*.vot',
-        'cache/kws_*.vot',
-        'cache/ptf_*.vot',
+        'cache/*.vot',
         # TESS mastDownload directory
         'cache/mastDownload',
     ]
-    # Include .txt versions for VOTable caches
-    txt_patterns = [p.replace('.vot', '.txt') for p in cache_patterns if '.vot' in p]
-    return cache_patterns + txt_patterns
+
+    return cache_patterns
 
 
 def get_all_output_files():

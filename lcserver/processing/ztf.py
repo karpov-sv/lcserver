@@ -15,7 +15,7 @@ from ztfquery import lightcurve
 from stdpipe import plots
 
 from ..surveys import survey_source, get_output_files
-from .utils import cleanup_paths
+from .utils import cleanup_paths, cached_votable_query
 
 
 # Some convenience code for gaussian process based smoothing of unevenly spaced 1d data
@@ -129,20 +129,34 @@ def target_ztf(config, basepath=None, verbose=True, show=False):
     if 'target_ra' not in config or 'target_dec' not in config:
         raise RuntimeError("Cannot operate without target coordinates")
 
+    # Check if processed data already exists
     if os.path.exists(os.path.join(basepath, 'ztf.vot')):
-        log(f"Loading ZTF lightcurve from ztf.vot")
-        ztf = Table.read(os.path.join(basepath, 'ztf.vot'))
-    else:
-        ztf_sr = config.get('ztf_sr', 2.0)
+        log(f"Loading processed ZTF lightcurve from ztf.vot")
+        log("Skipping calibration (processed data already exists)")
+        log("Delete ztf.vot to reprocess with different color model")
+        return
 
-        log(f"Requesting ZTF lightcurve for {config['target_name']} within {ztf_sr:.1f} arcsec")
-        lcq = lightcurve.LCQuery.from_position(config.get('target_ra'), config.get('target_dec'), ztf_sr)
+    # Cache raw query results before color calibration
+    ra = config.get('target_ra')
+    dec = config.get('target_dec')
+    ztf_sr = config.get('ztf_sr', 2.0)
 
-        if not lcq or not len(lcq.data):
-            log("Warning: No ZTF data found")
-            return
+    with cached_votable_query("ztf.vot", basepath, log, 'ZTF raw data') as cache:
+        if not cache.hit:
+            # Query ZTF - only if not cached
+            log(f"Requesting ZTF lightcurve for {config['target_name']} within {ztf_sr:.1f} arcsec")
+            lcq = lightcurve.LCQuery.from_position(ra, dec, ztf_sr)
 
-        ztf = Table.from_pandas(lcq.data)
+            if not lcq or not len(lcq.data):
+                log("Warning: No ZTF data found")
+                return
+
+            # Cache raw query results
+            ztf_raw = Table.from_pandas(lcq.data)
+            cache.save(ztf_raw)
+
+        # Use cached or freshly queried raw data
+        ztf = cache.data
 
     log(f"{len(ztf)} ZTF data points found")
     for fn in ['zg', 'zr', 'zi']:

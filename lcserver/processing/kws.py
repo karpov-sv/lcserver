@@ -57,9 +57,8 @@ def target_kws(config, basepath=None, verbose=True, show=False):
     # Sanitize the name for use in filename
     safe_name = "".join(c if c.isalnum() or c in (' ', '-', '_') else '_' for c in target_name)
     safe_name = safe_name.replace(' ', '_')
-    cache_name = f"kws_{safe_name}.vot"
 
-    with cached_votable_query(cache_name, basepath, log, 'Kamogata Wide-field Survey') as cache:
+    with cached_votable_query("kws.vot", basepath, log, 'Kamogata Wide-field Survey') as cache:
         if not cache.hit:
             log(f"for {target_name}")
 

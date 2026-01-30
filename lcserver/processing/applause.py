@@ -68,9 +68,7 @@ def target_applause(config, basepath=None, verbose=True, show=False):
         raise RuntimeError("Cannot operate without target coordinates")
 
 
-    cache_name = f"applause_{config['target_ra']:.4f}_{config['target_dec']:.4f}.vot"
-
-    with cached_votable_query(cache_name, basepath, log, 'APPLAUSE') as cache:
+    with cached_votable_query("applause.vot", basepath, log, 'APPLAUSE') as cache:
         if not cache.hit:
             applause_sr = config.get('applause_sr', 2.0)
 

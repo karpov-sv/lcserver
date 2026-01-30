@@ -59,10 +59,7 @@ def target_ptf(config, basepath=None, verbose=True, show=False):
         raise RuntimeError("Coordinates required for PTF query")
 
     # Query with caching
-    cache_name = f"ptf_{ra:.4f}_{dec:.4f}.vot"
-
-    with cached_votable_query(cache_name, basepath, log,
-                              'Palomar Transient Factory') as cache:
+    with cached_votable_query("ptf.vot", basepath, log, 'Palomar Transient Factory') as cache:
         if not cache.hit:
             # Query PTF catalog - only if not cached
             try:

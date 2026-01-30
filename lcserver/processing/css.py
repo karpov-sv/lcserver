@@ -55,9 +55,7 @@ def target_css(config, basepath=None, verbose=True, show=False):
     # Cleanup stale plots
     cleanup_paths(get_output_files('css'), basepath=basepath)
 
-    cache_name = f"css_{config['target_ra']:.4f}_{config['target_dec']:.4f}.vot"
-
-    with cached_votable_query(cache_name, basepath, log, 'Catalina Sky Survey') as cache:
+    with cached_votable_query("css.vot", basepath, log, 'Catalina Sky Survey') as cache:
         if not cache.hit:
             # Get search radius from config or use default
             radius_arcsec = config.get('css_radius', 2.0)

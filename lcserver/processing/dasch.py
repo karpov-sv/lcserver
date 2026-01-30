@@ -66,9 +66,7 @@ def target_dasch(config, basepath=None, verbose=True, show=False):
     if 'target_ra' not in config or 'target_dec' not in config:
         raise RuntimeError("Cannot operate without target coordinates")
 
-    cache_name = f"dasch_{config['target_ra']:.4f}_{config['target_dec']:.4f}.vot"
-
-    with cached_votable_query(cache_name, basepath, log, 'DASCH') as cache:
+    with cached_votable_query("dasch.vot", basepath, log, 'DASCH') as cache:
         if not cache.hit:
             dasch_sr = config.get('dasch_sr', 5.0)
 

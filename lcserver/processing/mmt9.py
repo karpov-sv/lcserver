@@ -69,9 +69,7 @@ def target_mmt9(config, basepath=None, verbose=True, show=False):
     if 'target_ra' not in config or 'target_dec' not in config:
         raise RuntimeError("Cannot operate without target coordinates")
 
-    cache_name = f"mmt9_{config['target_ra']:.4f}_{config['target_dec']:.4f}.vot"
-
-    with cached_votable_query(cache_name, basepath, log, 'Mini-MegaTORTORA') as cache:
+    with cached_votable_query("mmt9.vot", basepath, log, 'Mini-MegaTORTORA') as cache:
         if not cache.hit:
             mmt9_sr = config.get('mmt9_sr', 15.0)  # Search radius in arcsec
 
