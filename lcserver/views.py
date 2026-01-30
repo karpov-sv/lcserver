@@ -408,47 +408,60 @@ def targets(request, id=None):
         targets = models.Target.objects.all()
         targets = targets.order_by('-created')
 
-        all_forms = {}
+        # Filter form uses GET method
+        filter_form = forms.TargetsFilterForm(
+            request.GET,
+            show_all=request.user.is_staff if request.user.is_authenticated else False,
+        )
+        context['form_filter'] = filter_form
 
-        # Only pass POST data to the form that was actually submitted
-        form_type = request.POST.get('form_type') if request.method == 'POST' else None
+        # New target form uses POST method
+        new_target_form = forms.TargetNewForm(
+            request.POST if request.method == 'POST' and request.POST.get('form_type') == 'new_target' else None
+        )
+        context['form_new_target'] = new_target_form
 
-        all_forms['new_target'] = forms.TargetNewForm(request.POST if form_type == 'new_target' else None)
-        all_forms['filter'] = forms.TargetsFilterForm(request.POST if form_type == 'filter' else None)
+        # Handle GET filtering
+        if request.method == 'GET':
+            if filter_form.is_valid():
+                # Filter by user unless staff with show_all checked
+                show_all = filter_form.cleaned_data.get('show_all')
+                if not show_all:
+                    if request.user.is_authenticated:
+                        targets = targets.filter(user=request.user)
+                    else:
+                        targets = targets.none()  # Anonymous users see nothing
 
-        for name,form in all_forms.items():
-            context['form_'+name] = form
+                # Text search filter
+                query = filter_form.cleaned_data.get('query')
+                if query:
+                    targets = targets.filter(
+                        Q(name__icontains=query) |
+                        Q(title__icontains=query) |
+                        Q(user__username__icontains=query) |
+                        Q(user__first_name__icontains=query) |
+                        Q(user__last_name__icontains=query)
+                    )
 
+        # Handle POST for new target creation
         if request.method == 'POST':
-            # Handle forms (form_type already extracted above)
-            form = all_forms.get(form_type)
+            if new_target_form.is_valid():
+                target = models.Target(
+                    title=new_target_form.cleaned_data.get('title'),
+                    name=new_target_form.cleaned_data.get('name')
+                )
+                target.user = request.user
+                target.state = 'created'
+                target.save()  # to populate target.id
+                messages.success(request, f"New target {target.id} created")
 
-            if form and form.is_valid():
-                if form_type == 'new_target':
-                    target = models.Target(title=form.cleaned_data.get('title'), name=form.cleaned_data.get('name'))
-                    target.user = request.user
-                    target.state = 'created'
-                    target.save() # to populate target.id
-                    messages.success(request, f"New target {target.id} created")
+                # Let's immediately start collecting basic info for it
+                target.celery_id = celery_tasks.task_info.delay(target.id).id
+                target.state = 'acquiring info'
+                target.save()
+                messages.success(request, f"Started info collection for target {target.id}")
 
-                    # Let's immediately start collecting basic info for it
-                    target.celery_id = celery_tasks.task_info.delay(target.id).id
-                    target.state = 'acquiring info'
-                    target.save()
-                    messages.success(request, f"Started info collection for target {target.id}")
-
-                    return HttpResponseRedirect(reverse('targets', kwargs={'id': target.id}))
-
-                elif form_type == 'filter':
-                    if form.is_valid():
-                        query = form.cleaned_data.get('query')
-                        if query:
-                            targets = targets.filter(Q(name__icontains = query) |
-                                                 Q(title__icontains = query) |
-                                                 Q(user__username__icontains = query) |
-                                                 Q(user__first_name__icontains = query) |
-                                                 Q(user__last_name__icontains = query)
-                                                 )
+                return HttpResponseRedirect(reverse('targets', kwargs={'id': target.id}))
 
         context['targets'] = targets
 

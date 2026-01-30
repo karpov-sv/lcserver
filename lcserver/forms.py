@@ -15,18 +15,25 @@ class MultipleChoiceFieldNoValidation(forms.MultipleChoiceField):
 
 
 class TargetsFilterForm(forms.Form):
-    form_type = forms.CharField(initial='filter', widget=forms.HiddenInput())
     query = forms.CharField(max_length=100, required=False, label="Filter Targets")
+    show_all = forms.BooleanField(initial=False, required=False, label="Show all")
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, show_all=True, **kwargs):
         super().__init__(*args, **kwargs)
         self.helper = FormHelper()
+        self.helper.form_method = 'GET'
         self.helper.form_action = 'targets'
         self.helper.form_show_labels = False
         self.helper.layout = Layout(
-            'form_type',
             Row(
-                InlineField(PrependedText('query', 'Filter:', placeholder='Search targets by names, titles or usernames')),
+                Column(
+                    InlineField(PrependedText('query', 'Filter:', placeholder='Search targets by names, titles or usernames')),
+                    css_class="col-md"
+                ),
+                Column(
+                    InlineField('show_all'),
+                    css_class="col-md-auto mt-2"
+                ) if show_all else None,
             )
         )
 
