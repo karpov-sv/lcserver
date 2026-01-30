@@ -8,8 +8,6 @@ from django.contrib.auth.decorators import login_required
 from django.conf import settings
 
 import os, io, glob
-import shutil
-import json
 
 import mimetypes
 import magic
@@ -21,7 +19,6 @@ from astropy.io import fits
 
 # from matplotlib.backends.backend_agg import FigureCanvasAgg as FigureCanvas
 from matplotlib.figure import Figure
-from matplotlib.axes import Axes
 
 from . import forms
 from . import models
