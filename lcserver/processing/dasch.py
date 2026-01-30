@@ -17,7 +17,7 @@ from astropy.time import Time
 from stdpipe import plots
 
 from ..surveys import survey_source, get_output_files
-from .utils import cleanup_paths
+from .utils import cleanup_paths, cached_votable_query
 
 
 @survey_source(
@@ -66,119 +66,113 @@ def target_dasch(config, basepath=None, verbose=True, show=False):
     if 'target_ra' not in config or 'target_dec' not in config:
         raise RuntimeError("Cannot operate without target coordinates")
 
-    cachename = f"dasch_{config['target_ra']:.4f}_{config['target_dec']:.4f}.vot"
+    cache_name = f"dasch_{config['target_ra']:.4f}_{config['target_dec']:.4f}.vot"
 
-    if os.path.exists(os.path.join(basepath, 'cache', cachename)):
-        log(f"Loading DASCH lightcurve from the cache")
-        dasch = Table.read(os.path.join(basepath, 'cache', cachename))
-    else:
-        dasch_sr = config.get('dasch_sr', 5.0)
+    with cached_votable_query(cache_name, basepath, log, 'DASCH') as cache:
+        if not cache.hit:
+            dasch_sr = config.get('dasch_sr', 5.0)
 
-        log(f"Requesting DASCH lightcurve for {config['target_name']} within {dasch_sr:.1f} arcsec")
+            log(f"for {config['target_name']} within {dasch_sr:.1f} arcsec")
 
-        # New DASCH DR7 API
-        base_url = "https://api.starglass.cfa.harvard.edu/public"
-        refcat = "atlas"  # Could also use "apass"
+            # New DASCH DR7 API
+            base_url = "https://api.starglass.cfa.harvard.edu/public"
+            refcat = "atlas"  # Could also use "apass"
 
-        # Step 1: Query catalog to find source
-        querycat_url = f"{base_url}/dasch/dr7/querycat"
-        querycat_payload = {
-            "refcat": refcat,
-            "ra_deg": config['target_ra'],
-            "dec_deg": config['target_dec'],
-            "radius_arcsec": dasch_sr
-        }
+            # Step 1: Query catalog to find source
+            querycat_url = f"{base_url}/dasch/dr7/querycat"
+            querycat_payload = {
+                "refcat": refcat,
+                "ra_deg": config['target_ra'],
+                "dec_deg": config['target_dec'],
+                "radius_arcsec": dasch_sr
+            }
 
-        log(f"Querying DASCH catalog at RA={config['target_ra']:.4f}, Dec={config['target_dec']:.4f}")
+            log(f"Querying DASCH catalog at RA={config['target_ra']:.4f}, Dec={config['target_dec']:.4f}")
 
-        try:
-            response = requests.post(querycat_url, json=querycat_payload, timeout=30)
-            response.raise_for_status()
-        except requests.exceptions.RequestException as e:
-            raise RuntimeError(f'Error querying DASCH catalog: {e}')
+            try:
+                response = requests.post(querycat_url, json=querycat_payload, timeout=30)
+                response.raise_for_status()
+            except requests.exceptions.RequestException as e:
+                raise RuntimeError(f'Error querying DASCH catalog: {e}')
 
-        # Parse CSV response
-        csv_lines = response.json()
-        if not csv_lines or len(csv_lines) < 2:
-            raise RuntimeError('No sources found in DASCH catalog')
+            # Parse CSV response
+            csv_lines = response.json()
+            if not csv_lines or len(csv_lines) < 2:
+                raise RuntimeError('No sources found in DASCH catalog')
 
-        # Parse CSV to table
-        csv_text = '\n'.join(csv_lines)
-        reader = csv.DictReader(io.StringIO(csv_text))
-        sources = list(reader)
+            # Parse CSV to table
+            csv_text = '\n'.join(csv_lines)
+            reader = csv.DictReader(io.StringIO(csv_text))
+            sources = list(reader)
 
-        if not sources:
-            raise RuntimeError('No sources found in DASCH catalog')
+            if not sources:
+                raise RuntimeError('No sources found in DASCH catalog')
 
-        # Find closest source based on angular separation
-        separations = []
-        for src in sources:
-            dra = float(src['dra_asec'])
-            ddec = float(src['ddec_asec'])
-            sep = np.sqrt(dra**2 + ddec**2)
-            separations.append(sep)
+            # Find closest source based on angular separation
+            separations = []
+            for src in sources:
+                dra = float(src['dra_asec'])
+                ddec = float(src['ddec_asec'])
+                sep = np.sqrt(dra**2 + ddec**2)
+                separations.append(sep)
 
-        closest_idx = np.argmin(separations)
-        source = sources[closest_idx]
-        ref_number = int(source['ref_number'])
-        gsc_bin_index = int(source['gsc_bin_index'])
+            closest_idx = np.argmin(separations)
+            source = sources[closest_idx]
+            ref_number = int(source['ref_number'])
+            gsc_bin_index = int(source['gsc_bin_index'])
 
-        log(f"Found {len(sources)} sources, using closest one (sep={separations[closest_idx]:.2f} arcsec)")
-        log(f"Source: ref_number={ref_number}, gsc_bin_index={gsc_bin_index}, stdmag={source.get('stdmag', 'N/A')}")
+            log(f"Found {len(sources)} sources, using closest one (sep={separations[closest_idx]:.2f} arcsec)")
+            log(f"Source: ref_number={ref_number}, gsc_bin_index={gsc_bin_index}, stdmag={source.get('stdmag', 'N/A')}")
 
-        # Step 2: Get lightcurve for the source
-        lightcurve_url = f"{base_url}/dasch/dr7/lightcurve"
-        lightcurve_payload = {
-            "refcat": refcat,
-            "ref_number": ref_number,
-            "gsc_bin_index": gsc_bin_index
-        }
+            # Step 2: Get lightcurve for the source
+            lightcurve_url = f"{base_url}/dasch/dr7/lightcurve"
+            lightcurve_payload = {
+                "refcat": refcat,
+                "ref_number": ref_number,
+                "gsc_bin_index": gsc_bin_index
+            }
 
-        log(f"Requesting lightcurve data...")
+            log(f"Requesting lightcurve data...")
 
-        try:
-            response = requests.post(lightcurve_url, json=lightcurve_payload, timeout=60)
-            response.raise_for_status()
-        except requests.exceptions.RequestException as e:
-            raise RuntimeError(f'Error downloading DASCH lightcurve: {e}')
+            try:
+                response = requests.post(lightcurve_url, json=lightcurve_payload, timeout=60)
+                response.raise_for_status()
+            except requests.exceptions.RequestException as e:
+                raise RuntimeError(f'Error downloading DASCH lightcurve: {e}')
 
-        # Parse CSV response
-        csv_lines = response.json()
-        if not csv_lines or len(csv_lines) < 2:
-            raise RuntimeError('No lightcurve data returned from DASCH')
+            # Parse CSV response
+            csv_lines = response.json()
+            if not csv_lines or len(csv_lines) < 2:
+                raise RuntimeError('No lightcurve data returned from DASCH')
 
-        # Parse CSV to table
-        csv_text = '\n'.join(csv_lines)
-        reader = csv.DictReader(io.StringIO(csv_text))
-        rows = list(reader)
+            # Parse CSV to table
+            csv_text = '\n'.join(csv_lines)
+            reader = csv.DictReader(io.StringIO(csv_text))
+            rows = list(reader)
 
-        if not rows:
-            raise RuntimeError('No lightcurve data points found')
+            if not rows:
+                raise RuntimeError('No lightcurve data points found')
 
-        # Convert to astropy Table with proper column names
-        # Note: API returns snake_case column names
-        dasch = Table()
+            # Convert to astropy Table with proper column names
+            # Note: API returns snake_case column names
+            dasch = Table()
 
-        # Parse required columns (handle empty values gracefully)
-        dasch['ExposureDate'] = [float(row['date_jd']) if row['date_jd'] else np.nan for row in rows]
-        dasch['magcal_magdep'] = [float(row['magcal_magdep']) if row['magcal_magdep'] else np.nan for row in rows]
-        dasch['magcal_local_rms'] = [float(row['magcal_local_rms']) if row['magcal_local_rms'] else np.nan for row in rows]
-        dasch['AFLAGS'] = [int(row['aflags']) if row['aflags'] else 0 for row in rows]
+            # Parse required columns (handle empty values gracefully)
+            dasch['ExposureDate'] = [float(row['date_jd']) if row['date_jd'] else np.nan for row in rows]
+            dasch['magcal_magdep'] = [float(row['magcal_magdep']) if row['magcal_magdep'] else np.nan for row in rows]
+            dasch['magcal_local_rms'] = [float(row['magcal_local_rms']) if row['magcal_local_rms'] else np.nan for row in rows]
+            dasch['AFLAGS'] = [int(row['aflags']) if row['aflags'] else 0 for row in rows]
 
-        # Optional: add more columns if available
-        if 'limiting_mag_local' in rows[0]:
-            dasch['limiting_mag_local'] = [float(row['limiting_mag_local']) if row['limiting_mag_local'] else np.nan for row in rows]
+            # Optional: add more columns if available
+            if 'limiting_mag_local' in rows[0]:
+                dasch['limiting_mag_local'] = [float(row['limiting_mag_local']) if row['limiting_mag_local'] else np.nan for row in rows]
 
-        # Filter out rows with invalid data
-        dasch = dasch[np.isfinite(dasch['ExposureDate'])]
+            # Filter out rows with invalid data
+            dasch = dasch[np.isfinite(dasch['ExposureDate'])]
 
-        try:
-            os.makedirs(os.path.join(basepath, 'cache'))
-        except:
-            pass
+            cache.save(dasch)
 
-        dasch.write(os.path.join(basepath, 'cache', cachename),
-                    format='votable', overwrite=True)
+        dasch = cache.data
 
     log(f"{len(dasch)} original data points")
 

@@ -14,7 +14,7 @@ from astropy.time import Time
 from stdpipe import plots
 
 from ..surveys import survey_source, get_output_files
-from .utils import cleanup_paths
+from .utils import cleanup_paths, cached_votable_query
 
 
 @survey_source(
@@ -57,98 +57,88 @@ def target_kws(config, basepath=None, verbose=True, show=False):
     # Sanitize the name for use in filename
     safe_name = "".join(c if c.isalnum() or c in (' ', '-', '_') else '_' for c in target_name)
     safe_name = safe_name.replace(' ', '_')
-    cachename = f"kws_{safe_name}.vot"
+    cache_name = f"kws_{safe_name}.vot"
 
-    if os.path.exists(os.path.join(basepath, 'cache', cachename)):
-        log(f"Loading Kamogata Wide-field Survey lightcurve from the cache")
-        kws = Table.read(os.path.join(basepath, 'cache', cachename))
-    else:
-        log(f"Querying Kamogata Wide-field Survey for {target_name}")
+    with cached_votable_query(cache_name, basepath, log, 'Kamogata Wide-field Survey') as cache:
+        if not cache.hit:
+            log(f"for {target_name}")
 
-        # Query KWS database
-        # Note: KWS does not support coordinates, only object names resolved via SIMBAD
-        try:
-            res = requests.post(
-                "http://kws.cetus-net.org/~maehara/VSdata.py",
-                {
-                    "object": target_name,  # KWS resolves object name via SIMBAD
-                    "resolver": "simbad",
-                    "p_band": "All",
-                    "plot": "0",
-                    "obs_ys": "",
-                    "obs_ms": "",
-                    "obs_ds": "",
-                    "obs_ye": "",
-                    "obs_me": "",
-                    "obs_de": "",
-                    "submit": "Send query"
-                },
-                timeout=30
-            )
-            res.raise_for_status()
-        except requests.RequestException as e:
-            log(f"Error querying KWS: {e}")
-            raise RuntimeError(f"KWS query failed: {e}")
-
-        # Parse response
-        # KWS returns HTML with embedded table
-        try:
-            content = res.content.decode('utf-8', errors='ignore')
-
-            # Extract table from HTML
-            start_marker = '<table>'
-            end_marker = '</table>'
-
-            start_idx = content.find(start_marker)
-            if start_idx == -1:
-                log("No table found in KWS response")
-                log("Object might not be in KWS database or name not resolved")
-                return
-
-            end_idx = content.find(end_marker, start_idx)
-            if end_idx == -1:
-                log("Malformed KWS response - could not find table end")
-                return
-
-            end_idx += len(end_marker)
-
-            table_html = content[start_idx:end_idx]
-
-            # Parse HTML table
-            # Expected columns: name, time, mag, magerr, filter, frame
-            kws = Table.read(
-                table_html,
-                format='html',
-                names=['name', 'time', 'mag', 'magerr', 'filter', 'frame'],
-                data_start=1
-            )
-
-            if not len(kws):
-                log("No KWS data points found")
-                return
-
-            # Convert time to MJD
-            kws['mjd'] = Time(kws['time']).mjd
-
-            # Create cache directory if needed
+            # Query KWS database
+            # Note: KWS does not support coordinates, only object names resolved via SIMBAD
             try:
-                os.makedirs(os.path.join(basepath, 'cache'))
-            except:
-                pass
+                res = requests.post(
+                    "http://kws.cetus-net.org/~maehara/VSdata.py",
+                    {
+                        "object": target_name,  # KWS resolves object name via SIMBAD
+                        "resolver": "simbad",
+                        "p_band": "All",
+                        "plot": "0",
+                        "obs_ys": "",
+                        "obs_ms": "",
+                        "obs_ds": "",
+                        "obs_ye": "",
+                        "obs_me": "",
+                        "obs_de": "",
+                        "submit": "Send query"
+                    },
+                    timeout=30
+                )
+                res.raise_for_status()
+            except requests.RequestException as e:
+                log(f"Error querying KWS: {e}")
+                raise RuntimeError(f"KWS query failed: {e}")
 
-            # Save to cache
-            kws.write(
-                os.path.join(basepath, 'cache', cachename),
-                format='votable', overwrite=True
-            )
+            # Parse response
+            # KWS returns HTML with embedded table
+            try:
+                content = res.content.decode('utf-8', errors='ignore')
 
-            log(f"Found {len(kws)} KWS data points")
+                # Extract table from HTML
+                start_marker = '<table>'
+                end_marker = '</table>'
 
-        except Exception as e:
-            import traceback
-            log(f"Error parsing KWS response: {e}")
-            log(traceback.format_exc())
-            raise RuntimeError(f"Failed to parse KWS data: {e}")
+                start_idx = content.find(start_marker)
+                if start_idx == -1:
+                    log("No table found in KWS response")
+                    log("Object might not be in KWS database or name not resolved")
+                    return
+
+                end_idx = content.find(end_marker, start_idx)
+                if end_idx == -1:
+                    log("Malformed KWS response - could not find table end")
+                    return
+
+                end_idx += len(end_marker)
+
+                table_html = content[start_idx:end_idx]
+
+                # Parse HTML table
+                # Expected columns: name, time, mag, magerr, filter, frame
+                kws = Table.read(
+                    table_html,
+                    format='html',
+                    names=['name', 'time', 'mag', 'magerr', 'filter', 'frame'],
+                    data_start=1
+                )
+
+                if not len(kws):
+                    log("No KWS data points found")
+                    return
+
+                # Convert time to MJD
+                kws['mjd'] = Time(kws['time']).mjd
+
+                cache.save(kws)
+
+                log(f"Found {len(kws)} KWS data points")
+
+            except Exception as e:
+                import traceback
+                log(f"Error parsing KWS response: {e}")
+                log(traceback.format_exc())
+                raise RuntimeError(f"Failed to parse KWS data: {e}")
+
+        kws = cache.data
 
     # Filter out bad data
     kws = kws[np.isfinite(kws['mag'])]

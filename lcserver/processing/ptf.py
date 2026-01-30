@@ -17,7 +17,7 @@ from astroquery.ipac.irsa import Irsa
 from stdpipe import plots
 
 from ..surveys import survey_source, get_output_files
-from .utils import cleanup_paths
+from .utils import cleanup_paths, cached_votable_query
 
 
 @survey_source(
@@ -58,84 +58,73 @@ def target_ptf(config, basepath=None, verbose=True, show=False):
         log("Error: target_ra and target_dec are required for PTF query")
         raise RuntimeError("Coordinates required for PTF query")
 
-    # Create cache name based on coordinates
-    cachename = f"ptf_{ra:.4f}_{dec:.4f}.vot"
+    # Query with caching
+    cache_name = f"ptf_{ra:.4f}_{dec:.4f}.vot"
 
-    if os.path.exists(os.path.join(basepath, 'cache', cachename)):
-        log(f"Loading Palomar Transient Factory lightcurve from the cache")
-        ptf = Table.read(os.path.join(basepath, 'cache', cachename))
-    else:
-        log(f"Querying Palomar Transient Factory at RA={ra:.4f}, Dec={dec:.4f}")
-
-        # Query PTF catalog
-        try:
-            target = SkyCoord(ra, dec, unit='deg')
-            table = Irsa.query_region(
-                coordinates=target,
-                spatial='Cone',
-                catalog='ptf_lightcurves',
-                radius=2 * u.arcsec
-            )
-
-            if not len(table):
-                log("No PTF data points found within 2 arcsec")
-                return
-
-            # Create standardized columns
-            table['mjd'] = table['obsmjd']
-            table['mag'] = table['mag_autocorr']
-            table['magerr'] = table['magerr_auto']
-            table['filter'] = np.where(
-                table['fid'] == 1, 'g',
-                np.where(table['fid'] == 2, 'R', 'Ha')
-            )
-
-            # Quality filtering
-            log("Applying quality filters...")
-
-            # Basic filtering - positive magnitudes
-            idx = table['mag_autocorr'] > 0
-
-            # FWHM ratio filtering (reject elongated sources)
-            fwhm_ratio = table['fwhm_image'] / table['fwhmsex']
-            idx = np.logical_and(idx, fwhm_ratio < 1.5)
-
-            # Edge of frame filtering (5px margin)
-            idx = np.logical_and(idx, table['xpeak_image'] > 5)
-            idx = np.logical_and(idx, table['xpeak_image'] < 2043)
-            idx = np.logical_and(idx, table['ypeak_image'] > 5)
-            idx = np.logical_and(idx, table['ypeak_image'] < 4091)
-
-            # Photometry correction filtering (< 0.5 mag correction)
-            idx = np.logical_and(idx, np.abs(table['mag_autocorr'] - table['mag_auto']) < 0.5)
-
-            table = table[idx]
-
-            if not len(table):
-                log("No PTF data points remaining after quality filtering")
-                return
-
-            log(f"Found {len(table)} PTF data points after filtering")
-
-            # Create cache directory if needed
+    with cached_votable_query(cache_name, basepath, log,
+                              'Palomar Transient Factory') as cache:
+        if not cache.hit:
+            # Query PTF catalog - only if not cached
             try:
-                os.makedirs(os.path.join(basepath, 'cache'))
-            except:
-                pass
+                target = SkyCoord(ra, dec, unit='deg')
+                table = Irsa.query_region(
+                    coordinates=target,
+                    spatial='Cone',
+                    catalog='ptf_lightcurves',
+                    radius=2 * u.arcsec
+                )
 
-            # Save to cache
-            table.write(
-                os.path.join(basepath, 'cache', cachename),
-                format='votable', overwrite=True
-            )
+                if not len(table):
+                    log("No PTF data points found within 2 arcsec")
+                    return
 
-            ptf = table
+                # Create standardized columns
+                table['mjd'] = table['obsmjd']
+                table['mag'] = table['mag_autocorr']
+                table['magerr'] = table['magerr_auto']
+                table['filter'] = np.where(
+                    table['fid'] == 1, 'g',
+                    np.where(table['fid'] == 2, 'R', 'Ha')
+                )
 
-        except Exception as e:
-            import traceback
-            log(f"Error querying PTF: {e}")
-            log(traceback.format_exc())
-            raise RuntimeError(f"PTF query failed: {e}")
+                # Quality filtering
+                log("Applying quality filters...")
+
+                # Basic filtering - positive magnitudes
+                idx = table['mag_autocorr'] > 0
+
+                # FWHM ratio filtering (reject elongated sources)
+                fwhm_ratio = table['fwhm_image'] / table['fwhmsex']
+                idx = np.logical_and(idx, fwhm_ratio < 1.5)
+
+                # Edge of frame filtering (5px margin)
+                idx = np.logical_and(idx, table['xpeak_image'] > 5)
+                idx = np.logical_and(idx, table['xpeak_image'] < 2043)
+                idx = np.logical_and(idx, table['ypeak_image'] > 5)
+                idx = np.logical_and(idx, table['ypeak_image'] < 4091)
+
+                # Photometry correction filtering (< 0.5 mag correction)
+                idx = np.logical_and(idx, np.abs(table['mag_autocorr'] - table['mag_auto']) < 0.5)
+
+                table = table[idx]
+
+                if not len(table):
+                    log("No PTF data points remaining after quality filtering")
+                    return
+
+                log(f"Found {len(table)} PTF data points after filtering")
+
+                # Save to cache
+                cache.save(table)
+
+            except Exception as e:
+                import traceback
+                log(f"Error querying PTF: {e}")
+                log(traceback.format_exc())
+                raise RuntimeError(f"PTF query failed: {e}")
+
+        # Use cached or freshly queried data
+        ptf = cache.data
 
     # Filter out bad data
     ptf = ptf[np.isfinite(ptf['mag'])]

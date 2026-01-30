@@ -25,6 +25,7 @@ from .utils import (
     print_to_file,
     pickle_to_file,
     pickle_from_file,
+    cached_votable_query,
 )
 
 # Import all processing functions
@@ -48,6 +49,7 @@ __all__ = [
     'print_to_file',
     'pickle_to_file',
     'pickle_from_file',
+    'cached_votable_query',
     'gaussian_smoothing',
     # Processing functions
     'target_info',

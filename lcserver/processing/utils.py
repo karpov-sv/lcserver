@@ -6,8 +6,10 @@ import shutil
 import re
 import dill as pickle
 from io import BytesIO
+from contextlib import contextmanager
 
 from astropy.io.votable import parse as votable_parse
+from astropy.table import Table
 
 
 def parse_votable_lenient(xml_content):
@@ -55,6 +57,112 @@ def parse_votable_lenient(xml_content):
         votable = votable_parse(BytesIO(xml_str.encode('utf-8')), verify='ignore')
 
     return votable.get_first_table().to_table()
+
+
+@contextmanager
+def cached_votable_query(cache_name, basepath, log, description):
+    """Context manager for cached VOTable queries.
+
+    Automatically handles cache checking, directory creation, and saving.
+    Reduces duplication across all survey processing modules.
+
+    Usage:
+        with cached_votable_query('source_123.4567_45.6789.vot',
+                                  basepath, log, 'Source Name') as cache:
+            if not cache.hit:
+                # Query code here - only runs if not cached
+                data = external_api.query(...)
+                cache.save(data)
+
+            # Use cache.data (either from cache or just saved)
+            result = cache.data
+
+    Parameters
+    ----------
+    cache_name : str
+        Cache filename (e.g., 'ptf_123.4567_45.6789.vot')
+    basepath : str
+        Base directory containing cache/ subdirectory
+    log : callable
+        Logging function
+    description : str
+        Human-readable name for logging (e.g., 'Palomar Transient Factory')
+
+    Yields
+    ------
+    cache : CacheHelper
+        Helper object with:
+        - cache.hit : bool - True if data loaded from cache
+        - cache.data : Table - Cached data (if hit=True) or None
+        - cache.save(data) : Save data to cache
+        - cache.path : str - Full cache file path
+
+    Examples
+    --------
+    Coordinate-based caching:
+        >>> cache_name = f"ptf_{ra:.4f}_{dec:.4f}.vot"
+        >>> with cached_votable_query(cache_name, basepath, log, 'PTF') as cache:
+        ...     if not cache.hit:
+        ...         data = query_ptf(ra, dec)
+        ...         cache.save(data)
+        ...     ptf = cache.data
+
+    Name-based caching:
+        >>> safe_name = target_name.replace(' ', '_')
+        >>> cache_name = f"kws_{safe_name}.vot"
+        >>> with cached_votable_query(cache_name, basepath, log, 'KWS') as cache:
+        ...     if not cache.hit:
+        ...         data = query_kws(target_name)
+        ...         cache.save(data)
+        ...     kws = cache.data
+    """
+    cache_path = os.path.join(basepath, 'cache', cache_name)
+
+    class CacheHelper:
+        """Helper class for cache operations."""
+
+        def __init__(self):
+            self.hit = False
+            self.data = None
+            self.path = cache_path
+            self._saved = False
+
+        def save(self, data):
+            """Save data to cache.
+
+            Parameters
+            ----------
+            data : Table
+                Astropy table to cache
+            """
+            if self._saved:
+                return  # Already saved
+
+            # Create cache directory
+            os.makedirs(os.path.join(basepath, 'cache'), exist_ok=True)
+
+            # Save to cache
+            data.write(cache_path, format='votable', overwrite=True)
+            self.data = data
+            self._saved = True
+            log(f"Cached {description} data to {cache_name}")
+
+    cache = CacheHelper()
+
+    # Try loading from cache
+    if os.path.exists(cache_path):
+        log(f"Loading {description} from cache ({cache_name})")
+        cache.data = Table.read(cache_path)
+        cache.hit = True
+        cache._saved = True  # Already have data
+    else:
+        log(f"Querying {description}...")
+        cache.hit = False
+
+    try:
+        yield cache
+    finally:
+        pass  # Could add cleanup here if needed
 
 
 def cleanup_paths(paths, basepath=None):

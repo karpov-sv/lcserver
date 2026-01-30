@@ -14,7 +14,7 @@ from astropy.time import Time
 from stdpipe import plots
 
 from ..surveys import survey_source, get_output_files
-from .utils import cleanup_paths
+from .utils import cleanup_paths, cached_votable_query
 
 
 @survey_source(
@@ -69,59 +69,53 @@ def target_mmt9(config, basepath=None, verbose=True, show=False):
     if 'target_ra' not in config or 'target_dec' not in config:
         raise RuntimeError("Cannot operate without target coordinates")
 
-    cachename = f"mmt9_{config['target_ra']:.4f}_{config['target_dec']:.4f}.vot"
+    cache_name = f"mmt9_{config['target_ra']:.4f}_{config['target_dec']:.4f}.vot"
 
-    if os.path.exists(os.path.join(basepath, 'cache', cachename)):
-        log(f"Loading Mini-MegaTORTORA lightcurve from the cache")
-        mmt9 = Table.read(os.path.join(basepath, 'cache', cachename))
-    else:
-        mmt9_sr = config.get('mmt9_sr', 15.0)  # Search radius in arcsec
+    with cached_votable_query(cache_name, basepath, log, 'Mini-MegaTORTORA') as cache:
+        if not cache.hit:
+            mmt9_sr = config.get('mmt9_sr', 15.0)  # Search radius in arcsec
 
-        log(f"Requesting Mini-MegaTORTORA lightcurve for {config['target_name']} within {mmt9_sr:.1f} arcsec")
+            log(f"for {config['target_name']} within {mmt9_sr:.1f} arcsec")
 
-        # Convert search radius to degrees
-        sr_deg = mmt9_sr / 3600.0
+            # Convert search radius to degrees
+            sr_deg = mmt9_sr / 3600.0
 
-        # Query API
-        api_url = f"http://survey.favor2.info/favor2/photometry/mjd"
-        params = {
-            "sr": sr_deg,
-            "ra": config['target_ra'],
-            "dec": config['target_dec']
-        }
+            # Query API
+            api_url = f"http://survey.favor2.info/favor2/photometry/mjd"
+            params = {
+                "sr": sr_deg,
+                "ra": config['target_ra'],
+                "dec": config['target_dec']
+            }
 
-        log(f"Querying Mini-MegaTORTORA at RA={config['target_ra']:.4f}, Dec={config['target_dec']:.4f}")
+            log(f"Querying Mini-MegaTORTORA at RA={config['target_ra']:.4f}, Dec={config['target_dec']:.4f}")
 
-        try:
-            response = requests.get(api_url, params=params, timeout=60)
-            response.raise_for_status()
-        except requests.exceptions.RequestException as e:
-            raise RuntimeError(f'Error downloading Mini-MegaTORTORA lightcurve: {e}')
+            try:
+                response = requests.get(api_url, params=params, timeout=60)
+                response.raise_for_status()
+            except requests.exceptions.RequestException as e:
+                raise RuntimeError(f'Error downloading Mini-MegaTORTORA lightcurve: {e}')
 
-        # Parse whitespace-separated table with commented header
-        from io import StringIO
-        try:
-            mmt9 = Table.read(response.text, format='ascii.commented_header', delimiter=' ')
-            mmt9.rename_column('MJD', 'mjd')
-            mmt9.rename_column('Mag', 'mag')
-            mmt9.rename_column('Magerr', 'magerr')
+            # Parse whitespace-separated table with commented header
+            from io import StringIO
+            try:
+                mmt9 = Table.read(response.text, format='ascii.commented_header', delimiter=' ')
+                mmt9.rename_column('MJD', 'mjd')
+                mmt9.rename_column('Mag', 'mag')
+                mmt9.rename_column('Magerr', 'magerr')
 
-        except Exception as e:
-            raise RuntimeError(f'Error parsing Mini-MegaTORTORA data: {e}')
+            except Exception as e:
+                raise RuntimeError(f'Error parsing Mini-MegaTORTORA data: {e}')
 
-        if not len(mmt9):
-            log("Warning: No Mini-MegaTORTORA data found")
-            return
+            if not len(mmt9):
+                log("Warning: No Mini-MegaTORTORA data found")
+                return
 
-        log(f"Downloaded {len(mmt9)} data points from Mini-MegaTORTORA")
+            log(f"Downloaded {len(mmt9)} data points from Mini-MegaTORTORA")
 
-        try:
-            os.makedirs(os.path.join(basepath, 'cache'))
-        except:
-            pass
+            cache.save(mmt9)
 
-        mmt9.write(os.path.join(basepath, 'cache', cachename),
-                   format='votable', overwrite=True)
+        mmt9 = cache.data
 
     log(f"{len(mmt9)} original data points")
 

@@ -15,7 +15,7 @@ from astropy.coordinates import SkyCoord
 from stdpipe import plots
 
 from ..surveys import survey_source, get_output_files
-from .utils import cleanup_paths
+from .utils import cleanup_paths, cached_votable_query
 
 
 @survey_source(
@@ -55,90 +55,82 @@ def target_css(config, basepath=None, verbose=True, show=False):
     # Cleanup stale plots
     cleanup_paths(get_output_files('css'), basepath=basepath)
 
-    cachename = f"css_{config['target_ra']:.4f}_{config['target_dec']:.4f}.vot"
+    cache_name = f"css_{config['target_ra']:.4f}_{config['target_dec']:.4f}.vot"
 
-    if os.path.exists(os.path.join(basepath, 'cache', cachename)):
-        log(f"Loading Catalina Sky Survey lightcurve from the cache")
-        css = Table.read(os.path.join(basepath, 'cache', cachename))
-    else:
-        # Get search radius from config or use default
-        radius_arcsec = config.get('css_radius', 2.0)
+    with cached_votable_query(cache_name, basepath, log, 'Catalina Sky Survey') as cache:
+        if not cache.hit:
+            # Get search radius from config or use default
+            radius_arcsec = config.get('css_radius', 2.0)
 
-        log(f"Querying Catalina Sky Survey within {radius_arcsec} arcsec")
+            log(f"within {radius_arcsec} arcsec")
 
-        # Build target coordinate
-        target = SkyCoord(ra=config['target_ra'], dec=config['target_dec'], unit='deg')
+            # Build target coordinate
+            target = SkyCoord(ra=config['target_ra'], dec=config['target_dec'], unit='deg')
 
-        # Query CSS database
-        try:
-            res = requests.post(
-                'http://nunuku.caltech.edu/cgi-bin/getcssconedb_release_img.cgi',
-                {
-                    'RADec': f"{target.ra.deg} {target.dec.deg}",
-                    'Rad': radius_arcsec / 60,  # Convert arcsec to arcmin
-                    'IMG': 'nun',
-                    'DB': 'photcat',
-                    '.submit': 'Submit',
-                    'OUT': 'csv',
-                    'SHORT': 'short',
-                    'PLOT': 'plot'
-                },
-                timeout=30
-            )
-            res.raise_for_status()
-        except requests.RequestException as e:
-            log(f"Error querying CSS: {e}")
-            raise RuntimeError(f"CSS query failed: {e}")
-
-        # Parse response
-        # CSS returns CSV data embedded in HTML with a specific format
-        try:
-            content = res.content.decode('utf-8', errors='ignore')
-
-            # Extract the data array from the response
-            # Format is: data: [[mjd1, mag1, err1], [mjd2, mag2, err2], ...]
-            start_marker = 'data: [['
-            end_marker = '],]'
-
-            start_idx = content.find(start_marker)
-            if start_idx == -1:
-                log("No data found in CSS response")
-                log("Response might indicate no objects in search radius")
-                return
-
-            start_idx += len(start_marker) - 2  # Include the opening [[
-            end_idx = content.find(end_marker, start_idx)
-            if end_idx == -1:
-                log("Malformed CSS response - could not find data end marker")
-                return
-
-            end_idx += 3  # Include the closing ]]
-
-            data_str = content[start_idx:end_idx]
-            data_array = eval(data_str)  # Parse JavaScript array format
-
-            if not data_array or len(data_array) == 0:
-                log("No CSS data points found")
-                return
-
-            # Convert to astropy table
-            css = Table(np.array(data_array), names=['mjd', 'mag', 'magerr'])
-
+            # Query CSS database
             try:
-                os.makedirs(os.path.join(basepath, 'cache'))
-            except:
-                pass
+                res = requests.post(
+                    'http://nunuku.caltech.edu/cgi-bin/getcssconedb_release_img.cgi',
+                    {
+                        'RADec': f"{target.ra.deg} {target.dec.deg}",
+                        'Rad': radius_arcsec / 60,  # Convert arcsec to arcmin
+                        'IMG': 'nun',
+                        'DB': 'photcat',
+                        '.submit': 'Submit',
+                        'OUT': 'csv',
+                        'SHORT': 'short',
+                        'PLOT': 'plot'
+                    },
+                    timeout=30
+                )
+                res.raise_for_status()
+            except requests.RequestException as e:
+                log(f"Error querying CSS: {e}")
+                raise RuntimeError(f"CSS query failed: {e}")
 
-            css.write(
-                os.path.join(basepath, 'cache', cachename),
-                format='votable', overwrite=True
-            )
+            # Parse response
+            # CSS returns CSV data embedded in HTML with a specific format
+            try:
+                content = res.content.decode('utf-8', errors='ignore')
 
-        except Exception as e:
-            import traceback
-            log(f"Error parsing CSS response: {e}")
-            log(traceback.format_exc())
-            raise RuntimeError(f"Failed to parse CSS data: {e}")
+                # Extract the data array from the response
+                # Format is: data: [[mjd1, mag1, err1], [mjd2, mag2, err2], ...]
+                start_marker = 'data: [['
+                end_marker = '],]'
+
+                start_idx = content.find(start_marker)
+                if start_idx == -1:
+                    log("No data found in CSS response")
+                    log("Response might indicate no objects in search radius")
+                    return
+
+                start_idx += len(start_marker) - 2  # Include the opening [[
+                end_idx = content.find(end_marker, start_idx)
+                if end_idx == -1:
+                    log("Malformed CSS response - could not find data end marker")
+                    return
+
+                end_idx += 3  # Include the closing ]]
+
+                data_str = content[start_idx:end_idx]
+                data_array = eval(data_str)  # Parse JavaScript array format
+
+                if not data_array or len(data_array) == 0:
+                    log("No CSS data points found")
+                    return
+
+                # Convert to astropy table
+                css = Table(np.array(data_array), names=['mjd', 'mag', 'magerr'])
+
+                cache.save(css)
+
+            except Exception as e:
+                import traceback
+                log(f"Error parsing CSS response: {e}")
+                log(traceback.format_exc())
+                raise RuntimeError(f"Failed to parse CSS data: {e}")
+
+        css = cache.data
 
     # Filter out bad data
     css = css[np.isfinite(css['mag'])]

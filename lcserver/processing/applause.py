@@ -17,7 +17,7 @@ import pyvo as vo
 from stdpipe import plots
 
 from ..surveys import survey_source, get_output_files
-from .utils import cleanup_paths, parse_votable_lenient
+from .utils import cleanup_paths, parse_votable_lenient, cached_votable_query
 
 
 @survey_source(
@@ -68,67 +68,59 @@ def target_applause(config, basepath=None, verbose=True, show=False):
         raise RuntimeError("Cannot operate without target coordinates")
 
 
-    cachename = f"applause_{config['target_ra']:.4f}_{config['target_dec']:.4f}.vot"
+    cache_name = f"applause_{config['target_ra']:.4f}_{config['target_dec']:.4f}.vot"
 
-    if os.path.exists(os.path.join(basepath, 'cache', cachename)):
-        log(f"Loading APPLAUSE lightcurve from the cache")
-        applause = Table.read(os.path.join(basepath, 'cache', cachename))
-    else:
-        applause_sr = config.get('applause_sr', 2.0)
+    with cached_votable_query(cache_name, basepath, log, 'APPLAUSE') as cache:
+        if not cache.hit:
+            applause_sr = config.get('applause_sr', 2.0)
 
-        log(f"Requesting APPLAUSE lightcurve for {config['target_name']} within {applause_sr:.1f} arcsec")
+            log(f"for {config['target_name']} within {applause_sr:.1f} arcsec")
 
-        url = 'https://www.plate-archive.org/tap'
+            url = 'https://www.plate-archive.org/tap'
 
-        query = f"""
-        SELECT
-            s.*,
-            DEGREES(spoint(RADIANS(s.ra_icrs), RADIANS(s.dec_icrs)) <-> spoint(RADIANS({config['target_ra']}), RADIANS({config['target_dec']}))) AS angdist,
-            e.jd_start, e.jd_mid, e.jd_end
-        FROM applause_dr4.source_calib s, applause_dr4.exposure e, applause_dr4.plate p
-        WHERE
-            s.pos @ scircle(spoint(RADIANS({config['target_ra']}), RADIANS({config['target_dec']})), RADIANS({applause_sr/3600}))
-            AND
-            s.plate_id = e.plate_id
-            AND
-            s.plate_id = p.plate_id
-            AND
-            p.numexp = 1
-            AND
-            s.match_radius > 0
-            AND
-            s.model_prediction > 0.9
-            AND
-            s.natmag_error > 0
-        """
+            query = f"""
+            SELECT
+                s.*,
+                DEGREES(spoint(RADIANS(s.ra_icrs), RADIANS(s.dec_icrs)) <-> spoint(RADIANS({config['target_ra']}), RADIANS({config['target_dec']}))) AS angdist,
+                e.jd_start, e.jd_mid, e.jd_end
+            FROM applause_dr4.source_calib s, applause_dr4.exposure e, applause_dr4.plate p
+            WHERE
+                s.pos @ scircle(spoint(RADIANS({config['target_ra']}), RADIANS({config['target_dec']})), RADIANS({applause_sr/3600}))
+                AND
+                s.plate_id = e.plate_id
+                AND
+                s.plate_id = p.plate_id
+                AND
+                p.numexp = 1
+                AND
+                s.match_radius > 0
+                AND
+                s.model_prediction > 0.9
+                AND
+                s.natmag_error > 0
+            """
 
-        tap_service = vo.dal.TAPService(url) # Anonymous access
+            tap_service = vo.dal.TAPService(url) # Anonymous access
 
-        job = tap_service.submit_job(query, language='PostgreSQL')
-        job.run()
+            job = tap_service.submit_job(query, language='PostgreSQL')
+            job.run()
 
-        job.wait(phases=["COMPLETED", "ERROR", "ABORTED"], timeout=120.)
+            job.wait(phases=["COMPLETED", "ERROR", "ABORTED"], timeout=120.)
 
-        # TODO: more intelligent error handling?
-        job.raise_if_error()
+            # TODO: more intelligent error handling?
+            job.raise_if_error()
 
-        # Parse VOTable with lenient error handling
-        # The APPLAUSE TAP service sometimes returns malformed XML with undefined entities
-        result_url = job.result_uri
-        response = requests.get(result_url)
+            # Parse VOTable with lenient error handling
+            # The APPLAUSE TAP service sometimes returns malformed XML with undefined entities
+            result_url = job.result_uri
+            response = requests.get(result_url)
 
-        # Use helper function to parse potentially malformed VOTable
-        applause = parse_votable_lenient(response.content)
+            # Use helper function to parse potentially malformed VOTable
+            applause = parse_votable_lenient(response.content)
 
-        try:
-            os.makedirs(os.path.join(basepath, 'cache'))
-        except:
-            pass
+            cache.save(applause)
 
-        applause.write(
-            os.path.join(basepath, 'cache', cachename),
-            format='votable', overwrite=True
-        )
+        applause = cache.data
 
     log(f"{len(applause)} original data points")
 
