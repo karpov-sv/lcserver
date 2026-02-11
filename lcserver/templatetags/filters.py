@@ -7,6 +7,7 @@ import datetime
 import uuid
 import humanize
 import re
+import fnmatch
 
 import numpy as np
 
@@ -104,6 +105,12 @@ def grep(items, arg):
     items_out = [item for item in items if pattern.search(str(item))]
 
     return items_out
+
+
+@register.filter
+def fnmatch_filter(items, pattern):
+    """Filter list of items using glob-style wildcard pattern (*, ?)."""
+    return [item for item in items if fnmatch.fnmatch(str(item), pattern)]
 
 
 @register.filter

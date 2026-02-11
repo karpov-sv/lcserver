@@ -26,7 +26,7 @@
       <!-- Additional plots (e.g., tess_lc_*.png) -->
       {% if source_config.additional_plots %}
         {% for pattern in source_config.additional_plots %}
-          {% for name in files|grep:pattern|sort %}
+          {% for name in files|fnmatch_filter:pattern|sort %}
             {% if name in files %}
               <div class="col" style="max-width: 256px">
                 {% include "target_block_image.html" with image=name target=target only %}

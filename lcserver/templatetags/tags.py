@@ -55,7 +55,7 @@ def target_file_contents(target, filename, highlight=False):
                           r"\1<span class='text-danger'>\2</span>",
                           contents, flags=re.MULTILINE)
 
-        contents = re.sub(r"\b(file:(\w+\.\w+))\b",
+        contents = re.sub(r"\b(file:([\w.-]+\.\w+))\b",
                           partial(target_file_link, target=target),
                           contents, flags=re.MULTILINE)
 
