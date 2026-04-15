@@ -147,6 +147,14 @@ def cached_votable_query(cache_name, basepath, log, description):
             self._saved = True
             log(f"Cached {description} data to {cache_name}")
 
+        def invalidate(self):
+            """Remove invalid cached data and reset state for re-query."""
+            if os.path.exists(cache_path):
+                os.remove(cache_path)
+            self.hit = False
+            self.data = None
+            self._saved = False
+
     cache = CacheHelper()
 
     # Try loading from cache

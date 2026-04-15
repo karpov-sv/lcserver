@@ -10,6 +10,8 @@ from astropy.table import Table
 from astropy.time import Time
 
 from ztfquery import lightcurve
+import requests
+import pandas as pd
 
 # STDPipe
 from stdpipe import plots
@@ -142,18 +144,58 @@ def target_ztf(config, basepath=None, verbose=True, show=False):
     ztf_sr = config.get('ztf_sr', 2.0)
     cache_name = f"ztf_raw_{ra:.4f}_{dec:.4f}_{ztf_sr:.1f}.vot"
 
+    # Columns required for ZTF processing
+    ztf_required_columns = {'filtercode', 'mag', 'magerr', 'catflags', 'clrcoeff', 'mjd'}
+
     with cached_votable_query(cache_name, basepath, log, 'ZTF raw data') as cache:
+        if cache.hit:
+            # Validate cached data has expected columns
+            if not ztf_required_columns.issubset(cache.data.colnames):
+                log(f"Warning: Cached ZTF data is invalid (missing columns), re-querying")
+                log(f"  Expected: {sorted(ztf_required_columns)}")
+                log(f"  Got: {cache.data.colnames}")
+                cache.invalidate()
+
         if not cache.hit:
             # Query ZTF - only if not cached
             log(f"Requesting ZTF lightcurve for {config['target_name']} within {ztf_sr:.1f} arcsec")
-            lcq = lightcurve.LCQuery.from_position(ra, dec, ztf_sr)
+            # Original IRSA data access
+            # lcq = lightcurve.LCQuery.from_position(ra, dec, ztf_sr)
+            # SNAD data access
+            r = requests.get(
+                "https://db.ztf.snad.space/api/v3/data/latest/circle/full/json",
+                params={"ra": ra, "dec": dec, "radius_arcsec": ztf_sr},
+            )
+
+            lcq = None
+            if r.status_code == 200:
+                lc = []
+                for v in r.json().values():
+                    lc1 = pd.DataFrame(v["lc"])
+                    lc1["filtercode"] = v["meta"]["filter"]
+                    lc.append(lc1)
+
+                if len(lc):
+                    lcq = lambda: None # Fake object able to have attributes
+                    lcq.data = pd.concat(lc, ignore_index=True)
+                    lcq.data['catflags'] = np.zeros_like(lcq.data['clrcoeff'], dtype=int)
+
+            else:
+                log("Error {r.status_code} accessing ZTF photometry")
 
             if not lcq or not len(lcq.data):
                 log("Warning: No ZTF data found")
                 return
 
-            # Cache raw query results
+            # Validate query results before caching
             ztf_raw = Table.from_pandas(lcq.data)
+            if not ztf_required_columns.issubset(ztf_raw.colnames):
+                raise RuntimeError(
+                    f"ZTF query returned invalid data (missing columns: "
+                    f"{sorted(ztf_required_columns - set(ztf_raw.colnames))}). "
+                    f"Got columns: {ztf_raw.colnames}"
+                )
+
             cache.save(ztf_raw)
 
         # Use cached or freshly queried raw data
@@ -302,6 +344,10 @@ def target_ztf(config, basepath=None, verbose=True, show=False):
         ax.invert_yaxis()
 
         fig.suptitle(f"{config['target_name']} - ZTF")
+
+    if not len(cmagg):
+        log("No multiband data in ZTF")
+        return
 
     log("\n---- Worst-case Pan-STARRS recalibration error ----\n")
 
