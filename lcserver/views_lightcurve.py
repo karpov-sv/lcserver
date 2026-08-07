@@ -40,58 +40,50 @@ def load_magnitude_data(basepath):
         try:
             data = Table.read(fullname)
 
-            # Convert MJD to datetime
-            data['time'] = Time(data['mjd'], format='mjd')
-
-            # Get time in MJD for plotting
-            x = data['mjd']
-
-            # Use registry values with defaults
-            mag_col = survey_config.get('lc_mag_column', 'mag_g')
-            err_col = survey_config.get('lc_err_column', 'magerr')
-            filter_col_name = survey_config.get('lc_filter_column')
+            x = np.asarray(data['mjd'], dtype=float)
             color = survey_config.get('lc_color', '#000000')
 
-            y = data[mag_col]
-            dy = data[err_col]
+            for band in surveys.get_source_bands(survey_config):
+                if band['mag'] not in data.colnames or band['err'] not in data.colnames:
+                    # An older file, written before this band existed
+                    continue
 
-            # Handle filters if present
-            if filter_col_name and filter_col_name in data.colnames:
-                filter_col = data[filter_col_name]
-            else:
-                filter_col = np.repeat('', len(data))
+                y = np.asarray(data[band['mag']], dtype=float)
+                dy = np.asarray(data[band['err']], dtype=float)
 
-            # Group by filter
-            unique_filters = np.unique(filter_col)
+                idx = np.isfinite(x) & np.isfinite(y)
 
-            for filt in unique_filters:
-                idx = filter_col == filt
-                idx &= np.isfinite(x)
-                idx &= np.isfinite(y)
+                # A band may occupy only part of the table, selected by the
+                # filter the measurement was taken through
+                fcol = band.get('filter_column')
+                if fcol and band.get('filter_value') is not None:
+                    if fcol not in data.colnames:
+                        continue
+                    idx &= np.asarray(data[fcol]).astype(str) == str(band['filter_value'])
 
                 if not np.sum(idx):
                     continue
 
-                # Create label
                 label = survey_config['short_name']
-                if filt:
-                    label += f' {filt}'
+                if band['label']:
+                    label += f" {band['label']}"
 
-                # Prepare data for this series
                 # Note: datetime conversion moved to frontend for performance
-                # Use numpy array indexing for efficiency
-                series_data = {
+                lightcurve_data.append({
                     'source_id': source_id,
                     'label': label,
-                    'filter': str(filt) if filt else '',
-                    'color': color,
+                    'filter': band['label'],
+                    'kind': band['kind'],
+                    'note': band.get('note') or '',
+                    # Measurements are shown by default; anything reached
+                    # through an assumed colour waits until it is asked for
+                    'default_visible': band['kind'] in surveys.BAND_KINDS_SHOWN,
+                    'color': band.get('color') or color,
                     'mjd': x[idx].tolist(),
                     'mag': y[idx].tolist(),
                     'magerr': dy[idx].tolist(),
                     'n_points': int(np.sum(idx)),
-                }
-
-                lightcurve_data.append(series_data)
+                })
 
         except Exception as e:
             # Skip files that can't be read
@@ -195,6 +187,10 @@ def load_flux_data(basepath):
                     'sector': sector,
                     'author': author,
                     'exptime': exptime,
+                    # TESS fluxes are as measured, only normalized to their median
+                    'kind': surveys.BAND_NATIVE,
+                    'note': '',
+                    'default_visible': True,
                     'color': color,
                     'mjd': x[idx].tolist(),
                     'flux': flux_normalized[idx].tolist(),

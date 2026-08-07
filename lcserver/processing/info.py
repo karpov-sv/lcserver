@@ -19,7 +19,7 @@ from astroquery.simbad import Simbad
 from stdpipe import catalogs, resolve, plots
 
 from ..surveys import survey_source, get_all_output_files
-from .utils import cleanup_paths, cached_votable_query
+from .utils import cleanup_paths, cached_votable_query, log_bands, log_conversion
 
 
 @survey_source(
@@ -300,13 +300,35 @@ def target_info(config, basepath=None, verbose=True, show=False):
         ps1['mag'] = -2.5*np.log10(ps1['psfFlux']) + 8.90 # Janskys to AB?..
         ps1['magerr'] = 2.5/np.log(10)*(ps1['psfFluxErr']/ps1['psfFlux'])
 
-        for fid,fn in [[1, 'g'], [2, 'r'], [3, 'i']]:
+        # Pan-STARRS reports each band on its own scale already, so the bands
+        # are split apart rather than converted into one another
+        ps1_filters = [[1, 'g'], [2, 'r'], [3, 'i'], [4, 'z'], [5, 'y']]
+
+        # Explicit width, so that a band name is never silently truncated
+        ps1['filter'] = np.full(len(ps1), '', dtype='<U2')
+        for fid, fn in ps1_filters:
             idx = ps1['filterID'] == fid
 
             log(f"{fn}: {np.sum(idx)} good points")
 
+            ps1['filter'][idx] = fn
             ps1['mag_' + fn] = np.nan
             ps1['mag_' + fn][idx] = ps1['mag'][idx]
+
+        log_conversion(
+            log, 'Pan-STARRS',
+            'no conversion applied - every band is published as measured',
+            {'colour term': ('none', 'PSF fluxes converted to AB magnitudes only'),
+             'zero point': '-2.5*log10(psfFlux) + 8.90'},
+            npoints=len(ps1),
+        )
+
+        log_bands(log, 'Pan-STARRS', [
+            {'label': fn, 'kind': 'native',
+             'npoints': int(np.sum(ps1['filterID'] == fid)),
+             'note': 'warp photometry, as reported'}
+            for fid, fn in ps1_filters
+        ])
 
         # Color?..
         ig,ir = np.where(ps1['filterID'] == 1)[0], np.where(ps1['filterID'] == 2)[0]
@@ -343,9 +365,16 @@ surveys.register_lightcurve_source(
     name='Pan-STARRS',
     short_name='Pan-STARRS',
     votable_file='ps1.vot',
+    lc_bands=[
+        surveys.band(fn, 'mag_' + fn, 'magerr', surveys.BAND_NATIVE,
+                     filter_column='filter', filter_value=fn, color=color,
+                     note='Pan-STARRS DR2 warp photometry, as reported')
+        for fn, color in [('g', '#2ca02c'), ('r', '#d62728'), ('i', '#9467bd'),
+                          ('z', '#8c564b'), ('y', '#7f7f7f')]
+    ],
     lc_mag_column='mag_g',
     lc_err_column='magerr',
-    lc_filter_column='g',
+    lc_filter_column='filter',
     lc_color='#2ca02c',
     lc_mode='magnitude',
     lc_short=True,

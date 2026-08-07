@@ -16,8 +16,9 @@ import pandas as pd
 # STDPipe
 from stdpipe import plots
 
+from .. import surveys
 from ..surveys import survey_source, get_output_files
-from .utils import cleanup_paths, cached_votable_query
+from .utils import cleanup_paths, cached_votable_query, log_bands, log_conversion
 
 
 # Some convenience code for gaussian process based smoothing of unevenly spaced 1d data
@@ -93,9 +94,27 @@ def gaussian_smoothing(x, y, dy, scale=100, nsteps=1000):
     order=10,
     # Lightcurve metadata
     votable_file='ztf.vot',
+    lc_bands=[
+        # ZTF reports magnitudes in a zero point that moves with the colour of
+        # the star, through the per-epoch clrcoeff, so only these corrected
+        # values are comparable between epochs
+        surveys.band('g', 'mag_g', 'magerr', surveys.BAND_CALIBRATED,
+                     filter_column='filtercode', filter_value='zg',
+                     color='#2ca02c',
+                     note='zg corrected to Pan-STARRS g using the per-epoch clrcoeff'),
+        surveys.band('r', 'mag_r', 'magerr', surveys.BAND_CALIBRATED,
+                     filter_column='filtercode', filter_value='zr',
+                     color='#d62728',
+                     note='zr corrected to Pan-STARRS r using the per-epoch clrcoeff'),
+        # No colour model is reconstructed for i, so these stay as measured
+        surveys.band('i', 'mag_i', 'magerr', surveys.BAND_NATIVE,
+                     filter_column='filtercode', filter_value='zi',
+                     color='#9467bd',
+                     note='zi as reported, with no colour correction applied'),
+    ],
     lc_mag_column='mag_g',
     lc_err_column='magerr',
-    lc_filter_column='zg',
+    lc_filter_column='filtercode',
     lc_color='#ff7f0e',
     lc_mode='magnitude',
     lc_short=True,
@@ -284,6 +303,50 @@ def target_ztf(config, basepath=None, verbose=True, show=False):
         if rms < 1e-4:
             log(f"Converged")
             break
+
+    # ZTF also observes in i on occasion. No colour model is reconstructed for
+    # it, so it is published as measured rather than dropped - under the same
+    # quality cut as the two calibrated bands.
+    ztf['mag_i'] = np.nan
+    idx_i = (ztf['filtercode'] == 'zi') & (ztf['magerr'] < 0.15) & (ztf['catflags'] == 0)
+    ztf['mag_i'][idx_i] = ztf['mag'][idx_i]
+
+    color_model = config.get('ztf_color_model', 'constant')
+    n_g = int(np.sum(np.isfinite(ztf['mag_g'])))
+    n_r = int(np.sum(np.isfinite(ztf['mag_r'])))
+    n_i = int(np.sum(idx_i))
+
+    log_conversion(
+        log, 'ZTF',
+        'mag = mag_ZTF + clrcoeff * (g - r)',
+        {
+            'colour model': (color_model, 'gp = smoothed in time, constant = single median'),
+            'mean (g - r)': float(np.mean(gr(u_mjd))),
+            'clrcoeff': ('per epoch, from the ZTF archive', 'not assumed'),
+            'colour pairs used': len(iig),
+        },
+        npoints=n_g + n_r,
+        note='without this the zero point drifts with the colour of the star, '
+             'so the raw ZTF magnitudes are not published as a band',
+    )
+
+    if n_i:
+        log_conversion(
+            log, 'ZTF',
+            'i = mag_ZTF   (no conversion applied)',
+            {'clrcoeff': ('present in the data but unused', 'no colour model for i')},
+            npoints=n_i,
+            note='published as measured, so the points are not lost',
+        )
+
+    log_bands(log, 'ZTF', [
+        {'label': 'g', 'kind': 'calibrated', 'npoints': n_g,
+         'note': 'zg on the Pan-STARRS g scale'},
+        {'label': 'r', 'kind': 'calibrated', 'npoints': n_r,
+         'note': 'zr on the Pan-STARRS r scale'},
+        {'label': 'i', 'kind': 'native', 'npoints': n_i,
+         'note': 'zi as measured, no colour correction'},
+    ])
 
     # Time cannot be serialized to VOTable
     ztf[[_ for _ in ztf.columns if _ != 'time']].write(os.path.join(basepath, 'ztf.vot'),

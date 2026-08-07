@@ -14,8 +14,9 @@ from astropy.coordinates import SkyCoord
 # STDPipe
 from stdpipe import plots
 
+from .. import surveys
 from ..surveys import survey_source, get_output_files
-from .utils import cleanup_paths, cached_votable_query
+from .utils import cleanup_paths, cached_votable_query, log_bands, log_conversion
 
 
 @survey_source(
@@ -38,6 +39,14 @@ from .utils import cleanup_paths, cached_votable_query
     order=22,
     # Lightcurve metadata
     votable_file='css.vot',
+    lc_bands=[
+        surveys.band('V', 'mag', 'magerr', surveys.BAND_NATIVE,
+                     color='#17becf',
+                     note='as reported by CSS, in its own unfiltered V-like band'),
+        surveys.band('V (corr.)', 'mag_V', 'magerr', surveys.BAND_DERIVED,
+                     color='#9edae5',
+                     note='colour-corrected onto standard V using an assumed B - V'),
+    ],
     lc_mag_column='mag_V',
     lc_err_column='magerr',
     lc_filter_column='filter',
@@ -150,9 +159,29 @@ def target_css(config, basepath=None, verbose=True, show=False):
     # Convert magnitudes
     css['filter'] = 'V'  # CSS uses variant of V band
 
-    # V = V_CSS + 0.31*(B-V)^2 + 0.04 (sigma=0.059)
-    css['mag_V'] = css['mag'] + 0.31*config.get('B_minus_V', 0) + 0.04
+    # V = V_CSS + 0.31*(B-V) + 0.04 (sigma=0.059)
+    B_minus_V = config.get('B_minus_V', 0)
+    css['mag_V'] = css['mag'] + 0.31*B_minus_V + 0.04
     # TODO: g mag?..
+
+    log_conversion(
+        log, 'CSS',
+        'V = V_CSS + 0.31*(B-V) + 0.04',
+        {
+            '(B - V)': (B_minus_V,
+                        'from config' if 'B_minus_V' in config else 'default, no colour known'),
+            'scatter of the relation': 0.059,
+        },
+        npoints=len(css),
+        note='the colour is assumed constant; the native CSS magnitudes are kept as well',
+    )
+
+    log_bands(log, 'CSS', [
+        {'label': 'V', 'kind': 'native', 'npoints': len(css),
+         'note': 'unfiltered CSS magnitudes, as reported'},
+        {'label': 'V (corr.)', 'kind': 'derived', 'npoints': len(css),
+         'note': 'on the standard V scale'},
+    ])
 
     # Add time column
     css['time'] = Time(css['mjd'], format='mjd')

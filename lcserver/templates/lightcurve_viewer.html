@@ -330,15 +330,33 @@ function ensureDatetimes(series) {
     return series._datetimes;
 }
 
+// Marks where a band came from: nothing for a plain measurement, a badge for
+// anything the pipeline had to compute. The note explains the conversion.
+function bandBadge(series) {
+    if (!series.kind || series.kind === 'native')
+        return '';
+
+    const cls = series.kind === 'calibrated' ? 'text-bg-info' : 'text-bg-warning';
+    const text = series.kind === 'calibrated' ? 'calibrated' : 'derived';
+    const title = (series.note || '').replace(/"/g, '&quot;');
+
+    return ` <span class="badge ${cls}" style="font-size: 0.65em; vertical-align: middle;"`
+         + ` title="${title}">${text}</span>`;
+}
+
 // Initialize series state and create controls
 function initializeControls() {
     const container = document.getElementById('source-controls');
     container.innerHTML = '';
 
     lightcurveData.forEach((series, index) => {
+        // Measured bands are on by default; bands obtained through an assumed
+        // colour start hidden, as they are a model rather than a measurement
+        const visible = series.default_visible !== false;
+
         // Initialize state
         seriesState[index] = {
-            visible: true,
+            visible: visible,
             offset: 0,
             markerSize: 4,
             maxError: null,  // null = no filtering
@@ -357,7 +375,7 @@ function initializeControls() {
                 <input type="color" class="color-input" id="color-${index}"
                        value="${series.color}" onchange="updateColor(${index})">
             </div>
-            <div class="source-label">${series.label}</div>
+            <div class="source-label">${series.label}${bandBadge(series)}</div>
             <div class="source-info" id="info-${index}">${series.n_points} points</div>
             <span class="control-label">Offset:</span>
             <input type="number" class="form-control form-control-sm offset-control"
@@ -382,7 +400,7 @@ function initializeControls() {
                    onchange="updateMarkerSize(${index})">
             <div class="form-check form-switch">
                 <input class="form-check-input" type="checkbox"
-                       id="toggle-${index}" checked
+                       id="toggle-${index}" ${visible ? 'checked' : ''}
                        onchange="toggleSeries(${index})">
             </div>
         `;
@@ -1311,6 +1329,11 @@ function resetOffsets() {
         if (maxErrInput) {
             maxErrInput.value = '';
         }
+
+        // Back to showing measurements and hiding what was converted
+        const visible = series.default_visible !== false;
+        seriesState[index].visible = visible;
+        document.getElementById(`toggle-${index}`).checked = visible;
     });
     updatePlot();
 }

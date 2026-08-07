@@ -16,8 +16,9 @@ from astroquery.ipac.irsa import Irsa
 # STDPipe
 from stdpipe import plots
 
+from .. import surveys
 from ..surveys import survey_source, get_output_files
-from .utils import cleanup_paths, cached_votable_query
+from .utils import cleanup_paths, cached_votable_query, log_bands, log_conversion
 
 
 @survey_source(
@@ -32,6 +33,17 @@ from .utils import cleanup_paths, cached_votable_query
     order=11,
     # Lightcurve metadata
     votable_file='ptf.vot',
+    lc_bands=[
+        surveys.band('g', 'mag', 'magerr', surveys.BAND_NATIVE,
+                     filter_column='filter', filter_value='g',
+                     color='#17becf', note='as reported by PTF'),
+        surveys.band('R', 'mag', 'magerr', surveys.BAND_NATIVE,
+                     filter_column='filter', filter_value='R',
+                     color='#bcbd22', note='as reported by PTF'),
+        surveys.band('Ha', 'mag', 'magerr', surveys.BAND_NATIVE,
+                     filter_column='filter', filter_value='Ha',
+                     color='#e377c2', note='as reported by PTF'),
+    ],
     lc_mag_column='mag',
     lc_err_column='magerr',
     lc_filter_column='filter',
@@ -134,6 +146,20 @@ def target_ptf(config, basepath=None, verbose=True, show=False):
     ptf = ptf[ptf['magerr'] < 1.0]
 
     log(f"{len(ptf)} data points after error filtering")
+
+    log_conversion(
+        log, 'PTF',
+        'no conversion applied - each band is published as measured',
+        {'colour term': ('none', 'aperture-corrected magnitudes from the PTF archive')},
+        npoints=len(ptf),
+    )
+
+    log_bands(log, 'PTF', [
+        {'label': str(fn), 'kind': 'native',
+         'npoints': int(np.sum(ptf['filter'] == fn)),
+         'note': 'as reported by PTF'}
+        for fn in np.unique(ptf['filter'])
+    ])
 
     if not len(ptf):
         log("No valid PTF data points after filtering")

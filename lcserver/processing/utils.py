@@ -206,3 +206,66 @@ def pickle_from_file(filename):
     """Load object from pickle file."""
     with open(filename, 'rb') as f:
         return pickle.load(f)
+
+
+def log_bands(verbose, source, bands):
+    """Report which bands a source is publishing, and where each comes from.
+
+    Called once per source, after the columns have been filled in, so that the
+    log says plainly what is a measurement and what is a model.
+    """
+    log = verbose if callable(verbose) else (print if verbose else lambda *a, **kw: None)
+
+    log("\n---- Bands published ----\n")
+    for b in bands:
+        n = b.get('npoints')
+        log(f"  {source} {b['label']:<4s} [{b['kind']}]"
+            + (f"  {n} points" if n is not None else '')
+            + (f"  - {b['note']}" if b.get('note') else ''))
+
+
+def log_conversion(verbose, source, formula, params=None, npoints=None, note=None):
+    """Report a photometric conversion and every parameter that went into it.
+
+    Anything that changes the magnitudes - a colour term, an assumed colour, a
+    polynomial fit - is printed here, so that a light curve can be traced back
+    to the numbers that produced it.
+
+    Parameters
+    ----------
+    verbose : callable or bool
+        The usual logging callable of the processing functions.
+    source : str
+        Survey name, for the heading.
+    formula : str
+        Human-readable formula, e.g. 'g = V + 0.02 + 0.498*(g-r) + ...'.
+    params : dict, optional
+        Parameter values, mapped to either the value itself or a
+        (value, origin) pair - the origin saying where the number came from.
+    npoints : int, optional
+        How many points the conversion was applied to.
+    note : str, optional
+        Any caveat worth stating, e.g. that a colour is assumed constant.
+    """
+    log = verbose if callable(verbose) else (print if verbose else lambda *a, **kw: None)
+
+    log(f"\n---- {source}: photometric conversion ----\n")
+    log(f"  {formula}")
+
+    for key, value in (params or {}).items():
+        if isinstance(value, tuple) and len(value) == 2:
+            value, origin = value
+            origin = f"  [{origin}]"
+        else:
+            origin = ''
+
+        if isinstance(value, float):
+            log(f"    {key} = {value:.4f}{origin}")
+        else:
+            log(f"    {key} = {value}{origin}")
+
+    if npoints is not None:
+        log(f"  applied to {npoints} points")
+
+    if note:
+        log(f"  note: {note}")

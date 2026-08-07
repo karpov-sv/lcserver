@@ -14,8 +14,9 @@ from pyasassn.client import SkyPatrolClient
 # STDPipe
 from stdpipe import plots
 
+from .. import surveys
 from ..surveys import survey_source, get_output_files
-from .utils import cleanup_paths, cached_votable_query
+from .utils import cleanup_paths, cached_votable_query, log_bands, log_conversion
 
 
 @survey_source(
@@ -30,6 +31,18 @@ from .utils import cleanup_paths, cached_votable_query
     order=20,
     # Lightcurve metadata
     votable_file='asas.vot',
+    lc_bands=[
+        surveys.band('V', 'mag_V', 'mag_err', surveys.BAND_NATIVE,
+                     filter_column='phot_filter', filter_value='V',
+                     color='#1f77b4', note='as reported by ASAS-SN'),
+        surveys.band('g', 'mag_g_nat', 'mag_err', surveys.BAND_NATIVE,
+                     filter_column='phot_filter', filter_value='g',
+                     color='#17becf', note='as reported by ASAS-SN'),
+        surveys.band('g (conv.)', 'mag_g', 'mag_err', surveys.BAND_DERIVED,
+                     color='#9edae5',
+                     note='V and g put on a common g scale using an assumed g - r'),
+    ],
+    # The combined light curve wants everything on one scale
     lc_mag_column='mag_g',
     lc_err_column='mag_err',
     lc_filter_column='phot_filter',
@@ -118,11 +131,13 @@ def target_asas(config, basepath=None, verbose=True, show=False):
     asas['time'] = Time(asas['jd'], format='jd')
     asas['mjd'] = asas['time'].mjd
 
+    # Native measurements, kept per band, and the common g scale built from them
     asas['mag_V'] = np.nan
+    asas['mag_g_nat'] = np.nan
     asas['mag_g'] = np.nan
 
     g_minus_r = config.get('g_minus_r', 0.0)
-    log(f"Will use (g - r) = {g_minus_r:.2f} for converting V to g magnitudes")
+    g_minus_r_origin = 'from config' if 'g_minus_r' in config else 'default, no colour known'
 
     # Plot lightcurve
     with plots.figure_saver(os.path.join(basepath, 'asas_lc.png'), figsize=(12, 4), show=show) as fig:
@@ -132,16 +147,42 @@ def target_asas(config, basepath=None, verbose=True, show=False):
         idx &= np.isfinite(asas['mag'])
         idx &= asas['mag_err'] < 0.05
 
-        idx1 = idx & (asas['phot_filter'] == 'V')
-        asas['mag_V'][idx1] = asas['mag'][idx1]
-        asas['mag_g'][idx1] = asas['mag'][idx1] + 0.02 + 0.498*g_minus_r + 0.008*g_minus_r**2
+        idx_V = idx & (asas['phot_filter'] == 'V')
+        idx_g = idx & (asas['phot_filter'] == 'g')
 
-        ax.errorbar(asas[idx1]['time'].datetime, asas[idx1]['mag_g'], asas[idx1]['mag_err'], fmt='.', label='V conv. to g')
+        # Native magnitudes, exactly as ASAS-SN reports them
+        asas['mag_V'][idx_V] = asas['mag'][idx_V]
+        asas['mag_g_nat'][idx_g] = asas['mag'][idx_g]
 
-        idx1 = idx & (asas['phot_filter'] == 'g')
-        asas['mag_g'][idx1] = asas['mag'][idx1] - 0.013 - 0.145*g_minus_r - 0.019*g_minus_r**2
+        # ... and the same points carried onto a common g scale
+        asas['mag_g'][idx_V] = asas['mag'][idx_V] + 0.02 + 0.498*g_minus_r + 0.008*g_minus_r**2
+        asas['mag_g'][idx_g] = asas['mag'][idx_g] - 0.013 - 0.145*g_minus_r - 0.019*g_minus_r**2
 
-        ax.errorbar(asas[idx1]['time'].datetime, asas[idx1]['mag_g'], asas[idx1]['mag_err'], fmt='.', label='g')
+        log_conversion(
+            log, 'ASAS-SN',
+            'g = V + 0.02 + 0.498*(g-r) + 0.008*(g-r)^2',
+            {'(g - r)': (g_minus_r, g_minus_r_origin)},
+            npoints=int(np.sum(idx_V)),
+            note='the colour is assumed constant over the whole light curve',
+        )
+        log_conversion(
+            log, 'ASAS-SN',
+            'g = g_ASAS - 0.013 - 0.145*(g-r) - 0.019*(g-r)^2',
+            {'(g - r)': (g_minus_r, g_minus_r_origin)},
+            npoints=int(np.sum(idx_g)),
+        )
+
+        ax.errorbar(asas[idx_V]['time'].datetime, asas[idx_V]['mag_g'], asas[idx_V]['mag_err'], fmt='.', label='V conv. to g')
+        ax.errorbar(asas[idx_g]['time'].datetime, asas[idx_g]['mag_g'], asas[idx_g]['mag_err'], fmt='.', label='g')
+
+        log_bands(log, 'ASAS-SN', [
+            {'label': 'V', 'kind': 'native', 'npoints': int(np.sum(idx_V)),
+             'note': 'as reported by ASAS-SN'},
+            {'label': 'g', 'kind': 'native', 'npoints': int(np.sum(idx_g)),
+             'note': 'as reported by ASAS-SN'},
+            {'label': 'g (conv.)', 'kind': 'derived', 'npoints': int(np.sum(idx_V | idx_g)),
+             'note': 'both bands on the common g scale'},
+        ])
 
         ax.invert_yaxis()
         ax.grid(alpha=0.2)

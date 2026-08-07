@@ -16,8 +16,9 @@ from astropy.time import Time
 # STDPipe
 from stdpipe import plots
 
+from .. import surveys
 from ..surveys import survey_source, get_output_files
-from .utils import cleanup_paths, cached_votable_query
+from .utils import cleanup_paths, cached_votable_query, log_bands, log_conversion
 
 
 @survey_source(
@@ -32,6 +33,11 @@ from .utils import cleanup_paths, cached_votable_query
     order=40,
     # Lightcurve metadata
     votable_file='dasch.vot',
+    lc_bands=[
+        surveys.band('phot', 'magcal_magdep', 'magerr', surveys.BAND_NATIVE,
+                     color='#d62728',
+                     note='DASCH calibrated photographic magnitudes, as reported'),
+    ],
     lc_mag_column='mag_g',
     lc_err_column='magerr',
     lc_color='#d62728',
@@ -199,8 +205,26 @@ def target_dasch(config, basepath=None, verbose=True, show=False):
     # dasch = dasch[dasch['magcal_local_rms'] < 0.33]
     # dasch = dasch[dasch['magcal_magdep'] < dasch['limiting_mag_local'] - 0.2]
 
-    dasch['mag_g'] = dasch['magcal_magdep']
     dasch['magerr'] = dasch['magcal_local_rms']
+
+    # No conversion is available for the photographic plates, so the common
+    # g column is the native magnitude under another name. Said plainly here,
+    # because the name would otherwise suggest a conversion that never happened.
+    dasch['mag_g'] = dasch['magcal_magdep']
+
+    log_conversion(
+        log, 'DASCH',
+        'g = magcal_magdep   (no conversion applied)',
+        {'colour term': ('none available', 'photographic plates, blue-sensitive')},
+        npoints=len(dasch),
+        note='the photographic band is closer to B than to g; the combined light '
+             'curve uses these magnitudes unchanged',
+    )
+
+    log_bands(log, 'DASCH', [
+        {'label': 'phot', 'kind': 'native', 'npoints': len(dasch),
+         'note': 'calibrated photographic magnitudes'},
+    ])
 
     log(f"{len(dasch)} data points after filtering")
     if not len(dasch):

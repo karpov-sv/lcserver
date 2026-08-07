@@ -12,6 +12,60 @@ Adding a new survey source requires:
 SURVEY_SOURCES = {}
 
 
+# How a band relates to what the telescope actually measured.
+#
+#   native      - the measurement as the survey reports it, in its own band.
+#                 Always preferred for display, and shown by default.
+#   calibrated  - the survey's raw magnitudes sit in a zero point that moves
+#                 with the colour of the star (ZTF's per-epoch clrcoeff, the
+#                 per-plate colour term of APPLAUSE), so they are only
+#                 comparable between epochs after the correction. Shown by
+#                 default, as the raw values would be misleading.
+#   derived     - obtained from another band through an assumed, constant
+#                 colour. Useful for stitching surveys onto one scale, but it
+#                 is a model rather than a measurement, so it is hidden until
+#                 asked for.
+BAND_NATIVE = 'native'
+BAND_CALIBRATED = 'calibrated'
+BAND_DERIVED = 'derived'
+
+# The kinds a viewer shows unless the user says otherwise
+BAND_KINDS_SHOWN = (BAND_NATIVE, BAND_CALIBRATED)
+
+
+def band(label, mag, err, kind=BAND_NATIVE, filter_column=None, filter_value=None,
+         color=None, note=None):
+    """One displayable band of a source.
+
+    Parameters
+    ----------
+    label : str
+        Band name, appended to the source name to label the series ('V', 'g').
+    mag, err : str
+        Columns holding the magnitude and its uncertainty.
+    kind : str
+        One of BAND_NATIVE, BAND_CALIBRATED, BAND_DERIVED - see above.
+    filter_column, filter_value : str, optional
+        Column to select this band's rows by, and the value to match. Omitted
+        when the whole table belongs to a single band.
+    color : str, optional
+        Plotly colour. Falls back to the colour of the source.
+    note : str, optional
+        Short description of where a calibrated or derived band comes from,
+        shown to the user next to the series.
+    """
+    return {
+        'label': label,
+        'mag': mag,
+        'err': err,
+        'kind': kind,
+        'filter_column': filter_column,
+        'filter_value': filter_value,
+        'color': color,
+        'note': note,
+    }
+
+
 def survey_source(
     name,
     short_name,
@@ -26,7 +80,8 @@ def survey_source(
     order=50,
     # Lightcurve metadata
     votable_file=None,
-    lc_mag_column=None,
+    lc_bands=None,        # List of band() entries - what the viewer displays
+    lc_mag_column=None,   # Column the combined g-band light curve is built from
     lc_err_column=None,
     lc_filter_column=None,
     lc_flux_column=None,
@@ -104,8 +159,15 @@ def survey_source(
         Display order (default: 50)
     votable_file : str, optional
         VOTable filename or pattern (e.g., 'ztf.vot' or 'tess_lc_*.vot')
+    lc_bands : list, optional
+        Bands the light curve viewer offers for this source, as band() entries.
+        A source keeps every band it measures, so that the original photometry
+        stays reachable; conversions between bands are additional entries of
+        kind BAND_DERIVED rather than replacements.
     lc_mag_column : str, optional
-        Column name for magnitude (default: None)
+        Column the combined multi-survey light curve is built from - the one
+        converted to the common g scale where a conversion exists. Display goes
+        through lc_bands instead. (default: None)
     lc_err_column : str, optional
         Column name for error (default: None)
     lc_filter_column : str, optional
@@ -145,6 +207,7 @@ def survey_source(
             'order': order,
             # Lightcurve metadata
             'votable_file': votable_file,
+            'lc_bands': lc_bands or [],
             'lc_mag_column': lc_mag_column,
             'lc_err_column': lc_err_column,
             'lc_filter_column': lc_filter_column,
@@ -189,6 +252,7 @@ def register_lightcurve_source(
     name,
     short_name,
     votable_file,
+    lc_bands=None,
     lc_mag_column='mag_g',
     lc_err_column='magerr',
     lc_filter_column=None,
@@ -258,6 +322,7 @@ def register_lightcurve_source(
         'state_acquired': None,
         'log_file': None,
         'output_files': [],
+        'lc_bands': lc_bands or [],
         'button_text': None,
         'button_class': None,
         'form_fields': {},
@@ -351,3 +416,22 @@ def get_all_output_files(cache=False):
     all_files.extend(['galaxy_map.png'])
 
     return all_files
+
+
+def get_source_bands(config):
+    """Bands a source publishes, for display.
+
+    Sources that have not declared any fall back to the single column the
+    combined light curve is built from, which reproduces the earlier
+    behaviour of showing one series per source.
+    """
+    bands = config.get('lc_bands')
+    if bands:
+        return bands
+
+    mag = config.get('lc_mag_column')
+    err = config.get('lc_err_column')
+    if not mag or not err:
+        return []
+
+    return [band('', mag, err, BAND_NATIVE, color=config.get('lc_color'))]

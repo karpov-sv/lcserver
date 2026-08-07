@@ -13,8 +13,9 @@ from astropy.time import Time
 # STDPipe
 from stdpipe import plots
 
+from .. import surveys
 from ..surveys import survey_source, get_output_files
-from .utils import cleanup_paths, cached_votable_query
+from .utils import cleanup_paths, cached_votable_query, log_bands, log_conversion
 
 
 @survey_source(
@@ -37,8 +38,15 @@ from .utils import cleanup_paths, cached_votable_query
     order=60,
     # Lightcurve metadata
     votable_file='mmt9.vot',
+    lc_bands=[
+        surveys.band('V', 'mag', 'magerr', surveys.BAND_NATIVE,
+                     filter_column='filter', filter_value='V',
+                     color='#8c564b',
+                     note='as reported by Mini-MegaTORTORA'),
+    ],
     lc_mag_column='mag',
     lc_err_column='magerr',
+    lc_filter_column='filter',
     lc_color='#8c564b',
     lc_mode='magnitude',
     lc_short=False,
@@ -143,6 +151,18 @@ def target_mmt9(config, basepath=None, verbose=True, show=False):
     mmt9 = mmt9[mmt9['magerr'] < 1.0]  # Filter out large errors
 
     mmt9['filter'] = 'V'
+
+    log_conversion(
+        log, 'MMT9',
+        'V = V_MMT9   (no conversion applied)',
+        {'colour term': ('none', 'white-light channel calibrated against V')},
+        npoints=len(mmt9),
+    )
+
+    log_bands(log, 'MMT9', [
+        {'label': 'V', 'kind': 'native', 'npoints': len(mmt9),
+         'note': 'as reported by Mini-MegaTORTORA'},
+    ])
 
     log(f"{len(mmt9)} data points after filtering")
     if not len(mmt9):

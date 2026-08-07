@@ -16,8 +16,9 @@ import pyvo as vo
 # STDPipe
 from stdpipe import plots
 
+from .. import surveys
 from ..surveys import survey_source, get_output_files
-from .utils import cleanup_paths, parse_votable_lenient, cached_votable_query
+from .utils import cleanup_paths, parse_votable_lenient, cached_votable_query, log_bands, log_conversion
 
 
 @survey_source(
@@ -32,6 +33,19 @@ from .utils import cleanup_paths, parse_votable_lenient, cached_votable_query
     order=50,
     # Lightcurve metadata
     votable_file='applause.vot',
+    lc_bands=[
+        # The plates carry a per-plate colour term, so the natural magnitudes
+        # are only comparable between plates once it has been taken out
+        surveys.band('RP', 'mag_RP', 'magerr', surveys.BAND_CALIBRATED,
+                     color='#8c564b',
+                     note='natural plate magnitudes with the per-plate colour term removed'),
+        surveys.band('g (conv.)', 'mag_g', 'magerr', surveys.BAND_DERIVED,
+                     color='#c49c94',
+                     note='from RP through an assumed constant BP - RP and g - r'),
+        surveys.band('r (conv.)', 'mag_r', 'magerr', surveys.BAND_DERIVED,
+                     color='#e7969c',
+                     note='from RP through an assumed constant BP - RP and g - r'),
+    ],
     lc_mag_column='mag_g',
     lc_err_column='magerr',
     lc_color='#9467bd',
@@ -135,6 +149,19 @@ def target_applause(config, basepath=None, verbose=True, show=False):
 
     log(f"Using BP - RP = {BP_minus_RP:.2f} for converting natural magnitudes to Gaia Gmag")
 
+    log_conversion(
+        log, 'APPLAUSE',
+        'RP = natmag - (BP - RP) * color_term',
+        {
+            '(BP - RP)': (float(BP_minus_RP),
+                          'from config' if 'BP_minus_RP' in config
+                          else 'median of the Gaia EDR3 colours of the matched stars'),
+            'color_term': ('per plate, from the APPLAUSE archive', 'not assumed'),
+        },
+        npoints=len(applause),
+        note='without this the plate zero points drift with the colour of the star',
+    )
+
     RPmag = applause['natmag'] - BP_minus_RP*applause['color_term']
     BPmag = RPmag + BP_minus_RP # assuming constant color
     # Simple one-color fits based on Landolt standards
@@ -146,6 +173,29 @@ def target_applause(config, basepath=None, verbose=True, show=False):
 
     applause['mag_g'] = gmag
     applause['mag_r'] = rmag
+
+    log_conversion(
+        log, 'APPLAUSE',
+        'BP = RP + (BP - RP);  g = BP - poly_g(g-r);  r = BP - poly_r(g-r)',
+        {
+            '(BP - RP)': (float(BP_minus_RP), 'assumed constant in time'),
+            '(g - r)': (g_minus_r,
+                        'from config' if 'g_minus_r' in config else 'default, no colour known'),
+            'poly_g': '[-0.11445, -0.20379, 0.04994]  (Landolt standards)',
+            'poly_r': '[-0.13190, 0.82139, 0.04388]  (Landolt standards)',
+        },
+        npoints=len(applause),
+        note='a model rather than a measurement - RP above is the calibrated quantity',
+    )
+
+    log_bands(log, 'APPLAUSE', [
+        {'label': 'RP', 'kind': 'calibrated', 'npoints': len(applause),
+         'note': 'colour term removed'},
+        {'label': 'g (conv.)', 'kind': 'derived', 'npoints': len(applause),
+         'note': 'assumes a constant colour'},
+        {'label': 'r (conv.)', 'kind': 'derived', 'npoints': len(applause),
+         'note': 'assumes a constant colour'},
+    ])
 
     # Plot lightcurve
     with plots.figure_saver(os.path.join(basepath, 'applause_lc.png'), figsize=(12, 4), show=show) as fig:

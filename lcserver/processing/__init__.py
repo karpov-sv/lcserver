@@ -26,6 +26,8 @@ from .utils import (
     pickle_to_file,
     pickle_from_file,
     cached_votable_query,
+    log_bands,
+    log_conversion,
 )
 
 # Import all processing functions

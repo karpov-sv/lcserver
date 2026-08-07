@@ -13,8 +13,9 @@ from astropy.time import Time
 # STDPipe
 from stdpipe import plots
 
+from .. import surveys
 from ..surveys import survey_source, get_output_files
-from .utils import cleanup_paths, cached_votable_query
+from .utils import cleanup_paths, cached_votable_query, log_bands, log_conversion
 
 
 @survey_source(
@@ -29,6 +30,13 @@ from .utils import cleanup_paths, cached_votable_query
     order=23,
     # Lightcurve metadata
     votable_file='kws.vot',
+    lc_bands=[
+        # KWS observes in V, Ic and B, each on its own scale and none converted
+        surveys.band(fn, 'mag', 'magerr', surveys.BAND_NATIVE,
+                     filter_column='filter', filter_value=fn, color=color,
+                     note='as reported by KWS')
+        for fn, color in [('V', '#e377c2'), ('Ic', '#8c564b'), ('B', '#1f77b4')]
+    ],
     lc_mag_column='mag',
     lc_err_column='magerr',
     lc_filter_column='filter',
@@ -158,8 +166,28 @@ def target_kws(config, basepath=None, verbose=True, show=False):
     # Sort by time
     kws.sort('mjd')
 
-    # Standardize magnitude column name for compatibility
-    kws['mag_V'] = kws['mag']  # KWS typically uses V-band equivalent
+    # Kept for compatibility, but only the V measurements belong in it - it
+    # used to hold every band's magnitudes under a V label
+    kws['mag_V'] = np.nan
+    idx_V = kws['filter'] == 'V'
+    kws['mag_V'][idx_V] = kws['mag'][idx_V]
+
+    kws_filters = [str(_) for _ in np.unique(kws['filter'])]
+
+    log_conversion(
+        log, 'KWS',
+        'no conversion applied - each band is published as measured',
+        {'colour term': ('none', 'KWS reports standard V, Ic and B magnitudes'),
+         'bands present': ', '.join(kws_filters)},
+        npoints=len(kws),
+    )
+
+    log_bands(log, 'KWS', [
+        {'label': fn, 'kind': 'native',
+         'npoints': int(np.sum(kws['filter'] == fn)),
+         'note': 'as reported by KWS'}
+        for fn in kws_filters
+    ])
 
     # Plot lightcurve
     with plots.figure_saver(os.path.join(basepath, 'kws_lc.png'), figsize=(12, 4), show=show) as fig:
