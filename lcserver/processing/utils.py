@@ -217,15 +217,20 @@ def pickle_from_file(filename):
         return pickle.load(f)
 
 
-def log_bands(verbose, source, bands):
+def log_bands(verbose, source, bands, heading=True):
     """Report which bands a source is publishing, and where each comes from.
 
     Called once per source, after the columns have been filled in, so that the
     log says plainly what is a measurement and what is a model.
+
+    Sources with a log of their own get a heading; those writing into a shared
+    log, where the section above already names them, pass heading=False rather
+    than nesting one heading inside another.
     """
     log = verbose if callable(verbose) else (print if verbose else lambda *a, **kw: None)
 
-    log("\n---- Bands published ----\n")
+    if heading:
+        log("\n---- Bands published ----\n")
     for b in bands:
         n = b.get('npoints')
         log(f"  {source} {b['label']:<4s} [{b['kind']}]"
@@ -233,7 +238,8 @@ def log_bands(verbose, source, bands):
             + (f"  - {b['note']}" if b.get('note') else ''))
 
 
-def log_conversion(verbose, source, formula, params=None, npoints=None, note=None):
+def log_conversion(verbose, source, formula, params=None, npoints=None, note=None,
+                   heading=True):
     """Report a photometric conversion and every parameter that went into it.
 
     Anything that changes the magnitudes - a colour term, an assumed colour, a
@@ -255,10 +261,14 @@ def log_conversion(verbose, source, formula, params=None, npoints=None, note=Non
         How many points the conversion was applied to.
     note : str, optional
         Any caveat worth stating, e.g. that a colour is assumed constant.
+    heading : bool, optional
+        Whether to head the block. Sources writing into a shared log, already
+        under a heading naming them, pass False.
     """
     log = verbose if callable(verbose) else (print if verbose else lambda *a, **kw: None)
 
-    log(f"\n---- {source}: photometric conversion ----\n")
+    if heading:
+        log(f"\n---- {source}: photometric conversion ----\n")
     log(f"  {formula}")
 
     for key, value in (params or {}).items():

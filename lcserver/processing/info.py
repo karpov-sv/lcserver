@@ -22,13 +22,29 @@ from ..surveys import survey_source, get_all_output_files
 from .utils import cleanup_paths, cached_votable_query, log_bands, log_conversion
 
 
+# Gaia timestamps are barycentric JD in TCB, counted from 2010-01-01
+GAIA_MJD0 = 2455197.5 - 2400000.5
+
+# Cone radius for the epoch photometry, in arcsec
+GAIA_EPPHOT_SR = 5.0
+
+# Per band: name, and the columns holding its time, magnitude, flux, flux error
+# and the flag raised when the variability analysis rejected the measurement
+GAIA_EPPHOT_BANDS = [
+    ('G',  'TimeG',  'Gmag',  'FG',  'e_FG',  'GrVFlag'),
+    ('BP', 'TimeBP', 'BPmag', 'FBP', 'e_FBP', 'BPrVFlag'),
+    ('RP', 'TimeRP', 'RPmag', 'FRP', 'e_FRP', 'RPrVFlag'),
+]
+
+
 @survey_source(
     name='Target Info',
     short_name='Info',
     state_acquiring='acquiring info',
     state_acquired='info acquired',
     log_file='info.log',
-    output_files=['info.log', 'galaxy_map.png', 'ps1.vot', 'ps1.txt'],
+    output_files=['info.log', 'galaxy_map.png', 'ps1.vot', 'ps1.txt',
+                  'gaia.vot', 'gaia.txt'],
     button_text='Get Target Info',
     button_class='btn-info',
     help_text='Resolve target coordinates and fetch catalog photometry',
@@ -122,6 +138,10 @@ def target_info(config, basepath=None, verbose=True, show=False):
         dec = config.get('target_dec')
         cache_name = f"{catname}_{ra:.4f}_{dec:.4f}.vot"
 
+        # Before the query, so that the line reporting where the data came from
+        # falls under the heading of the catalogue it belongs to
+        log(f"\n---- {catalogs.catalogs[catname]['name']} ----\n")
+
         with cached_votable_query(cache_name, basepath, log, catalogs.catalogs[catname]['name'], refresh=refresh_cache) as cache:
             if not cache.hit:
                 # Query catalog - only if not cached
@@ -135,15 +155,21 @@ def target_info(config, basepath=None, verbose=True, show=False):
                 cat = cache.data
 
         if not cat or not len(cat):
+            log("Nothing found")
             continue
-
-        log(f"\n---- {catalogs.catalogs[catname]['name']} ----\n")
 
         star = dict(cat[cat['_r'] == np.min(cat['_r'])][0])
 
+        nmags = 0
         for fn in ['B', 'V', 'R', 'I', 'g', 'r', 'i', 'z']:
             if star.get(f'{fn}mag'):
                 log(f"{fn} = {star[f'{fn}mag']:.2f} +/- {star[f'e_{fn}mag']:.2f}")
+                nmags += 1
+
+        # A match with none of the bands we look at would otherwise leave the
+        # section looking as though something had gone wrong
+        if not nmags:
+            log(f"Matched a source, but it carries none of the magnitudes we use")
 
         if star.get('Bmag') and star.get('Vmag'):
             B_minus_V = star['Bmag'] - star['Vmag']
@@ -167,6 +193,8 @@ def target_info(config, basepath=None, verbose=True, show=False):
     dec = config.get('target_dec')
     cache_name = f"gaiadr3_phot_{ra:.4f}_{dec:.4f}.vot"
 
+    log(f"\n---- Gaia DR3 ----\n")
+
     with cached_votable_query(cache_name, basepath, log, 'Gaia DR3 photometry', refresh=refresh_cache) as cache:
         if not cache.hit:
             # Query Gaia DR3 - only if not cached
@@ -184,8 +212,6 @@ def target_info(config, basepath=None, verbose=True, show=False):
     if cat:
         star = dict(cat[cat['_r'] == np.min(cat['_r'])][0])
 
-        log(f"\n---- Gaia DR3 ----\n")
-
         for fn in ['G', 'BP', 'RP']:
             if star.get(f'{fn}mag'):
                 log(f"{fn} = {star[f'{fn}mag']:.2f} +/- {star[f'e_{fn}mag']:.2f}")
@@ -201,6 +227,8 @@ def target_info(config, basepath=None, verbose=True, show=False):
     ra = config.get('target_ra')
     dec = config.get('target_dec')
     cache_name = f"gaiadr3_dist_{ra:.4f}_{dec:.4f}.vot"
+
+    log(f"\n---- Gaia DR3 distances ----\n")
 
     with cached_votable_query(cache_name, basepath, log, 'Gaia DR3 distances', refresh=refresh_cache) as cache:
         if not cache.hit:
@@ -325,6 +353,7 @@ def target_info(config, basepath=None, verbose=True, show=False):
             {'colour term': ('none', 'PSF fluxes converted to AB magnitudes only'),
              'zero point': '-2.5*log10(psfFlux) + 8.90'},
             npoints=len(ps1),
+            heading=False,
         )
 
         log_bands(log, 'Pan-STARRS', [
@@ -332,7 +361,7 @@ def target_info(config, basepath=None, verbose=True, show=False):
              'npoints': int(np.sum(ps1['filterID'] == fid)),
              'note': 'warp photometry, as reported'}
             for fid, fn in ps1_filters
-        ])
+        ], heading=False)
 
         # Color?..
         ig,ir = np.where(ps1['filterID'] == 1)[0], np.where(ps1['filterID'] == 2)[0]
@@ -359,6 +388,109 @@ def target_info(config, basepath=None, verbose=True, show=False):
     else:
         log("No Pan-STARRS DR2 warp data found")
 
+    # Gaia DR3 epoch photometry
+    log("\n---- Gaia DR3 epoch photometry ----\n")
+
+    cache_name = f"gaiadr3_epphot_{ra:.4f}_{dec:.4f}.vot"
+
+    with cached_votable_query(cache_name, basepath, log, 'Gaia DR3 epoch photometry',
+                              refresh=refresh_cache) as cache:
+        if not cache.hit:
+            try:
+                # Published for the sources Gaia flags as variable, so most
+                # targets have none of it
+                epphot = catalogs.get_cat_vizier(ra, dec, GAIA_EPPHOT_SR/3600,
+                                                 'I/355/epphot',
+                                                 augment_bands=False, verbose=False)
+                if epphot and len(epphot):
+                    cache.save(epphot)
+                else:
+                    epphot = None
+            except:
+                import traceback
+                traceback.print_exc()
+                log("Error while downloading the data")
+                epphot = None
+        else:
+            epphot = cache.data
+
+    if epphot and len(epphot):
+        # A cone of a few arcsec may still catch a neighbour, and mixing two
+        # stars' transits would be worse than missing one
+        sources = np.unique(epphot['Source'])
+        if len(sources) > 1:
+            dist = np.hypot((np.asarray(epphot['RA_ICRS'], float) - ra)
+                            * np.cos(np.deg2rad(dec)),
+                            np.asarray(epphot['DE_ICRS'], float) - dec)
+            closest = epphot['Source'][np.argmin(dist)]
+            log(f"{len(sources)} Gaia sources within {GAIA_EPPHOT_SR:.0f} arcsec, "
+                f"keeping the closest one ({closest})")
+            epphot = epphot[epphot['Source'] == closest]
+
+        # Gaia gives one row per transit, carrying a time and a magnitude for
+        # each band at once. Unpacked here into one row per measurement, the way
+        # every other source is stored.
+        mjd, mag, magerr, filt, transit = [], [], [], [], []
+
+        for band, tcol, mcol, fcol, ecol, rcol in GAIA_EPPHOT_BANDS:
+            t_ = np.asarray(epphot[tcol], float)
+            m_ = np.asarray(epphot[mcol], float)
+            f_ = np.asarray(epphot[fcol], float)
+            e_ = np.asarray(epphot[ecol], float)
+            rejected = np.asarray(epphot[rcol]).astype(int) != 0
+
+            idx = np.isfinite(t_) & np.isfinite(m_) & np.isfinite(f_) & (f_ > 0)
+
+            log(f"{band}: {int(np.sum(idx))} epochs"
+                + (f", {int(np.sum(idx & rejected))} rejected by Gaia"
+                   if np.any(idx & rejected) else ''))
+
+            idx &= ~rejected
+
+            mjd.append(t_[idx] + GAIA_MJD0)
+            mag.append(m_[idx])
+            # Gaia quotes fluxes and their errors rather than magnitude errors
+            magerr.append(2.5/np.log(10) * e_[idx]/f_[idx])
+            filt.append(np.full(int(np.sum(idx)), band, dtype='<U2'))
+            transit.append(np.asarray(epphot['TransitID'])[idx])
+
+        gaia = Table({
+            'mjd': np.concatenate(mjd),
+            'mag': np.concatenate(mag),
+            'magerr': np.concatenate(magerr),
+            'filter': np.concatenate(filt),
+            'TransitID': np.concatenate(transit),
+        })
+        gaia.sort('mjd')
+
+        if len(gaia):
+            log_conversion(
+                log, 'Gaia DR3',
+                'no conversion applied - each band is published as measured',
+                {'colour term': ('none', 'G, BP and RP are already on the Gaia scale'),
+                 'magnitude error': '2.5/ln(10) * e_F/F, as Gaia quotes fluxes'},
+                npoints=len(gaia),
+                heading=False,
+            )
+
+            log_bands(log, 'Gaia DR3', [
+                {'label': band, 'kind': 'native',
+                 'npoints': int(np.sum(gaia['filter'] == band)),
+                 'note': 'per-transit photometry, as reported'}
+                for band, *_ in GAIA_EPPHOT_BANDS
+            ], heading=False)
+
+            gaia.write(os.path.join(basepath, 'gaia.vot'), format='votable', overwrite=True)
+            gaia.write(os.path.join(basepath, 'gaia.txt'), format='ascii.commented_header', overwrite=True)
+            log("Gaia DR3 epoch photometry written to file:gaia.vot")
+            log("Gaia DR3 epoch photometry written to file:gaia.txt")
+        else:
+            log("No usable Gaia DR3 epoch photometry")
+
+    else:
+        log("No Gaia DR3 epoch photometry found - it is published only for the "
+            "sources Gaia treats as variable")
+
 
 # Register lightcurve-only sources (no processing function)
 # These sources have data files but no automated acquisition
@@ -380,6 +512,25 @@ surveys.register_lightcurve_source(
     lc_err_column='magerr',
     lc_filter_column='filter',
     lc_color='#2ca02c',
+    lc_mode='magnitude',
+    lc_short=True,
+)
+
+surveys.register_lightcurve_source(
+    source_id='gaia',
+    name='Gaia DR3',
+    short_name='Gaia',
+    votable_file='gaia.vot',
+    lc_bands=[
+        surveys.band(band, 'mag', 'magerr', surveys.BAND_NATIVE,
+                     filter_column='filter', filter_value=band, color=color,
+                     note='Gaia DR3 per-transit photometry, as reported')
+        for band, color in [('G', '#333333'), ('BP', '#1f77b4'), ('RP', '#d62728')]
+    ],
+    lc_mag_column='mag',
+    lc_err_column='magerr',
+    lc_filter_column='filter',
+    lc_color='#333333',
     lc_mode='magnitude',
     lc_short=True,
 )
