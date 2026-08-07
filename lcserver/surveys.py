@@ -460,6 +460,8 @@ CACHE_PREFIXES = {
     'ptf_': 'ptf',
     'ztf_raw_': 'ztf',
     'wise_': 'wise',
+    'asas3_': 'asas3',
+    'wasp_': 'wasp',
     # Everything the info step collects
     'simbad_': 'info',
     'gaiadr3_phot_': 'info',

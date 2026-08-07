@@ -16,6 +16,8 @@ The module is organized into separate files:
 - kws.py: Kamogata Wide-field Survey lightcurve acquisition
 - ptf.py: Palomar Transient Factory lightcurve acquisition
 - wise.py: WISE / NEOWISE infrared epoch photometry
+- asas3.py: ASAS-3 lightcurve acquisition
+- wasp.py: SuperWASP lightcurve acquisition
 - combined.py: Combined lightcurve plotting
 """
 
@@ -40,6 +42,8 @@ from .css import target_css
 from .kws import target_kws
 from .ptf import target_ptf
 from .wise import target_wise
+from .asas3 import target_asas3
+from .wasp import target_wasp
 from .tess import target_tess
 from .dasch import target_dasch
 from .applause import target_applause
