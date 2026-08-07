@@ -118,14 +118,32 @@
 
 <!-- Mode Toggle -->
 <div class="control-panel">
-  <h5 class="mb-3">Display Mode</h5>
-  <div class="btn-group">
-    <button onclick="switchMode('magnitude')" class="btn btn-sm {% if data_mode == 'magnitude' %}btn-primary{% else %}btn-outline-primary{% endif %}">
-      <i class="fa fa-star"></i> Magnitudes
-    </button>
-    <button onclick="switchMode('flux')" class="btn btn-sm {% if data_mode == 'flux' %}btn-primary{% else %}btn-outline-primary{% endif %}">
-      <i class="fa fa-line-chart"></i> TESS Flux
-    </button>
+  <div class="d-flex flex-wrap align-items-end gap-4">
+    <div>
+      <h5 class="mb-3">Display Mode</h5>
+      <div class="btn-group">
+        <button onclick="switchMode('magnitude')" class="btn btn-sm {% if data_mode == 'magnitude' %}btn-primary{% else %}btn-outline-primary{% endif %}">
+          <i class="fa fa-star"></i> Magnitudes
+        </button>
+        <button onclick="switchMode('flux')" class="btn btn-sm {% if data_mode == 'flux' %}btn-primary{% else %}btn-outline-primary{% endif %}">
+          <i class="fa fa-line-chart"></i> TESS Flux
+        </button>
+      </div>
+    </div>
+
+    <div>
+      <h5 class="mb-3">Time Axis</h5>
+      <div class="btn-group" id="time-axis-toggle">
+        <button onclick="switchTimeAxis('date')" id="time-axis-date"
+                class="btn btn-sm btn-primary" title="Calendar date, UT">
+          <i class="fa fa-calendar"></i> Date
+        </button>
+        <button onclick="switchTimeAxis('mjd')" id="time-axis-mjd"
+                class="btn btn-sm btn-outline-primary" title="Modified Julian Date">
+          <i class="fa fa-hashtag"></i> MJD
+        </button>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -178,6 +196,9 @@
     </button>
   </div>
 </div>
+
+<!-- Plot Container -->
+<div id="plotly-container" style="width: 100%; height: 600px; display: none;"></div>
 
 <!-- Phase Folding Panel -->
 <div class="control-panel mt-3" id="phase-panel" style="display: none;">
@@ -262,9 +283,6 @@
   </div>
 </div>
 
-<!-- Plot Container -->
-<div id="plotly-container" style="width: 100%; height: 600px; display: none;"></div>
-
 <script>
 // Light curve data (loaded asynchronously)
 let lightcurveData = [];
@@ -288,6 +306,10 @@ const phaseDataCache = {};
 
 // Track data loading state
 let dataLoaded = false;
+
+// How the time axis is labelled: calendar date, or MJD for picking times off
+// the plot. Dates by default, as they are what one usually wants to read.
+let timeAxisMode = 'date';
 
 // Convert MJD to JavaScript Date object
 // MJD 0 = November 17, 1858, 00:00 UTC
@@ -465,8 +487,10 @@ function updatePlot() {
     const dataKey = isMagnitudeMode ? 'mag' : 'flux';
     const errKey = isMagnitudeMode ? 'magerr' : 'flux_err';
 
-    // Check if any series has >5000 points (use MJD mode for performance)
-    const useMJDMode = !isPhaseFolded && lightcurveData.some(series => series.mjd.length > 5000);
+    // Phase folding has an axis of its own, so the choice only applies to the
+    // time axis. Date conversions are cached per series, so even the longest
+    // TESS light curves pay for them once.
+    const useMJDMode = !isPhaseFolded && timeAxisMode === 'mjd';
 
     lightcurveData.forEach((series, index) => {
         const state = seriesState[index];
@@ -793,6 +817,28 @@ function updatePlot() {
 
         // Plotly.react updates the plot while preserving zoom/pan state
         Plotly.react('plotly-container', traces, layout, config);
+    }
+}
+
+// Switch the time axis between calendar dates and MJD. Purely a matter of
+// display, so the data is not reloaded - but the axis changes type, which
+// Plotly.react does not pick up, hence the forced re-initialization.
+function switchTimeAxis(mode) {
+    if (mode === timeAxisMode)
+        return;
+
+    timeAxisMode = mode;
+
+    const isDate = mode === 'date';
+    document.getElementById('time-axis-date').className =
+        'btn btn-sm ' + (isDate ? 'btn-primary' : 'btn-outline-primary');
+    document.getElementById('time-axis-mjd').className =
+        'btn btn-sm ' + (isDate ? 'btn-outline-primary' : 'btn-primary');
+
+    if (plotInitialized) {
+        plotInitialized = false;
+        updatePlot();
+        plotInitialized = true;
     }
 }
 
@@ -1307,6 +1353,12 @@ function switchMode(newMode) {
         url += `&epoch=${encodeURIComponent(epoch)}`;
     }
 
+    // Carried over, so that switching between magnitudes and flux does not
+    // silently put the axis back to dates
+    if (timeAxisMode !== 'date') {
+        url += `&time=${encodeURIComponent(timeAxisMode)}`;
+    }
+
     // Update URL without reloading (for better UX and browser history)
     window.history.pushState({mode: newMode}, '', url);
 
@@ -1430,6 +1482,13 @@ function loadLightcurveData() {
                 if (urlEpoch) {
                     document.getElementById('epoch-input').value = urlEpoch;
                     phaseEpoch = parseFloat(urlEpoch) || 0;
+                }
+
+                // Restore the time axis choice carried over by switchMode()
+                if (getUrlParameter('time') === 'mjd') {
+                    timeAxisMode = 'mjd';
+                    document.getElementById('time-axis-date').className = 'btn btn-sm btn-outline-primary';
+                    document.getElementById('time-axis-mjd').className = 'btn btn-sm btn-primary';
                 }
 
                 updateLoadingStatus('Initializing visualization...');
