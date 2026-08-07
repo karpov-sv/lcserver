@@ -249,9 +249,7 @@ def target_files(request, id, path=''):
     target = models.Target.objects.get(id=id)
 
     # Permission check: owner or staff
-    if not request.user.is_authenticated or not (
-        request.user.is_staff or request.user == target.user
-    ):
+    if not target.can_view(request.user):
         return HttpResponse("You don't have permission to view this target", status=403)
 
     # Call generic list_files with target base path
@@ -275,10 +273,7 @@ def targets(request, id=None):
         path = target.path()
 
         # Permissions
-        if request.user.is_authenticated and (request.user.is_staff or request.user == target.user):
-            context['user_may_submit'] = True
-        else:
-            context['user_may_submit'] = False
+        context['user_may_submit'] = target.can_edit(request.user)
 
         # Clear the link to queued target if it was revoked
         if target.celery_id:
@@ -345,7 +340,7 @@ def targets(request, id=None):
                 action = request.POST.get('action')
 
                 if action == 'delete_target':
-                    if request.user.is_staff or request.user == target.user:
+                    if target.can_delete(request.user):
                         target.delete()
                         messages.success(request, f"Target {str(id )} is deleted")
                         return HttpResponseRedirect(reverse('targets'))
@@ -398,14 +393,21 @@ def targets(request, id=None):
         context['target'] = target
         context['survey_sources'] = surveys.get_all_survey_sources()
 
+        # A chain is running, so every step in it will become active in turn.
+        # Sections render their log placeholders upfront, which lets the state
+        # poller update them in place instead of reloading on each transition.
+        context['running_chain'] = bool(target.celery_id and target.celery_chain_ids)
+
         context['files'] = [os.path.split(_)[1] for _ in glob.glob(os.path.join(path, '*'))]
 
         # Additional info
 
         return TemplateResponse(request, 'target.html', context=context)
     else:
-        # List all targets
-        targets = models.Target.objects.all()
+        # List targets. The base queryset is already restricted to what the user
+        # is allowed to see, so neither a forged 'show_all' nor a request method
+        # that skips the filtering below can widen it.
+        targets = models.Target.accessible_to(request.user)
         targets = targets.order_by('-created')
 
         # Filter form uses GET method
@@ -424,13 +426,12 @@ def targets(request, id=None):
         # Handle GET filtering
         if request.method == 'GET':
             if filter_form.is_valid():
-                # Filter by user unless staff with show_all checked
+                # Narrow down to own targets unless show_all is checked. Users
+                # who may not see others' targets are already limited by the
+                # accessible_to() base queryset above.
                 show_all = filter_form.cleaned_data.get('show_all')
-                if not show_all:
-                    if request.user.is_authenticated:
-                        targets = targets.filter(user=request.user)
-                    else:
-                        targets = targets.none()  # Anonymous users see nothing
+                if not show_all and request.user.is_authenticated:
+                    targets = targets.filter(user=request.user)
 
                 # Text search filter
                 query = filter_form.cleaned_data.get('query')
@@ -481,7 +482,7 @@ def targets_actions(request):
                 target = get_object_or_404(models.Target, id=id)
 
                 # Permission check: only owner or staff can perform actions
-                if not (request.user.is_staff or request.user == target.user):
+                if not target.can_edit(request.user):
                     messages.error(request, f"Cannot perform action on target {id} belonging to {target.user.username}")
                     continue
 
@@ -501,7 +502,7 @@ def targets_actions(request):
                     messages.success(request, f"Cleaned up target {id}")
 
                 elif action == 'delete':
-                    if request.user.is_staff or request.user == target.user:
+                    if target.can_delete(request.user):
                         target.delete()
                         messages.success(request, f"Target {id} is deleted")
                     else:
@@ -512,24 +513,44 @@ def targets_actions(request):
     return HttpResponseRedirect(reverse('targets'))
 
 
+def state_log_files():
+    """Map each running state to the log file the corresponding step writes, so
+    that the state poller can live-refresh it. States without an entry (e.g. the
+    '... acquired' ones) have no actively-growing log."""
+    return {
+        config['state_acquiring']: config['log_file']
+        for config in surveys.SURVEY_SOURCES.values()
+        if config.get('state_acquiring') and config.get('log_file')
+    }
+
+
 def target_state(request, id):
     """AJAX endpoint to get current target state."""
     target = get_object_or_404(models.Target, id=id)
 
     # Permission check
-    if not request.user.is_authenticated or not (
-        request.user.is_staff or request.user == target.user
-    ):
+    if not target.can_view(request.user):
         return JsonResponse({'error': 'Permission denied'}, status=403)
 
     # Refresh from database to get latest state
     target.refresh_from_db()
 
-    return JsonResponse({
+    result = {
         'state': target.state,
         'id': target.id,
         'celery_id': target.celery_id
-    })
+    }
+
+    # While running, also return the freshly-rendered log of the active step so
+    # the page can update it in place without a full reload.
+    if target.celery_id:
+        log_file = state_log_files().get(target.state)
+        if log_file and os.path.exists(os.path.join(target.path(), log_file)):
+            from .templatetags.tags import target_file_contents
+            result['log_file'] = log_file
+            result['log_html'] = target_file_contents(target, log_file, highlight=True)
+
+    return JsonResponse(result)
 
 
 @login_required

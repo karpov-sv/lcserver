@@ -10,12 +10,28 @@
 {% block head %}
   {% include "popup_image.html" %}
 
+  {% load static %}
+  <script src="{% static 'queue.js' %}"></script>
+
   <script language="javascript">
 
    {% if target.celery_id %}
 
    var update_timer = 0;
    var update_timeout = 3000;
+
+   // The page is reloaded once, when processing ends. Everything happening
+   // before that is updated in place, so that the view does not jump around.
+   var reloading = false;
+   var reload_once = function(){
+     if(!reloading){
+       reloading = true;
+       location.reload();
+     }
+   }
+
+   // Last log HTML we injected, per log file, to skip redundant DOM updates
+   var last_log = {};
 
    update = function(){
      // Update target state (processing stage)
@@ -39,9 +55,26 @@
            stateElem.addClass('text-success');
          }
 
+         // Live-update the log of the currently running step
+         if(json.log_file && json.log_html !== undefined
+            && json.log_html !== last_log[json.log_file]){
+           var pre = $('.target-log[data-logfile="' + json.log_file + '"]');
+           // If the step has no section on the page yet, just skip it - the
+           // final reload will render it. Reloading here would throw the user
+           // back to the top of the page on every step of a chain.
+           if(pre.length){
+             last_log[json.log_file] = json.log_html;
+             // Preserve the user's scroll position unless already at the bottom
+             var atBottom = pre[0].scrollHeight - pre[0].scrollTop - pre[0].clientHeight < 4;
+             pre.html(json.log_html);
+             if(atBottom)
+               pre[0].scrollTop = pre[0].scrollHeight;
+           }
+         }
+
          // Reload if task finished
          if(!json.celery_id){
-           location.reload();
+           reload_once();
          }
        }
      });
@@ -55,12 +88,13 @@
        success: function(json){
          $('#celery_state').html(json.state);
          if(json.state == 'SUCCESS' || json.state == 'FAILURE' || json.state == 'REVOKED'){
-           location.reload();
+           reload_once();
          }
        },
 
        complete: function(xhr, status) {
-         setTimeout(update, update_timeout);
+         if(!reloading)
+           setTimeout(update, update_timeout);
        }
      });
    }
@@ -126,13 +160,15 @@
         <br>
         Running id:
         <a href="{% url 'queue' id=target.celery_id %}">{{ target.celery_id }}</a>
-        (<span id="celery_state"></span>)
-        {% if user_may_submit and False %}
-          <form action="{% url 'queue' id=target.celery_id %}" method="POST">
-            {% csrf_token %}
-            <button type="submit" name="action" value="terminatetarget" class="btn btn-danger">Terminate</button>
-          </form>
-        {% endif %}
+        <!-- (<span id="celery_state"></span>) -->
+        <form action="{% url 'queue' id=target.celery_id %}" method="POST" class="queue-action-form d-inline ms-2">
+          {% csrf_token %}
+          <button type="submit" name="action" value="terminatetask" class="btn btn-sm btn-outline-danger p-0 ps-1 pe-1"
+                  title="Terminate the running task"
+                  data-confirm="Terminate the task running for this target?">
+            <i class="fa fa-times"></i>
+          </button>
+        </form>
       {% endif %}
     </div>
 
@@ -177,7 +213,7 @@
     <!-- Basic info -->
     <hr style="border-style: dotted">
     <div class="row mb-2">
-      {% if 'info.log' in files %}
+      {% if 'info.log' in files or target.state == 'acquiring info' or running_chain %}
         <div class="col-md">
           {% include "target_block_text.html" with file='info.log' %}
         </div>

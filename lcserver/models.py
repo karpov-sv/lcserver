@@ -34,6 +34,44 @@ class Target(models.Model):
     def complete(self):
         self.completed = now()
 
+    # --- Access control -----------------------------------------------------
+    # All target access checks funnel through these helpers so that the rules
+    # live in exactly one place. The matching queryset filter is
+    # Target.accessible_to() below.
+
+    def can_view(self, user):
+        """Whether `user` may read this target."""
+        if not user.is_authenticated:
+            return False
+        return user.is_staff or user == self.user
+
+    def can_edit(self, user):
+        """Whether `user` may modify / submit / run this target."""
+        if not user.is_authenticated:
+            return False
+        return user.is_staff or user == self.user
+
+    def can_delete(self, user):
+        """Whether `user` may delete this target."""
+        if not user.is_authenticated:
+            return False
+        return user.is_staff or user == self.user
+
+    @staticmethod
+    def accessible_to(user, queryset=None):
+        """Queryset of targets `user` may view. Mirrors can_view() at the DB level."""
+        if queryset is None:
+            queryset = Target.objects.all()
+        if not user.is_authenticated:
+            return queryset.none()
+        if user.is_staff:
+            return queryset
+        return queryset.filter(user=user)
+
+    def __str__(self):
+        return f"{self.id}: {self.user.username} : {self.name}"
+
+
 @receiver(pre_delete, sender=Target)
 def delete_target_hook(sender, instance, using, **kwargs):
     path = instance.path()

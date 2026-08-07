@@ -3,7 +3,8 @@
 
 {# Generic survey section template - auto-generates UI from registry metadata #}
 
-{% if source_config|survey_condition_met:target %}
+{# A running chain attempts every step regardless of per-survey conditions, so show them all until it ends #}
+{% if source_config|survey_condition_met:target or running_chain %}
   <hr>
   <h3>{{ source_config.name }}</h3>
 
@@ -19,7 +20,8 @@
     </form>
   {% endif %}
 
-  {% if source_config.log_file in files %}
+  {# Rendered also while the step is pending or running, so that the log poller always has an element to update #}
+  {% if source_config.log_file in files or target.state == source_config.state_acquiring or running_chain %}
     <hr style="border-style: dotted">
 
     {% if source_config.template_layout == 'simple' %}

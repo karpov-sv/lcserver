@@ -216,7 +216,7 @@ def target_lightcurve(request, id):
     target = models.Target.objects.get(id=id)
 
     # Check permissions
-    if not (request.user.is_staff or target.user == request.user):
+    if not target.can_view(request.user):
         return HttpResponse('Forbidden', status=403)
 
     # Determine display mode for initial render
@@ -271,7 +271,7 @@ def load_lightcurve_data(request, id):
     target = models.Target.objects.get(id=id)
 
     # Check permissions
-    if not (request.user.is_staff or target.user == request.user):
+    if not target.can_view(request.user):
         return JsonResponse({'error': 'Forbidden'}, status=403)
 
     try:
@@ -306,7 +306,7 @@ def fit_period(request, id):
     target = models.Target.objects.get(id=id)
 
     # Check permissions
-    if not (request.user.is_staff or target.user == request.user):
+    if not target.can_view(request.user):
         return JsonResponse({'error': 'Forbidden'}, status=403)
 
     try:
