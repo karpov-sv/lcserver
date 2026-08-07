@@ -72,10 +72,13 @@ class TargetsActionsForm(forms.Form):
         self.helper.layout = Layout()
 
 
-# Sources that hit an external service and keep the reply under cache/.
-# Combined only reads files already on disk, so it has nothing to refresh.
-CACHED_SOURCES = {'info', 'ztf', 'asas', 'css', 'kws', 'ptf', 'tess',
-                  'dasch', 'applause', 'mmt9'}
+# Sources that hit an external service and keep the reply under cache/, so a
+# new one is offered the switch without having to be listed here. Combined only
+# reads files already on disk, so it has nothing to refresh.
+NOT_CACHED_SOURCES = {'combined'}
+
+CACHED_SOURCES = {sid for sid, cfg in surveys.SURVEY_SOURCES.items()
+                  if cfg.get('processing_function') and sid not in NOT_CACHED_SOURCES}
 
 
 def refresh_cache_field():
