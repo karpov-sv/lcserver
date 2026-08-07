@@ -179,6 +179,17 @@ def target_dasch(config, basepath=None, verbose=True, show=False):
             dasch['magcal_local_rms'] = [float(row['magcal_local_rms']) if row['magcal_local_rms'] else np.nan for row in rows]
             dasch['AFLAGS'] = [int(row['aflags']) if row['aflags'] else 0 for row in rows]
 
+            # DR7 judges its own measurements and reports the verdict, which is
+            # what the quality cut below rests on
+            dasch['reject_flag'] = [int(row['reject_flag']) if row.get('reject_flag') else 0
+                                    for row in rows]
+            # The per-point uncertainty. Unlike magcal_local_rms, which is a
+            # scatter estimate missing for about two fifths of the points, this
+            # one is given for every calibrated measurement.
+            dasch['magcal_local_error'] = [float(row['magcal_local_error'])
+                                           if row.get('magcal_local_error') else np.nan
+                                           for row in rows]
+
             # Optional: add more columns if available
             if 'limiting_mag_local' in rows[0]:
                 dasch['limiting_mag_local'] = [float(row['limiting_mag_local']) if row['limiting_mag_local'] else np.nan for row in rows]
@@ -197,19 +208,41 @@ def target_dasch(config, basepath=None, verbose=True, show=False):
 
     dasch['mjd'] = dasch['time'].mjd
 
+    nraw = len(dasch)
+
+    # Only the plates on which the star was actually measured
     dasch = dasch[dasch['magcal_magdep'] > 0]
-    # t = t[t['BFLAGS'] & 0x10000 > 0]
+    log(f"  {len(dasch)} of {nraw} plates carry a calibrated magnitude")
 
-    # Criteria from https://github.com/barentsen/did-tabbys-star-fade/blob/master/data/data-preprocessing.py
-    # dasch = dasch[dasch['AFLAGS'] <= 9000]
-    dasch = dasch[dasch['AFLAGS'] < 524288]
-    # dasch = dasch[dasch['AFLAGS'] & 33554432 == 0]
-    # dasch = dasch[dasch['AFLAGS'] & 1048576 == 0]
-    dasch = dasch[dasch['magcal_local_rms'] < 1]
-    # dasch = dasch[dasch['magcal_local_rms'] < 0.33]
-    # dasch = dasch[dasch['magcal_magdep'] < dasch['limiting_mag_local'] - 0.2]
+    # DASCH decides for itself which of its measurements to stand behind, and
+    # reject_flag carries that verdict; zero means it is happy with the point.
+    #
+    # This used to cut on AFLAGS instead, keeping rows below 1 << 19 - a
+    # criterion borrowed from a script written against an older data release.
+    # Under DR7 that bit is set on precisely the points that *have* a
+    # calibrated magnitude, so for a star whose plates carry it the cut threw
+    # away the entire light curve and kept nothing else.
+    if 'reject_flag' in dasch.colnames:
+        ncal = len(dasch)
+        rejected = np.asarray(dasch['reject_flag']) != 0
+        if np.any(rejected):
+            codes, counts = np.unique(np.asarray(dasch['reject_flag'])[rejected],
+                                      return_counts=True)
+            log(f"  DASCH rejects {int(np.sum(rejected))} of them: "
+                + ', '.join(f"{c} for reason {int(v)}" for v, c in zip(codes, counts)))
+        dasch = dasch[~rejected]
+        log(f"  {len(dasch)} of {ncal} accepted by DASCH")
+    else:
+        log("Warning: cached data predates the quality flags, so nothing is "
+            "filtered on quality. Re-query the survey to apply them.")
 
-    dasch['magerr'] = dasch['magcal_local_rms']
+    # magcal_local_rms is a scatter estimate that DR7 leaves empty for a good
+    # fraction of the points, so it is no use either as a cut - a missing value
+    # would silently drop the point - or as an error bar
+    if 'magcal_local_error' in dasch.colnames:
+        dasch['magerr'] = dasch['magcal_local_error']
+    else:
+        dasch['magerr'] = dasch['magcal_local_rms']
 
     # No conversion is available for the photographic plates, so the common
     # g column is the native magnitude under another name. Said plainly here,
