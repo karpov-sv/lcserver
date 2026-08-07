@@ -154,13 +154,6 @@ def target_ztf(config, basepath=None, verbose=True, show=False):
     if 'target_ra' not in config or 'target_dec' not in config:
         raise RuntimeError("Cannot operate without target coordinates")
 
-    # Check if processed data already exists
-    if os.path.exists(os.path.join(basepath, 'ztf.vot')):
-        log(f"Loading processed ZTF lightcurve from ztf.vot")
-        log("Skipping calibration (processed data already exists)")
-        log("Delete ztf.vot to reprocess with different color model")
-        return
-
     # Cache raw query results before color calibration
     ra = config.get('target_ra')
     dec = config.get('target_dec')

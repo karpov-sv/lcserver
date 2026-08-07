@@ -80,46 +80,41 @@ def target_asas(config, basepath=None, verbose=True, show=False):
     if 'target_ra' not in config or 'target_dec' not in config:
         raise RuntimeError("Cannot operate without target coordinates")
 
-    # Check if processed data already exists
-    if os.path.exists(os.path.join(basepath, 'asas.vot')):
-        log(f"Loading processed ASAS-SN lightcurve from asas.vot")
-        asas = Table.read(os.path.join(basepath, 'asas.vot'))
-    else:
-        # Cache raw query results before color conversion
-        ra = config.get('target_ra')
-        dec = config.get('target_dec')
-        asas_sr = config.get('asas_sr', 10.0)
-        cache_name = f"asas_{ra:.4f}_{dec:.4f}_{asas_sr:.1f}.vot"
+    # Cache raw query results before color conversion
+    ra = config.get('target_ra')
+    dec = config.get('target_dec')
+    asas_sr = config.get('asas_sr', 10.0)
+    cache_name = f"asas_{ra:.4f}_{dec:.4f}_{asas_sr:.1f}.vot"
 
-        with cached_votable_query(cache_name, basepath, log, 'ASAS-SN', refresh=refresh_cache) as cache:
-            if not cache.hit:
-                # Query ASAS-SN - only if not cached
-                log(f"Requesting ASAS-SN lightcurve for {config['target_name']} within {asas_sr:.1f} arcsec")
+    with cached_votable_query(cache_name, basepath, log, 'ASAS-SN', refresh=refresh_cache) as cache:
+        if not cache.hit:
+            # Query ASAS-SN - only if not cached
+            log(f"Requesting ASAS-SN lightcurve for {config['target_name']} within {asas_sr:.1f} arcsec")
 
-                try:
-                    client = SkyPatrolClient()
-                    lcq = client.cone_search(
-                        ra_deg=ra,
-                        dec_deg=dec,
-                        radius=asas_sr/3600,
-                        catalog='master_list',
-                        download=True
-                    )
-                except:
-                    import traceback
-                    traceback.print_exc()
-                    lcq = None
+            try:
+                client = SkyPatrolClient()
+                lcq = client.cone_search(
+                    ra_deg=ra,
+                    dec_deg=dec,
+                    radius=asas_sr/3600,
+                    catalog='master_list',
+                    download=True
+                )
+            except:
+                import traceback
+                traceback.print_exc()
+                lcq = None
 
-                if not lcq or not len(lcq.data):
-                    log("Warning: No ASAS-SN data found")
-                    return
+            if not lcq or not len(lcq.data):
+                log("Warning: No ASAS-SN data found")
+                return
 
-                # Cache raw query results
-                asas_raw = Table.from_pandas(lcq.data)
-                cache.save(asas_raw)
+            # Cache raw query results
+            asas_raw = Table.from_pandas(lcq.data)
+            cache.save(asas_raw)
 
-            # Use cached or freshly queried raw data
-            asas = cache.data
+        # Use cached or freshly queried raw data
+        asas = cache.data
 
     log(f"{len(asas)} ASAS-SN data points found")
 
