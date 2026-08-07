@@ -248,8 +248,17 @@
   <div class="mt-2">
     <small class="text-muted">
       Set period to enable phase folding. Phase range: -0.6 to 1.6 with wrapped data.
-      Use "Fit Period" to automatically find the best period using visible data sources and error filters.
+      Use "Fit Period" to automatically find the best period using visible data sources and error filters,
+      then click any peak of the periodogram below to fold at it.
     </small>
+  </div>
+
+  <!-- Periodogram, shown once a fit has been run -->
+  <div id="periodogram-container" style="width: 100%; height: 300px; display: none;" class="mt-2"></div>
+
+  <div id="peaks-container" class="mt-2" style="display: none;">
+    <small class="text-muted">Highest peaks:</small>
+    <div id="peaks-list" class="d-flex flex-wrap gap-1 mt-1"></div>
   </div>
 </div>
 
@@ -795,6 +804,9 @@ function updatePhaseFolding() {
     phasePeriod = parseFloat(periodInput.value) || 0;
     phaseEpoch = parseFloat(epochInput.value) || 0;
 
+    // The periodogram marks the period being folded at, and its aliases
+    updatePeriodogramMarks();
+
     // Force reinitialize plot when switching modes
     if (plotInitialized) {
         plotInitialized = false;
@@ -809,6 +821,9 @@ function clearPhaseFolding() {
     document.getElementById('epoch-input').value = '0';
     phasePeriod = 0;
     phaseEpoch = 0;
+
+    // Drops the period mark, keeping the periodogram itself
+    updatePeriodogramMarks();
 
     // Force reinitialize plot
     if (plotInitialized) {
@@ -850,6 +865,202 @@ function dividePeriod() {
     phasePeriod = newPeriod;
 
     updatePhaseFolding();
+}
+
+// ---------------------------------------------------------------- periodogram
+
+// The last periodogram received, kept so that the marks can follow the period
+// as it is edited without asking the server again
+let periodogramData = null;
+
+// Frequency the daily aliases are spaced by, in cycles per day. Ground-based
+// surveys observe by the night rather than by the star, so it is the solar day
+// that dominates their sampling.
+const ALIAS_FREQUENCY = 1.0;
+
+// How many daily aliases either side of a period to mark
+const ALIAS_ORDERS = 2;
+
+// The periods one and the same signal also shows up at, through the daily
+// sampling: 1/(1/P +- n) for the first few n
+function periodAliases(p) {
+    const out = [];
+
+    for (let n = 1; n <= ALIAS_ORDERS; n++) {
+        [1, -1].forEach(function(s) {
+            const f = 1/p + s*n*ALIAS_FREQUENCY;
+            if (f > 0)
+                out.push(1/f);
+        });
+    }
+
+    return out;
+}
+
+// Every line is a segment of its own, separated from the next by the null that
+// breaks the path
+function markLine(periods, top) {
+    const x = [], y = [];
+
+    for (let i = 0; i < periods.length; i++) {
+        x.push(periods[i], periods[i], null);
+        y.push(0, top, null);
+    }
+
+    return {x: x, y: y};
+}
+
+// Marks are traces rather than layout shapes, which is what lets the legend
+// both name them and switch them off
+function markTrace(name, color, dash, periods, top) {
+    const line = markLine(periods, top);
+
+    return {
+        x: line.x, y: line.y,
+        mode: 'lines', type: 'scatter', name: name,
+        line: {width: 1, color: color, dash: dash},
+        // Never steal the hover, nor the click that folds the curve, from the
+        // periodogram itself
+        hoverinfo: 'skip'
+    };
+}
+
+// As high as the periodogram itself reaches, so that the marks span the plot
+// without widening its vertical range
+function markTop(data) {
+    return (data && data.power && data.power.length) ? Math.max(...data.power) : 1;
+}
+
+// The period the light curve is folded with, and the ones it would masquerade
+// as, both clipped to the range that was actually searched
+function foldedMarks(data) {
+    const p = parseFloat(document.getElementById('period-input').value);
+    const marks = {period: [], aliases: []};
+
+    if (isFinite(p) && p > 0 && data.periods && data.periods.length) {
+        const lo = Math.min(...data.periods);
+        const hi = Math.max(...data.periods);
+
+        periodAliases(p).forEach(function(a) {
+            if (a >= lo && a <= hi)
+                marks.aliases.push(a);
+        });
+
+        if (p >= lo && p <= hi)
+            marks.period.push(p);
+    }
+
+    return marks;
+}
+
+// Where the two of them sit among the traces of plotPeriodogram()
+const MARK_PERIOD_TRACE = 1;
+const MARK_ALIASES_TRACE = 2;
+
+// The marks follow the folding period, which may be edited at any time.
+// Restyled rather than replotted, so that a mark switched off through the
+// legend stays off.
+function updatePeriodogramMarks() {
+    if (!periodogramData)
+        return;
+
+    const top = markTop(periodogramData);
+    const marks = foldedMarks(periodogramData);
+    const period = markLine(marks.period, top);
+    const aliases = markLine(marks.aliases, top);
+
+    Plotly.restyle('periodogram-container',
+                   {x: [period.x, aliases.x], y: [period.y, aliases.y]},
+                   [MARK_PERIOD_TRACE, MARK_ALIASES_TRACE]);
+}
+
+// Buttons for the highest peaks, as a shortcut to clicking them on the plot
+function showPeaks(peaks) {
+    const list = document.getElementById('peaks-list');
+    list.innerHTML = '';
+
+    peaks.forEach(function(peak, i) {
+        const btn = document.createElement('button');
+        btn.className = 'btn btn-sm ' + (i === 0 ? 'btn-primary' : 'btn-outline-secondary');
+        btn.textContent = peak.period.toFixed(6) + ' d';
+        btn.title = 'power ' + peak.power.toFixed(4)
+                  + (peak.fap !== null && peak.fap !== undefined
+                     ? ', FAP ' + peak.fap.toExponential(1) : ', FAP not available');
+        btn.onclick = function() { setPeriod(peak.period); };
+        list.appendChild(btn);
+    });
+
+    document.getElementById('peaks-container').style.display = peaks.length ? 'block' : 'none';
+}
+
+// Fold at the given period, from a peak button or a click on the plot
+function setPeriod(period) {
+    document.getElementById('period-input').value = Number(period).toFixed(6);
+    updatePhaseFolding();
+}
+
+function plotPeriodogram(data) {
+    const pg = data.periodogram;
+
+    if (!pg || !pg.periods || !pg.periods.length) {
+        document.getElementById('periodogram-container').style.display = 'none';
+        return;
+    }
+
+    periodogramData = pg;
+
+    const container = document.getElementById('periodogram-container');
+    container.style.display = 'block';
+
+    const top = markTop(pg);
+    const marks = foldedMarks(pg);
+
+    const traces = [{
+        x: pg.periods, y: pg.power,
+        mode: 'lines', type: 'scatter', name: 'Power',
+        line: {width: 1, color: '#4c78a8'},
+        hovertemplate: 'P = %{x} d<br>power = %{y:.3f}<extra></extra>'
+    }];
+
+    // Kept at MARK_PERIOD_TRACE and MARK_ALIASES_TRACE, where the restyle above
+    // expects to find them
+    traces.push(markTrace('Folded period', '#2ca02c', 'solid', marks.period, top));
+    traces.push(markTrace('Its daily aliases', '#2ca02c', 'dash', marks.aliases, top));
+    // The sampling of ground-based observations imprints these on every
+    // periodogram, and a peak sitting on one of them is most likely not real
+    traces.push(markTrace('Sampling', 'red', 'dot', data.aliases || [], top));
+
+    const best = data.peaks && data.peaks.length ? data.peaks[0] : null;
+    let title = 'Lomb-Scargle periodogram of ' + data.n_points + ' points';
+    if (data.n_series > 1)
+        title += ' from ' + data.n_series + ' series, each centred on its own median';
+    if (best)
+        title += ' - best P = ' + best.period + ' d'
+               + (best.fap !== null && best.fap !== undefined
+                  ? ', FAP = ' + best.fap.toExponential(1) : '');
+    if (data.truncated)
+        title += ' (grid truncated)';
+
+    Plotly.newPlot('periodogram-container', traces, {
+        title: {text: title, font: {size: 12}},
+        xaxis: {title: {text: 'Period, days'}, type: 'log', automargin: true,
+                showline: true, zeroline: false},
+        yaxis: {title: {text: 'Power'}, automargin: true, showline: true,
+                zeroline: false, rangemode: 'tozero'},
+        hovermode: 'closest',
+        autosize: true,
+        margin: {t: 30, r: 30},
+        font: {size: 10},
+        showlegend: true
+    }, {responsive: true, displaylogo: false});
+
+    // Clicking a peak folds the light curve at that period
+    container.on('plotly_click', function(ev) {
+        if (ev.points && ev.points.length)
+            setPeriod(ev.points[0].x);
+    });
+
+    showPeaks(data.peaks || []);
 }
 
 // Get CSRF token from cookies
@@ -961,11 +1172,11 @@ function fitPeriod() {
             `Epoch (T₀): ${data.epoch.toFixed(2)} MJD\n` +
             `Power: ${data.power.toFixed(4)}\n`;
 
-        if (data.fap !== undefined) {
+        if (data.fap !== undefined && data.fap !== null) {
             const fapStr = data.fap < 0.0001 ? data.fap.toExponential(2) : data.fap.toFixed(4);
             message += `False Alarm Prob: ${fapStr}\n`;
         } else {
-            message += `False Alarm Prob: N/A (multiband fit)\n`;
+            message += `False Alarm Prob: N/A\n`;
         }
 
         message += `\nSearch range: ${data.period_min.toFixed(2)} - ${data.period_max.toFixed(2)} days\n`;
@@ -981,6 +1192,9 @@ function fitPeriod() {
         }
 
         alert(message);
+
+        // Show the periodogram, so that any of its peaks can simply be clicked
+        plotPeriodogram(data);
 
         // Update plot with phase folding
         updatePhaseFolding();

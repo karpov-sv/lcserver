@@ -7,12 +7,13 @@ import os
 import json
 import glob
 import re
+import warnings
 
 import numpy as np
 from astropy.table import Table
 from astropy.time import Time
-import nifty_ls
-from astropy.timeseries import LombScargleMultiband
+from astropy.timeseries import LombScargle
+from scipy.signal import find_peaks
 
 from . import models
 from . import surveys
@@ -299,6 +300,95 @@ def load_lightcurve_data(request, id):
         }, status=500)
 
 
+# Grid density, in samples per periodogram peak
+PERIOD_SAMPLES_PER_PEAK = 5
+
+# The grid is what the search costs - it grows with the time span and with the
+# shortest period, and does not depend on the number of points - so cap it to
+# keep a single request fast. DASCH baselines run to well over a century.
+PERIOD_MAX_FREQUENCIES = 500000
+
+# The full periodogram is far too big to ship, so it is sent decimated to this
+# many points, keeping the maxima rather than sampling them away
+PERIOD_PLOT_POINTS = 2000
+
+PERIOD_NPEAKS = 5
+
+# Periods the sampling itself imprints on any periodogram from the ground: the
+# solar and sidereal day with their harmonics, and the year
+PERIOD_ALIASES = [1.0, 0.5, 1/3, 0.99726957, 0.49863478, 365.25]
+
+
+def find_period(mjds, values, errors, pmin, pmax):
+    """Lomb-Scargle periodogram of a light curve and its highest peaks.
+
+    Single-band, on purpose: the bands are expected to be centred on their own
+    medians by the caller and pooled, which keeps the analytic false alarm
+    probability available. LombScargleMultiband does not implement it.
+    """
+    ls = LombScargle(mjds, values, errors)
+
+    span = np.max(mjds) - np.min(mjds)
+    fmin, fmax = 1.0/pmax, 1.0/pmin
+
+    nfreq = int(np.ceil(PERIOD_SAMPLES_PER_PEAK * span * (fmax - fmin)))
+    truncated = nfreq > PERIOD_MAX_FREQUENCIES
+    nfreq = int(np.clip(nfreq, 100, PERIOD_MAX_FREQUENCIES))
+
+    freq = np.linspace(fmin, fmax, nfreq)
+    power = ls.power(freq)
+
+    # Highest local maxima, so that the neighbouring samples of one and the same
+    # peak are not reported as separate detections
+    idx, _ = find_peaks(power)
+    if not len(idx):
+        idx = np.array([np.argmax(power)])
+    idx = idx[np.argsort(power[idx])[::-1]][:PERIOD_NPEAKS]
+
+    peaks = []
+    for i in idx:
+        # The analytic false alarm probability is not always computable, and
+        # degenerates for a handful of points, so report it only when it is sane
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter('ignore')
+                fap = float(ls.false_alarm_probability(
+                    power[i], method='baluev',
+                    minimum_frequency=fmin, maximum_frequency=fmax))
+            if not np.isfinite(fap):
+                fap = None
+        except Exception:
+            fap = None
+
+        peaks.append({
+            'period': round(float(1.0/freq[i]), 6),
+            'power': round(float(power[i]), 4),
+            'frequency': float(freq[i]),
+            'fap': fap,
+        })
+
+    # Decimate for display by keeping the largest value of every bin, so that a
+    # narrow peak survives instead of falling between the samples
+    nbins = min(PERIOD_PLOT_POINTS, nfreq)
+    edges = np.linspace(0, nfreq, nbins + 1).astype(int)
+    pp, pw = [], []
+    for a, b in zip(edges[:-1], edges[1:]):
+        if b > a:
+            j = a + int(np.argmax(power[a:b]))
+            # Rounded, as the full precision only inflates the response
+            pp.append(round(float(1.0/freq[j]), 6))
+            pw.append(round(float(power[j]), 4))
+
+    return {
+        'periods': pp,
+        'power': pw,
+        'peaks': peaks,
+        'nfreq': nfreq,
+        'truncated': truncated,
+        'aliases': [_ for _ in PERIOD_ALIASES if pmin <= _ <= pmax],
+    }
+
+
 @login_required
 @require_http_methods(["POST"])
 def fit_period(request, id):
@@ -354,7 +444,6 @@ def fit_period(request, id):
         times = []
         values = []
         errors = []
-        bands = []
 
         for i, requested in enumerate(series_list):
             label = requested.get('label')
@@ -390,10 +479,19 @@ def fit_period(request, id):
             if not np.any(valid):
                 continue
 
-            times.append(t[valid])
-            values.append(y[valid])
-            errors.append(dy[valid])
-            bands.append(np.full(np.sum(valid), i, dtype=int))
+            t, y, dy = t[valid], y[valid], dy[valid]
+
+            # Every series sits at a level of its own - magnitudes differ from
+            # band to band, and the normalized fluxes of the TESS sectors are
+            # around unity - so pooling them as they are would find the color of
+            # the star, or its mean brightness, rather than its period. Centring
+            # each on its own median puts them on a common scale. Their
+            # amplitudes still differ, which the transform tolerates.
+            y = y - np.median(y)
+
+            times.append(t)
+            values.append(y)
+            errors.append(dy)
 
         if not times:
             return JsonResponse({
@@ -405,7 +503,6 @@ def fit_period(request, id):
         t_all = np.concatenate(times)
         y_all = np.concatenate(values)
         dy_all = np.concatenate(errors)
-        bands_all = np.concatenate(bands)
 
         # Validation: Check minimum number of data points
         n_points = len(t_all)
@@ -435,34 +532,11 @@ def fit_period(request, id):
                 'details': f'Data span ({time_span:.2f} days) should be at least 2× minimum period ({period_min:.2f} days) for reliable fitting'
             }, status=400)
 
-        # Create LombScargleMultiband object
-        try:
-            ls = LombScargleMultiband(t_all, y_all, bands_all, dy=dy_all)
-        except Exception as e:
-            return JsonResponse({
-                'error': 'Failed to create periodogram object',
-                'details': str(e)
-            }, status=400)
-
-        # Convert period range to frequency range
-        # frequency = 1 / period, so:
-        # minimum_frequency = 1 / period_max
-        # maximum_frequency = 1 / period_min
-        minimum_frequency = 1.0 / period_max
-        maximum_frequency = 1.0 / period_min
-
-        print(f'Starting period fit: {period_min:.3f} - {period_max:.3f} days ({minimum_frequency:.6f} - {maximum_frequency:.6f} 1/day)')
+        print(f'Starting period fit: {period_min:.3f} - {period_max:.3f} days')
         print(f'Data: {n_points} points, span {time_span:.2f} days, {len(times)} series')
 
-        # Compute periodogram with automatic frequency grid
         try:
-            freq, power = ls.autopower(
-                minimum_frequency=minimum_frequency,
-                maximum_frequency=maximum_frequency,
-                samples_per_peak=10,
-                method="fast",
-                sb_method="fastnifty",
-            )
+            pg = find_period(t_all, y_all, dy_all, period_min, period_max)
         except Exception as e:
             return JsonResponse({
                 'error': 'Periodogram computation failed',
@@ -471,83 +545,45 @@ def fit_period(request, id):
 
         print('Fit finished')
 
-        # Validate periodogram output
-        if len(freq) == 0 or len(power) == 0:
+        if not pg['peaks']:
             return JsonResponse({
                 'error': 'Periodogram computation failed',
-                'details': 'Empty frequency or power array'
+                'details': 'No peaks found in the periodogram'
             }, status=500)
 
-        if not np.any(np.isfinite(power)):
-            return JsonResponse({
-                'error': 'Periodogram computation failed',
-                'details': 'All power values are invalid (NaN or Inf)'
-            }, status=500)
+        best = pg['peaks'][0]
+        best_period = best['period']
+        best_power = best['power']
+        best_freq = best['frequency']
+        fap = best['fap']
 
-        # Find best period
-        best_idx = np.argmax(power)
-        best_freq = freq[best_idx]
-        best_period = 1.0 / best_freq
-        best_power = power[best_idx]
+        notes = []
 
-        # Error detection: Check if fit converged to period limits
-        # Allow 5% tolerance at edges
+        # Converging to an edge of the searched range usually means the real
+        # period lies outside it. Reported rather than raised: the periodogram
+        # comes back along with it and shows the situation better than any
+        # message could, and failing outright would hide it.
         period_tolerance = 0.05  # 5% tolerance
-        lower_threshold = period_min * (1 + period_tolerance)
-        upper_threshold = period_max * (1 - period_tolerance)
+        if best_period < period_min * (1 + period_tolerance):
+            notes.append(f'Best period ({best_period:.4f} days) is at the lower edge of the search range ({period_min:.4f} days). Try decreasing the minimum period - the signal may have a shorter one.')
 
-        warnings = []
-
-        if best_period < lower_threshold:
-            return JsonResponse({
-                'error': 'Period fit converged to lower limit',
-                'details': f'Best period ({best_period:.4f} days) is at the lower edge of search range ({period_min:.4f} days). Try decreasing minimum period or the signal may have a shorter period.',
-                'best_period': float(best_period),
-                'power': float(best_power),
-                'period_min': float(period_min),
-                'period_max': float(period_max),
-            }, status=400)
-
-        if best_period > upper_threshold:
-            return JsonResponse({
-                'error': 'Period fit converged to upper limit',
-                'details': f'Best period ({best_period:.4f} days) is at the upper edge of search range ({period_max:.4f} days). Try increasing maximum period or the signal may have a longer period.',
-                'best_period': float(best_period),
-                'power': float(best_power),
-                'period_min': float(period_min),
-                'period_max': float(period_max),
-            }, status=400)
+        if best_period > period_max * (1 - period_tolerance):
+            notes.append(f'Best period ({best_period:.4f} days) is at the upper edge of the search range ({period_max:.4f} days). Try increasing the maximum period - the signal may have a longer one.')
 
         # Warn if best period is close to data span (aliasing risk)
         if best_period > 0.8 * time_span:
-            warnings.append(f'Best period ({best_period:.2f} days) is close to data span ({time_span:.2f} days). Period may be poorly constrained.')
+            notes.append(f'Best period ({best_period:.2f} days) is close to data span ({time_span:.2f} days). Period may be poorly constrained.')
 
         # Check if power is suspiciously low (weak or no periodicity)
         # Typical significant peaks have power > 0.1, but this is data-dependent
         if best_power < 0.05:
-            warnings.append(f'Low periodogram power ({best_power:.4f}). Signal may be very weak or non-periodic.')
+            notes.append(f'Low periodogram power ({best_power:.4f}). Signal may be very weak or non-periodic.')
 
-        # Compute false alarm probability (if single band, use LombScargle)
-        # Note: LombScargleMultiband doesn't have FAP calculation implemented
-        fap = None
-        if len(times) == 1:
-            try:
-                # Use single-band LombScargle for FAP calculation
-                from astropy.timeseries import LombScargle
-                ls_single = LombScargle(t_all, y_all, dy=dy_all)
-                fap = ls_single.false_alarm_probability(best_power)
+        if fap is not None and fap > 0.01:  # 1% FAP threshold
+            notes.append(f'High false alarm probability ({fap:.4f}). Detection may not be significant.')
 
-                # Warn if FAP is high (not significant)
-                if fap > 0.01:  # 1% FAP threshold
-                    warnings.append(f'High false alarm probability ({fap:.4f}). Detection may not be significant.')
-            except Exception as e:
-                # FAP calculation failed, but don't fail the whole fit
-                print(f'FAP calculation failed: {e}')
-                pass
-        else:
-            # For multiband, FAP is not available
-            # Could use bootstrap or other methods, but skip for now
-            pass
+        if pg['truncated']:
+            notes.append(f'Frequency grid truncated to {pg["nfreq"]} samples. Narrow peaks may be missed - narrow the search range to resolve them.')
 
         # Estimate epoch (time of maximum) using phase folding
         # Use median time as initial guess
@@ -564,13 +600,19 @@ def fit_period(request, id):
             'period_min': float(period_min),
             'period_max': float(period_max),
             'time_span': float(time_span),
+            # Decimated periodogram for display, plus its highest peaks
+            'periodogram': {'periods': pg['periods'], 'power': pg['power']},
+            'peaks': pg['peaks'],
+            'aliases': pg['aliases'],
+            'nfreq': pg['nfreq'],
+            'truncated': pg['truncated'],
         }
 
         if fap is not None:
             result['fap'] = float(fap)
 
-        if warnings:
-            result['warnings'] = warnings
+        if notes:
+            result['warnings'] = notes
 
         return JsonResponse(result)
 
