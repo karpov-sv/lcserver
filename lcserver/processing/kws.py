@@ -18,13 +18,19 @@ from ..surveys import survey_source, get_output_files
 from .utils import cleanup_paths, cached_votable_query, log_bands, log_conversion
 
 
+# Largest separation between a V and an Ic measurement still counted as
+# simultaneous, in days. KWS steps through its filters in seconds, so anything
+# from the same visit falls well inside this.
+KWS_COLOR_DT = 0.01
+
+
 @survey_source(
     name='Kamogata Wide-field Survey',
     short_name='KWS',
     state_acquiring='acquiring KWS lightcurve',
     state_acquired='KWS lightcurve acquired',
     log_file='kws.log',
-    output_files=['kws.log', 'kws_lc.png', 'kws.vot', 'kws.txt'],
+    output_files=['kws.log', 'kws_lc.png', 'kws_color_mag.png', 'kws.vot', 'kws.txt'],
     button_text='Get KWS lightcurve',
     help_text='Kamogata Wide-field Survey',
     order=23,
@@ -44,8 +50,12 @@ from .utils import cleanup_paths, cached_votable_query, log_bands, log_conversio
     lc_mode='magnitude',
     lc_short=False,
     # Template metadata
-    template_layout='simple',
+    template_layout='with_cutout',
     requires_coordinates=False,
+    # No cutout - KWS is queried by name, so there are no coordinates to cut on
+    show_cutout=False,
+    show_color_mag=True,
+    color_mag_file='kws_color_mag.png',
 )
 def target_kws(config, basepath=None, verbose=True, show=False):
     """Acquire Kamogata Wide-field Survey lightcurve."""
@@ -219,6 +229,64 @@ def target_kws(config, basepath=None, verbose=True, show=False):
         ax.set_title(f"{config['target_name']} - Kamogata Wide-field Survey")
 
     log("KWS lightcurve plot saved to file:kws_lc.png")
+
+    # Colour-magnitude diagram, from the V and Ic measurements taken together.
+    # KWS cycles through its filters within seconds, so the two bands pair up
+    # almost exactly; the window is wide enough to absorb the cycle without
+    # ever reaching into another night.
+    kws_color_dt = config.get('kws_color_dt', KWS_COLOR_DT)
+
+    tV, mV, eV = [kws[_][kws['filter'] == 'V'] for _ in ('mjd', 'mag', 'magerr')]
+    tI, mI, eI = [kws[_][kws['filter'] == 'Ic'] for _ in ('mjd', 'mag', 'magerr')]
+
+    iiV, iiI = [], []
+    if len(tV) and len(tI):
+        tI_arr = np.asarray(tI, dtype=float)
+        for i, t1 in enumerate(np.asarray(tV, dtype=float)):
+            dist = np.abs(tI_arr - t1)
+            j = np.argmin(dist)
+            if dist[j] < kws_color_dt:
+                iiV.append(i)
+                iiI.append(j)
+
+    if len(iiV):
+        color = np.asarray(mV)[iiV] - np.asarray(mI)[iiI]
+        color_err = np.hypot(np.asarray(eV)[iiV], np.asarray(eI)[iiI])
+        magV, magI = np.asarray(mV)[iiV], np.asarray(mI)[iiI]
+        errV, errI = np.asarray(eV)[iiV], np.asarray(eI)[iiI]
+
+        with plots.figure_saver(os.path.join(basepath, 'kws_color_mag.png'),
+                                figsize=(10, 5), show=show) as fig:
+            ax = fig.add_subplot(1, 2, 1)
+            ax.errorbar(color, magV, xerr=color_err, yerr=errV,
+                        fmt='.', color='#e377c2', alpha=0.5)
+            ax.grid(alpha=0.3)
+            ax.set_xlabel('V - Ic')
+            ax.set_ylabel('V')
+            ax.invert_yaxis()
+
+            ax = fig.add_subplot(1, 2, 2, sharex=ax)
+            ax.errorbar(color, magI, xerr=color_err, yerr=errI,
+                        fmt='.', color='#8c564b', alpha=0.5)
+            ax.grid(alpha=0.3)
+            ax.set_xlabel('V - Ic')
+            ax.set_ylabel('Ic')
+            ax.invert_yaxis()
+
+            fig.suptitle(f"{config['target_name']} - KWS")
+
+        log("KWS color-magnitude diagram saved to file:kws_color_mag.png")
+
+        color_mean, color_std = float(np.mean(color)), float(np.std(color))
+        log(f"\n---- KWS colour ----\n")
+        log(f"{len(iiV)} quasi-simultaneous V and Ic measurements "
+            f"within {kws_color_dt*24*60:.0f} min")
+        log(f"(V - Ic) = {color_mean:.3f} +/- {color_std:.3f}")
+
+        config['V_minus_Ic'] = color_mean
+    else:
+        log("No quasi-simultaneous V and Ic measurements, "
+            "skipping the colour-magnitude diagram")
 
     # Save data
     # Remove time_obj column (not serializable to VOTable)
