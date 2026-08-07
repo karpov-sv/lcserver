@@ -77,6 +77,8 @@ class TaskProcessContext:
                 self.target.celery_id = None
                 self.target.celery_chain_ids = []
                 self.target.complete()
+                # A refresh was asked for this run only
+                self.target.config.pop('refresh_cache', None)
             # else: Success with finalize=False: leave celery_id (continue chain)
 
             # Save target (always)
@@ -157,6 +159,11 @@ def get_survey_task(source_id):
 @shared_task(bind=True)
 def task_finalize(self, id):
     target = models.Target.objects.get(id=id)
+
+    # The refresh applied to the chain that has just finished, and every step
+    # in it saw the flag. Clearing it here rather than in the first step is
+    # what lets a chain refresh all of its sources.
+    target.config.pop('refresh_cache', None)
 
     # Determine if processing succeeded or failed
     target.celery_id = None

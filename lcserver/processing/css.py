@@ -61,6 +61,10 @@ def target_css(config, basepath=None, verbose=True, show=False):
     # Simple wrapper around print for logging in verbose mode only
     log = (verbose if callable(verbose) else print) if verbose else lambda *args,**kwargs: None
 
+    # Read, not consumed: a chain must refresh every step it runs, so the flag
+    # is cleared once the whole run finishes rather than by the first source
+    refresh_cache = bool(config.get('refresh_cache', False))
+
     # Cleanup stale plots
     cleanup_paths(get_output_files('css'), basepath=basepath)
 
@@ -69,7 +73,7 @@ def target_css(config, basepath=None, verbose=True, show=False):
     radius_arcsec = config.get('css_radius', 2.0)
     cache_name = f"css_{ra:.4f}_{dec:.4f}_{radius_arcsec:.1f}.vot"
 
-    with cached_votable_query(cache_name, basepath, log, 'Catalina Sky Survey') as cache:
+    with cached_votable_query(cache_name, basepath, log, 'Catalina Sky Survey', refresh=refresh_cache) as cache:
         if not cache.hit:
 
             log(f"within {radius_arcsec} arcsec")

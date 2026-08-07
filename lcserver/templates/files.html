@@ -78,6 +78,17 @@
                 </a>
               {% endif %}
             {% endif %}
+
+            {% if user_may_delete and file.type != 'up' %}
+              <form action="{% url 'target_file_delete' id=target_id path=file.path %}" method="POST"
+                    class="{% if file.type == 'dir' %}ms-auto{% endif %} ms-2"
+                    onsubmit="return confirm('Delete {{ file.name|escapejs }}? This cannot be undone.');">
+                {% csrf_token %}
+                <button type="submit" class="btn btn-sm btn-outline-danger p-0 ps-1 pe-1" title="Delete">
+                  <i class="fa fa-trash-o"></i>
+                </button>
+              </form>
+            {% endif %}
           </div>
 
         {% endfor %}
@@ -108,6 +119,19 @@
 
           <dt class="col-sm-2">Modified:</dt>
           <dd class="col-sm-10">{{ time.iso }} ({{ time.datetime|naturaltime }})</dd>
+
+          {% if user_may_delete %}
+            <dt class="col-sm-2">Delete:</dt>
+            <dd class="col-sm-10">
+              <form action="{% url 'target_file_delete' id=target_id path=path %}" method="POST"
+                    onsubmit="return confirm('Delete {{ path|escapejs }}? This cannot be undone.');">
+                {% csrf_token %}
+                <button type="submit" class="btn btn-sm btn-outline-danger">
+                  <i class="fa fa-trash-o"></i> Delete this file
+                </button>
+              </form>
+            </dd>
+          {% endif %}
 
           <dt class="col-sm-2">Type:</dt>
           <dd class="col-sm-10"><code>{{ mime }}</code></dd>

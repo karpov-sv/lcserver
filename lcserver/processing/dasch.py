@@ -64,6 +64,10 @@ def target_dasch(config, basepath=None, verbose=True, show=False):
     # Simple wrapper around print for logging in verbose mode only
     log = (verbose if callable(verbose) else print) if verbose else lambda *args,**kwargs: None
 
+    # Read, not consumed: a chain must refresh every step it runs, so the flag
+    # is cleared once the whole run finishes rather than by the first source
+    refresh_cache = bool(config.get('refresh_cache', False))
+
     # Cleanup stale plots
     cleanup_paths(get_output_files('dasch'), basepath=basepath)
 
@@ -75,7 +79,7 @@ def target_dasch(config, basepath=None, verbose=True, show=False):
     dasch_sr = config.get('dasch_sr', 5.0)
     cache_name = f"dasch_{ra:.4f}_{dec:.4f}_{dasch_sr:.1f}.vot"
 
-    with cached_votable_query(cache_name, basepath, log, 'DASCH') as cache:
+    with cached_votable_query(cache_name, basepath, log, 'DASCH', refresh=refresh_cache) as cache:
         if not cache.hit:
 
             log(f"for {config['target_name']} within {dasch_sr:.1f} arcsec")

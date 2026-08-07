@@ -435,3 +435,41 @@ def get_source_bands(config):
         return []
 
     return [band('', mag, err, BAND_NATIVE, color=config.get('lc_color'))]
+
+
+# Cache filenames are built by the processing modules from a source-specific
+# prefix; this maps them back, so that a cache entry can be shown next to the
+# survey it belongs to. Longest prefix wins.
+CACHE_PREFIXES = {
+    'asas_': 'asas',
+    'applause_': 'applause',
+    'css_': 'css',
+    'dasch_': 'dasch',
+    'kws_': 'kws',
+    'mmt9_': 'mmt9',
+    'ptf_': 'ptf',
+    'ztf_raw_': 'ztf',
+    # Everything the info step collects
+    'simbad_': 'info',
+    'gaiadr3_phot_': 'info',
+    'gaiadr3_dist_': 'info',
+    'gaiadr3syn_': 'info',
+    'ps1_': 'info',
+    'skymapper_': 'info',
+    # lightkurve keeps the TESS downloads in a directory of its own
+    'mastDownload': 'tess',
+}
+
+
+def cache_source_for(name):
+    """Which source a cache entry belongs to, or None if it is unrecognized."""
+    for prefix in sorted(CACHE_PREFIXES, key=len, reverse=True):
+        if name.startswith(prefix):
+            return CACHE_PREFIXES[prefix]
+
+    # Older entries were named after the source alone, with no coordinates
+    stem = name.split('.')[0].split('_')[0]
+    if stem in SURVEY_SOURCES:
+        return stem
+
+    return None

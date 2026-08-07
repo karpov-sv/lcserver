@@ -60,7 +60,7 @@ def parse_votable_lenient(xml_content):
 
 
 @contextmanager
-def cached_votable_query(cache_name, basepath, log, description):
+def cached_votable_query(cache_name, basepath, log, description, refresh=False):
     """Context manager for cached VOTable queries.
 
     Automatically handles cache checking, directory creation, and saving.
@@ -87,6 +87,11 @@ def cached_votable_query(cache_name, basepath, log, description):
         Logging function
     description : str
         Human-readable name for logging (e.g., 'Palomar Transient Factory')
+    refresh : bool, optional
+        Drop whatever is cached and query the source again. Never automatic -
+        a survey may be knowingly down, in which case an old cache is still
+        better than no data at all - so this is only ever set by an explicit
+        request from the user.
 
     Yields
     ------
@@ -156,6 +161,10 @@ def cached_votable_query(cache_name, basepath, log, description):
             self._saved = False
 
     cache = CacheHelper()
+
+    if refresh and os.path.exists(cache_path):
+        log(f"Dropping cached {description} data ({cache_name}) as requested")
+        cache.invalidate()
 
     # Try loading from cache
     if os.path.exists(cache_path):

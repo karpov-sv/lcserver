@@ -201,12 +201,65 @@
           </button>
 
           <span id="unsafeButtons" class="collapse collapse-horizontal collapsed">
+            {% if cache_entries %}
+              <!-- Cache panel hide/show -->
+              <button type="button" class="btn btn-light collapse-chevron collapsed"
+                      data-bs-toggle="collapse"
+                      data-bs-target="#cachePanel"
+                      aria-expanded="false"
+                      aria-controls="cachePanel"
+                      title="Show cached survey replies">Cache&nbsp;</button>
+            {% endif %}
+
             <button type="submit" name="action" value="delete_target" class="btn btn-danger"
                     title="Permanently delete this target">Delete target</button>
           </span>
 
         </fieldset>
       </form>
+
+      {# Outside the form above, as the entries carry forms of their own and those cannot be nested #}
+      {% if cache_entries %}
+        <div id="cachePanel" class="collapse collapsed mt-1 mb-2">
+          <p class="text-muted small mb-2">
+            Replies kept from the surveys, {{ cache_size|filesizeformat }} in total.
+            Dropping an entry makes the next run of that source query it again -
+            as does the "Ignore cache" switch on the source itself.
+          </p>
+
+          <div class="list-group mb-2">
+            {% for entry in cache_entries %}
+              <div class="list-group-item d-flex align-items-center py-1">
+                <span class="fw-bold" style="min-width: 8em">{{ entry.source_name }}</span>
+                <a href="{% url 'target_files' id=target.id path=entry.path %}"
+                   class="text-decoration-none text-body small">
+                  <i class="fa fa-{% if entry.is_dir %}folder-open-o{% else %}file-o{% endif %} me-1"></i>
+                  {{ entry.name }}
+                </a>
+                <span class="ms-auto small text-muted me-3">{{ entry.modified|naturaltime }}</span>
+                <span class="small me-2" style="min-width: 5em; text-align: right">{{ entry.size|filesizeformat }}</span>
+                <form action="" method="POST" class="d-inline"
+                      onsubmit="return confirm('Drop cached {{ entry.name|escapejs }}?');">
+                  {% csrf_token %}
+                  <input type="hidden" name="name" value="{{ entry.name }}">
+                  <button type="submit" name="action" value="delete_cache"
+                          class="btn btn-sm btn-outline-danger p-0 ps-1 pe-1" title="Drop this cache entry">
+                    <i class="fa fa-trash-o"></i>
+                  </button>
+                </form>
+              </div>
+            {% endfor %}
+          </div>
+
+          <form action="" method="POST"
+                onsubmit="return confirm('Drop all {{ cache_entries|length }} cache entries for this target?');">
+            {% csrf_token %}
+            <button type="submit" name="action" value="clear_cache" class="btn btn-sm btn-danger">
+              <i class="fa fa-trash-o"></i> Clear all
+            </button>
+          </form>
+        </div>
+      {% endif %}
     {% endif %}
 
 

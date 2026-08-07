@@ -54,6 +54,10 @@ def target_info(config, basepath=None, verbose=True, show=False):
     # Simple wrapper around print for logging in verbose mode only
     log = (verbose if callable(verbose) else print) if verbose else lambda *args,**kwargs: None
 
+    # Read, not consumed: a chain must refresh every step it runs, so the flag
+    # is cleared once the whole run finishes rather than by the first source
+    refresh_cache = bool(config.get('refresh_cache', False))
+
     # Cleanup stale plots
     cleanup_paths(get_all_output_files(), basepath=basepath)
 
@@ -82,7 +86,7 @@ def target_info(config, basepath=None, verbose=True, show=False):
     safe_name = re.sub(r'[^\w\-.]', '_', config['target_name'])
     cache_name = f"simbad_{safe_name}.vot"
 
-    with cached_votable_query(cache_name, basepath, log, 'SIMBAD') as cache:
+    with cached_votable_query(cache_name, basepath, log, 'SIMBAD', refresh=refresh_cache) as cache:
         if not cache.hit:
             # Query SIMBAD - only if not cached
             sim = Simbad()
@@ -118,7 +122,7 @@ def target_info(config, basepath=None, verbose=True, show=False):
         dec = config.get('target_dec')
         cache_name = f"{catname}_{ra:.4f}_{dec:.4f}.vot"
 
-        with cached_votable_query(cache_name, basepath, log, catalogs.catalogs[catname]['name']) as cache:
+        with cached_votable_query(cache_name, basepath, log, catalogs.catalogs[catname]['name'], refresh=refresh_cache) as cache:
             if not cache.hit:
                 # Query catalog - only if not cached
                 cat = catalogs.get_cat_vizier(ra, dec, 5/3600,
@@ -163,7 +167,7 @@ def target_info(config, basepath=None, verbose=True, show=False):
     dec = config.get('target_dec')
     cache_name = f"gaiadr3_phot_{ra:.4f}_{dec:.4f}.vot"
 
-    with cached_votable_query(cache_name, basepath, log, 'Gaia DR3 photometry') as cache:
+    with cached_votable_query(cache_name, basepath, log, 'Gaia DR3 photometry', refresh=refresh_cache) as cache:
         if not cache.hit:
             # Query Gaia DR3 - only if not cached
             cat = catalogs.get_cat_vizier(ra, dec, 5/3600,
@@ -198,7 +202,7 @@ def target_info(config, basepath=None, verbose=True, show=False):
     dec = config.get('target_dec')
     cache_name = f"gaiadr3_dist_{ra:.4f}_{dec:.4f}.vot"
 
-    with cached_votable_query(cache_name, basepath, log, 'Gaia DR3 distances') as cache:
+    with cached_votable_query(cache_name, basepath, log, 'Gaia DR3 distances', refresh=refresh_cache) as cache:
         if not cache.hit:
             # Query Gaia DR3 distances - only if not cached
             cat = catalogs.get_cat_vizier(ra, dec, 5/3600,
@@ -266,7 +270,7 @@ def target_info(config, basepath=None, verbose=True, show=False):
     dec = config.get('target_dec')
     cache_name = f"ps1_warp_{ra:.4f}_{dec:.4f}.vot"
 
-    with cached_votable_query(cache_name, basepath, log, 'Pan-STARRS DR2 warp') as cache:
+    with cached_votable_query(cache_name, basepath, log, 'Pan-STARRS DR2 warp', refresh=refresh_cache) as cache:
         if not cache.hit:
             # Query Pan-STARRS DR2 - only if not cached
             try:

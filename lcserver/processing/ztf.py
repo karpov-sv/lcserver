@@ -144,6 +144,10 @@ def target_ztf(config, basepath=None, verbose=True, show=False):
     # Simple wrapper around print for logging in verbose mode only
     log = (verbose if callable(verbose) else print) if verbose else lambda *args,**kwargs: None
 
+    # Read, not consumed: a chain must refresh every step it runs, so the flag
+    # is cleared once the whole run finishes rather than by the first source
+    refresh_cache = bool(config.get('refresh_cache', False))
+
     # Cleanup stale plots
     cleanup_paths(get_output_files('ztf'), basepath=basepath)
 
@@ -166,7 +170,7 @@ def target_ztf(config, basepath=None, verbose=True, show=False):
     # Columns required for ZTF processing
     ztf_required_columns = {'filtercode', 'mag', 'magerr', 'catflags', 'clrcoeff', 'mjd'}
 
-    with cached_votable_query(cache_name, basepath, log, 'ZTF raw data') as cache:
+    with cached_votable_query(cache_name, basepath, log, 'ZTF raw data', refresh=refresh_cache) as cache:
         if cache.hit:
             # Validate cached data has expected columns
             if not ztf_required_columns.issubset(cache.data.colnames):

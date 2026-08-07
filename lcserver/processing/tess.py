@@ -4,6 +4,7 @@ Acquires TESS (Transiting Exoplanet Survey Satellite) lightcurves.
 """
 
 import os
+import shutil
 import numpy as np
 
 from astropy.coordinates import SkyCoord
@@ -62,6 +63,15 @@ def target_tess(config, basepath=None, verbose=True, show=False):
     """
     # Simple wrapper around print for logging in verbose mode only
     log = (verbose if callable(verbose) else print) if verbose else lambda *args,**kwargs: None
+
+    # TESS caches through lightkurve, which keeps its downloads under
+    # cache/mastDownload and skips anything already there. The flag is read
+    # rather than consumed - see the other sources.
+    if config.get('refresh_cache', False):
+        mast = os.path.join(basepath, 'cache', 'mastDownload')
+        if os.path.exists(mast):
+            log("Dropping cached TESS downloads (cache/mastDownload) as requested")
+            shutil.rmtree(mast, ignore_errors=True)
 
     # Cleanup stale plots
     cleanup_paths(get_output_files('tess'), basepath=basepath)

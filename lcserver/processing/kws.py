@@ -62,6 +62,10 @@ def target_kws(config, basepath=None, verbose=True, show=False):
     # Simple wrapper around print for logging in verbose mode only
     log = (verbose if callable(verbose) else print) if verbose else lambda *args,**kwargs: None
 
+    # Read, not consumed: a chain must refresh every step it runs, so the flag
+    # is cleared once the whole run finishes rather than by the first source
+    refresh_cache = bool(config.get('refresh_cache', False))
+
     # Cleanup stale plots
     cleanup_paths(get_output_files('kws'), basepath=basepath)
 
@@ -77,7 +81,7 @@ def target_kws(config, basepath=None, verbose=True, show=False):
     safe_name = safe_name.replace(' ', '_')
     cache_name = f"kws_{safe_name}.vot"
 
-    with cached_votable_query(cache_name, basepath, log, 'Kamogata Wide-field Survey') as cache:
+    with cached_votable_query(cache_name, basepath, log, 'Kamogata Wide-field Survey', refresh=refresh_cache) as cache:
         if not cache.hit:
             log(f"for {target_name}")
 

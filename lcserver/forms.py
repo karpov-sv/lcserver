@@ -72,6 +72,30 @@ class TargetsActionsForm(forms.Form):
         self.helper.layout = Layout()
 
 
+# Sources that hit an external service and keep the reply under cache/.
+# Combined only reads files already on disk, so it has nothing to refresh.
+CACHED_SOURCES = {'info', 'ztf', 'asas', 'css', 'kws', 'ptf', 'tess',
+                  'dasch', 'applause', 'mmt9'}
+
+
+def refresh_cache_field():
+    """The 'query the survey again' switch.
+
+    Expiring the cache on age would be wrong here: a survey may be knowingly
+    down, and yesterday's data beats an error. So refreshing is always an
+    explicit request.
+    """
+    return forms.BooleanField(
+        required=False,
+        initial=False,
+        label='Ignore cache',
+        # As a tooltip rather than help text, to keep the source forms compact
+        widget=forms.CheckboxInput(attrs={
+            'title': 'Discard the cached reply from this survey and fetch it again',
+        }),
+    )
+
+
 def create_survey_form(source_id, survey_config):
     """Factory function to create a Django form for a survey source."""
 
@@ -83,6 +107,7 @@ def create_survey_form(source_id, survey_config):
             title = forms.CharField(max_length=150, required=False, label="Optional title or comment")
             g_minus_r = forms.FloatField(required=False, label="(g - r) color")
             B_minus_V = forms.FloatField(required=False, label="(B - V) color")
+            refresh_cache = refresh_cache_field()
 
             def __init__(self, *args, **kwargs):
                 super().__init__(*args, **kwargs)
@@ -99,6 +124,10 @@ def create_survey_form(source_id, survey_config):
                     Row(
                         Column('g_minus_r', css_class="col-md"),
                         Column('B_minus_V', css_class="col-md"),
+                        css_class='align-items-end'
+                    ),
+                    Row(
+                        Column('refresh_cache', css_class="col-md"),
                         css_class='align-items-end'
                     ),
                 )
@@ -140,6 +169,11 @@ def create_survey_form(source_id, survey_config):
             )
         layout_fields.append(field_name)
 
+    # Every source that talks to an external service gets the same switch
+    if source_id in CACHED_SOURCES:
+        fields['refresh_cache'] = refresh_cache_field()
+        layout_fields.append('refresh_cache')
+
     # Create form class dynamically
     FormClass = type(
         f'Target{source_id.upper()}Form',
@@ -160,6 +194,7 @@ def create_survey_form(source_id, survey_config):
                 'form_type',
                 Row(
                     Column(InlineRadios('ztf_color_model', template='crispy_radioselect_inline.html'), css_class='form-group'),
+                    Column('refresh_cache', css_class='form-group'),
                     css_class='align-items-end'
                 ),
             )

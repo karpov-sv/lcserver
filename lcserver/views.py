@@ -1,6 +1,7 @@
 from django.http import HttpResponse, FileResponse, HttpResponseRedirect, JsonResponse
 from django.template.response import TemplateResponse
 from django.views.decorators.cache import cache_page
+from django.views.decorators.http import require_POST
 from django.db.models import Q
 from django.urls import reverse
 from django.contrib import messages
@@ -8,7 +9,7 @@ from django.contrib.auth.decorators import login_required
 from django.conf import settings
 from django.shortcuts import get_object_or_404
 
-import os, io, glob
+import os, io, glob, shutil
 
 import mimetypes
 import magic
@@ -261,8 +262,78 @@ def target_files(request, id, path=''):
         context['target'] = target
         context['target_id'] = id
         context['is_target_browser'] = True
+        context['user_may_delete'] = target.can_edit(request.user)
 
     return response
+
+
+@login_required
+@require_POST
+def target_file_delete(request, id, path=''):
+    """Delete one file or directory from a target folder."""
+    target = get_object_or_404(models.Target, id=id)
+
+    if not target.can_edit(request.user):
+        return HttpResponse("You don't have permission to modify this target", status=403)
+
+    if target.celery_id is not None:
+        messages.warning(request, f"Target {id} is running, not touching its files")
+        return HttpResponseRedirect(reverse('target_files', kwargs={'id': id}))
+
+    base = target.path()
+    path = sanitize_path(path)
+    fullpath = os.path.join(base, path)
+
+    # sanitize_path() drops absolute paths, this catches the rest - a symlink or
+    # a .. that resolves outside the target folder
+    if not path or not os.path.realpath(fullpath).startswith(os.path.realpath(base) + os.sep):
+        messages.error(request, "Refusing to delete outside the target folder")
+        return HttpResponseRedirect(reverse('target_files', kwargs={'id': id}))
+
+    if not os.path.exists(fullpath):
+        messages.warning(request, f"{path} does not exist")
+    elif os.path.isdir(fullpath):
+        shutil.rmtree(fullpath, ignore_errors=True)
+        messages.success(request, f"Deleted directory {path}")
+    else:
+        os.unlink(fullpath)
+        messages.success(request, f"Deleted {path}")
+
+    # Back to the directory the file was in, rather than the root
+    parent = os.path.dirname(path)
+    return HttpResponseRedirect(
+        reverse('target_files', kwargs={'id': id, 'path': parent}) if parent
+        else reverse('target_files', kwargs={'id': id}))
+
+
+def target_cache_entries(target):
+    """Cache contents of a target, annotated with the source each entry serves."""
+    entries = []
+    cachepath = os.path.join(target.path(), 'cache')
+
+    for fullpath in sorted(glob.glob(os.path.join(cachepath, '*'))):
+        name = os.path.basename(fullpath)
+
+        if os.path.isdir(fullpath):
+            size = sum(os.path.getsize(os.path.join(root, f))
+                       for root, _, files in os.walk(fullpath) for f in files)
+        else:
+            size = os.path.getsize(fullpath)
+
+        source_id = surveys.cache_source_for(name)
+        source = surveys.SURVEY_SOURCES.get(source_id) if source_id else None
+
+        entries.append({
+            'name': name,
+            'path': os.path.join('cache', name),
+            'size': size,
+            'modified': Time(os.path.getmtime(fullpath), format='unix').datetime,
+            'source_id': source_id,
+            'source_name': source['short_name'] if source else 'Unknown',
+            'is_dir': os.path.isdir(fullpath),
+        })
+
+    return entries
 
 
 def targets(request, id=None):
@@ -315,6 +386,34 @@ def targets(request, id=None):
             if form_name in all_forms:
                 survey_forms[source_id] = all_forms[form_name]
         context['survey_forms'] = survey_forms
+
+        # Cache management, handled before the survey forms as these carry no
+        # form of their own
+        if request.method == 'POST' and request.POST.get('action') in ('delete_cache', 'clear_cache'):
+            action = request.POST.get('action')
+
+            if not target.can_edit(request.user):
+                messages.error(request, "You don't have permission to modify this target")
+            elif action == 'clear_cache':
+                cachepath = os.path.join(path, 'cache')
+                nentries = len(target_cache_entries(target))
+                if os.path.exists(cachepath):
+                    shutil.rmtree(cachepath, ignore_errors=True)
+                messages.success(request, f"Cleared {nentries} cache entries")
+            else:
+                name = os.path.basename(request.POST.get('name', ''))
+                entry = os.path.join(path, 'cache', name)
+                # basename() above already confines this to the cache folder
+                if name and os.path.exists(entry):
+                    if os.path.isdir(entry):
+                        shutil.rmtree(entry, ignore_errors=True)
+                    else:
+                        os.unlink(entry)
+                    messages.success(request, f"Dropped cached {name}")
+                else:
+                    messages.warning(request, f"No cached {name}")
+
+            return HttpResponseRedirect(request.path_info)
 
         # Form actions
         if request.method == 'POST':
@@ -399,6 +498,10 @@ def targets(request, id=None):
         context['running_chain'] = bool(target.celery_id and target.celery_chain_ids)
 
         context['files'] = [os.path.split(_)[1] for _ in glob.glob(os.path.join(path, '*'))]
+
+        # Cached replies from the surveys, so that they can be dropped one by one
+        context['cache_entries'] = target_cache_entries(target)
+        context['cache_size'] = sum(_['size'] for _ in context['cache_entries'])
 
         # Additional info
 

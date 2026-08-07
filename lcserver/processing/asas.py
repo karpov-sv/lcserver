@@ -70,6 +70,10 @@ def target_asas(config, basepath=None, verbose=True, show=False):
     # Simple wrapper around print for logging in verbose mode only
     log = (verbose if callable(verbose) else print) if verbose else lambda *args,**kwargs: None
 
+    # Read, not consumed: a chain must refresh every step it runs, so the flag
+    # is cleared once the whole run finishes rather than by the first source
+    refresh_cache = bool(config.get('refresh_cache', False))
+
     # Cleanup stale plots
     cleanup_paths(get_output_files('asas'), basepath=basepath)
 
@@ -87,7 +91,7 @@ def target_asas(config, basepath=None, verbose=True, show=False):
         asas_sr = config.get('asas_sr', 10.0)
         cache_name = f"asas_{ra:.4f}_{dec:.4f}_{asas_sr:.1f}.vot"
 
-        with cached_votable_query(cache_name, basepath, log, 'ASAS-SN') as cache:
+        with cached_votable_query(cache_name, basepath, log, 'ASAS-SN', refresh=refresh_cache) as cache:
             if not cache.hit:
                 # Query ASAS-SN - only if not cached
                 log(f"Requesting ASAS-SN lightcurve for {config['target_name']} within {asas_sr:.1f} arcsec")
