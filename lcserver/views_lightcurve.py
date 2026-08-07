@@ -310,9 +310,14 @@ def fit_period(request, id):
         return JsonResponse({'error': 'Forbidden'}, status=403)
 
     try:
-        # Parse request data
+        # Parse request data. The client sends only the selection - which series
+        # are visible and how they are filtered - and the data itself is loaded
+        # here from the same files the viewer was built from. Sending the points
+        # back would make the request grow with the light curve and exceed
+        # DATA_UPLOAD_MAX_MEMORY_SIZE (TESS alone is several MB per target).
         data = json.loads(request.body)
         series_list = data.get('series', [])
+        mode = data.get('mode', 'magnitude')
         period_min = data.get('period_min', 0.1)  # Default: 0.1 days
         period_max = data.get('period_max', 100)  # Default: 100 days
 
@@ -332,22 +337,52 @@ def fit_period(request, id):
                 'details': f'Maximum period ({period_max}) must be greater than minimum period ({period_min})'
             }, status=400)
 
+        # Load the light curves, exactly as the viewer itself does
+        basepath = target.path()
+        if mode == 'flux':
+            available = load_flux_data(basepath)
+            value_key, error_key = 'flux', 'flux_err'
+        else:
+            available = load_magnitude_data(basepath)
+            value_key, error_key = 'mag', 'magerr'
+
+        labels = {}
+        for i, series in enumerate(available):
+            labels.setdefault(series['label'], i)
+
         # Collect all data points from visible series
         times = []
         values = []
         errors = []
         bands = []
 
-        for i, series in enumerate(series_list):
-            try:
-                t = np.array(series['mjd'])
-                y = np.array(series['values'])
-                dy = np.array(series['errors'])
-            except (KeyError, ValueError) as e:
+        for i, requested in enumerate(series_list):
+            label = requested.get('label')
+            index = requested.get('index')
+
+            # Prefer the index the viewer used, but only while it still points
+            # at the same series - the files may have changed since page load
+            if (isinstance(index, int) and 0 <= index < len(available)
+                    and (label is None or available[index]['label'] == label)):
+                series = available[index]
+            elif label in labels:
+                series = available[labels[label]]
+            else:
                 return JsonResponse({
-                    'error': 'Invalid series data format',
-                    'details': f'Series {i}: {str(e)}'
+                    'error': 'Series is no longer available',
+                    'details': f'Series {i} ({label}) was not found on the server. '
+                               'Reload the page and try again.'
                 }, status=400)
+
+            t = np.array(series['mjd'], dtype=float)
+            y = np.array(series[value_key], dtype=float)
+            dy = np.array(series[error_key], dtype=float)
+
+            # Same max error cut the viewer applies, magnitude mode only
+            max_error = requested.get('max_error')
+            if mode != 'flux' and max_error is not None:
+                keep = dy <= max_error
+                t, y, dy = t[keep], y[keep], dy[keep]
 
             # Filter out non-finite values
             valid = np.isfinite(t) & np.isfinite(y) & np.isfinite(dy) & (dy > 0)

@@ -876,34 +876,21 @@ function fitPeriod() {
         return;
     }
 
-    // Collect visible series data with max error filtering applied
+    // Collect which series to fit and how they are filtered. The points
+    // themselves stay on the server, which loads them from the same files this
+    // viewer was built from - sending them back would push the request past
+    // Django's upload limit for large data sets such as TESS.
     const visibleSeries = [];
-    const dataKey = isMagnitudeMode ? 'mag' : 'flux';
-    const errKey = isMagnitudeMode ? 'magerr' : 'flux_err';
 
     lightcurveData.forEach((series, index) => {
         const state = seriesState[index];
         if (!state.visible) return;
 
-        // Apply max error filter if set (magnitude mode only)
-        let filteredIndices = [...Array(series[dataKey].length).keys()];
-        if (isMagnitudeMode && state.maxError !== null) {
-            filteredIndices = filteredIndices.filter(i => series[errKey][i] <= state.maxError);
-        }
-
-        // Only include series if we have data points after filtering
-        if (filteredIndices.length === 0) return;
-
-        // Collect filtered data
-        const filteredMjd = filteredIndices.map(i => series.mjd[i]);
-        const filteredValues = filteredIndices.map(i => series[dataKey][i]);
-        const filteredErrors = filteredIndices.map(i => series[errKey][i]);
-
         visibleSeries.push({
-            mjd: filteredMjd,
-            values: filteredValues,
-            errors: filteredErrors,
-            label: series.label
+            index: index,
+            label: series.label,
+            // Max error filter applies in magnitude mode only
+            max_error: (isMagnitudeMode && state.maxError !== null) ? state.maxError : null
         });
     });
 
@@ -936,6 +923,7 @@ function fitPeriod() {
         },
         body: JSON.stringify({
             series: visibleSeries,
+            mode: isMagnitudeMode ? 'magnitude' : 'flux',
             period_min: periodMin,
             period_max: periodMax
         })
