@@ -12,7 +12,7 @@
         <!-- Cutout image -->
         <div class="col" style="max-width: 256px">
           {% if source_config.cutout_hips %}
-            {% include "target_block_image.html" with hips=source_config.cutout_hips ra=target.config.target_ra dec=target.config.target_dec width=256 height=256 fov=source_config.cutout_fov only %}
+            {% include "target_block_image.html" with hips=source_config.cutout_hips name=source_config.cutout_name cmap=source_config.cutout_cmap min_cut=source_config.cutout_min_cut max_cut=source_config.cutout_max_cut ra=target.config.target_ra dec=target.config.target_dec width=256 height=256 fov=source_config.cutout_fov only %}
           {% elif source_config.cutout_skyview %}
             {% include "target_block_image.html" with skyview=source_config.cutout_skyview ra=target.config.target_ra dec=target.config.target_dec width=256 fov=source_config.cutout_fov only %}
           {% endif %}

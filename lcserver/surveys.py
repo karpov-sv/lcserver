@@ -95,7 +95,13 @@ def survey_source(
     declination_min=None,       # Minimum declination (e.g., -30 for APPLAUSE)
     declination_max=None,       # Maximum declination
     show_cutout=False,          # Show HiPS/SkyView cutout image
-    cutout_hips=None,           # HiPS survey for cutout (e.g., "CDS/P/ZTF/DR7/color")
+    cutout_hips=None,           # HiPS survey for cutout: a CDS id, or the base URL of any HiPS
+    cutout_name=None,           # Caption for the cutout, for when the HiPS is named by URL
+    # Rendering of a single-channel HiPS. Colour HiPS carry their own palette
+    # and are left alone, so these default to letting the service decide.
+    cutout_cmap=None,           # Matplotlib colormap, e.g. "Blues_r"
+    cutout_min_cut=None,        # Low cut, e.g. "2.5%"
+    cutout_max_cut=None,        # High cut, e.g. "99.5%"
     cutout_skyview=None,        # SkyView survey for cutout (e.g., "TESS")
     cutout_fov=0.03,            # Field of view for cutout (degrees)
     show_color_mag=False,       # Show color-magnitude diagram
@@ -223,6 +229,10 @@ def survey_source(
             'declination_max': declination_max,
             'show_cutout': show_cutout,
             'cutout_hips': cutout_hips,
+            'cutout_name': cutout_name,
+            'cutout_cmap': cutout_cmap,
+            'cutout_min_cut': cutout_min_cut,
+            'cutout_max_cut': cutout_max_cut,
             'cutout_skyview': cutout_skyview,
             'cutout_fov': cutout_fov,
             'show_color_mag': show_color_mag,

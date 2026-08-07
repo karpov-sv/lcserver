@@ -51,7 +51,21 @@ from .utils import cleanup_paths, cached_votable_query, log_bands, log_conversio
     lc_mode='magnitude',
     lc_short=False,
     # Template metadata
-    template_layout='simple',
+    template_layout='with_cutout',
+    # The survey's own all-sky mosaic, which is the useful thing to look at
+    # here: at some 13 arcsec per pixel a Mini-MegaTORTORA measurement can
+    # quietly blend several neighbours, and this shows what it actually saw.
+    show_cutout=True,
+    cutout_hips='http://survey.favor2.info/favor2/hips/',
+    cutout_name='Mini-MegaTORTORA sky mosaic',
+    # Wide enough to be worth looking at at that pixel scale - the 0.03 to 0.06
+    # degrees the arcsecond-resolution surveys use would be a handful of pixels
+    cutout_fov=0.25,
+    # Rendered as the favor2ext previews are - the mosaic is single-channel,
+    # and percentile cuts keep a bright star from flattening the field
+    cutout_cmap='Blues_r',
+    cutout_min_cut='2.5%',
+    cutout_max_cut='99.5%',
 )
 def target_mmt9(config, basepath=None, verbose=True, show=False):
     """

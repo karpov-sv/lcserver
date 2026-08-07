@@ -29,10 +29,10 @@
   {% elif hips %}
 
     <!-- HiPS cutout -->
-    <img src="https://alasky.u-strasbg.fr/hips-image-services/hips2fits?hips={{ hips|urlencode }}&width={{ width }}&height={{ height }}&fov={{ fov }}&ra={{ ra }}&dec={{ dec }}&projection=TAN&coordsys=icrs&rotation_angle=0.0&format=jpg"
+    <img src="https://alasky.u-strasbg.fr/hips-image-services/hips2fits?hips={{ hips|urlencode }}&width={{ width }}&height={{ height }}&fov={{ fov }}&ra={{ ra }}&dec={{ dec }}&projection=TAN&coordsys=icrs&rotation_angle=0.0&format=jpg{% if cmap %}&cmap={{ cmap|urlencode }}{% endif %}{% if min_cut %}&min_cut={{ min_cut|urlencode }}{% endif %}{% if max_cut %}&max_cut={{ max_cut|urlencode }}{% endif %}"
          class="figure-img img-fluid rounded mb-0" />
     <figcaption class="figure-caption text-center mt-0 mb-3">
-      <small>{{ hips }}</small>
+      <small>{{ name|default:hips }}</small>
     </figcaption>
 
   {% elif skyview %}
