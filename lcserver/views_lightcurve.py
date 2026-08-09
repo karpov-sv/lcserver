@@ -278,11 +278,22 @@ def target_lightcurve(request, id):
         else:
             mode = 'magnitude'  # Default fallback
 
+    # Which missions the flux mode covers, named rather than assumed: it was
+    # TESS alone for long enough that the button said so, and Kepler arriving
+    # left it lying. Taken from the registry so the next one is not a third
+    # place to remember.
+    flux_sources = '/'.join(
+        config['short_name']
+        for _, config in sorted(surveys.SURVEY_SOURCES.items(),
+                                key=lambda kv: kv[1].get('order', 99))
+        if config.get('lc_mode') == 'flux' and config.get('processing_function'))
+
     context = {
         'target': target,
         'target_id': id,
         'data_mode': mode,
         'mode': mode,
+        'flux_sources': flux_sources,
     }
 
     return TemplateResponse(request, 'lightcurve_viewer.html', context=context)

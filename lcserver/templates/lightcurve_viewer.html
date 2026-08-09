@@ -122,11 +122,11 @@
     <div>
       <h5 class="mb-3">Display Mode</h5>
       <div class="btn-group">
-        <button onclick="switchMode('magnitude')" class="btn btn-sm {% if data_mode == 'magnitude' %}btn-primary{% else %}btn-outline-primary{% endif %}">
+        <button onclick="switchMode('magnitude')" data-mode="magnitude" class="btn btn-sm {% if data_mode == 'magnitude' %}btn-primary{% else %}btn-outline-primary{% endif %}">
           <i class="fa fa-star"></i> Magnitudes
         </button>
-        <button onclick="switchMode('flux')" class="btn btn-sm {% if data_mode == 'flux' %}btn-primary{% else %}btn-outline-primary{% endif %}">
-          <i class="fa fa-line-chart"></i> TESS Flux
+        <button onclick="switchMode('flux')" data-mode="flux" class="btn btn-sm {% if data_mode == 'flux' %}btn-primary{% else %}btn-outline-primary{% endif %}">
+          <i class="fa fa-line-chart"></i> {{ flux_sources }} flux
         </button>
       </div>
     </div>
@@ -649,7 +649,7 @@ function updatePlot() {
     // Determine plot title based on mode
     const titleText = isMagnitudeMode
         ? '{{ target.name }} - Multi-Survey Light Curve'
-        : '{{ target.name }} - TESS Flux Light Curve';
+        : '{{ target.name }} - {{ flux_sources }} Flux Light Curve';
 
     // Determine y-axis label based on mode
     const yAxisTitle = isMagnitudeMode ? 'Magnitude' : 'Normalized Flux';
@@ -1385,24 +1385,16 @@ function switchMode(newMode) {
     // Update URL without reloading (for better UX and browser history)
     window.history.pushState({mode: newMode}, '', url);
 
-    // Update mode toggle button states
-    document.querySelectorAll('.control-panel .btn-group button').forEach(btn => {
-        if (btn.textContent.includes('Magnitudes')) {
-            if (newMode === 'magnitude') {
-                btn.classList.remove('btn-outline-primary');
-                btn.classList.add('btn-primary');
-            } else {
-                btn.classList.remove('btn-primary');
-                btn.classList.add('btn-outline-primary');
-            }
-        } else if (btn.textContent.includes('TESS Flux')) {
-            if (newMode === 'flux') {
-                btn.classList.remove('btn-outline-primary');
-                btn.classList.add('btn-primary');
-            } else {
-                btn.classList.remove('btn-primary');
-                btn.classList.add('btn-outline-primary');
-            }
+    // Update mode toggle button states. Keyed on data-mode rather than on what
+    // the button says: the flux one is named after the missions it covers, and
+    // that wording grows as they are added.
+    document.querySelectorAll('.control-panel .btn-group button[data-mode]').forEach(btn => {
+        if (btn.dataset.mode === newMode) {
+            btn.classList.remove('btn-outline-primary');
+            btn.classList.add('btn-primary');
+        } else {
+            btn.classList.remove('btn-primary');
+            btn.classList.add('btn-outline-primary');
         }
     });
 
@@ -1433,7 +1425,7 @@ function updateLoadingStatus(message) {
 function loadLightcurveData() {
     // Get mode from URL or use default
     const mode = getUrlParameter('mode') || '{{ data_mode }}';
-    const modeLabel = mode === 'flux' ? 'TESS flux' : 'magnitude';
+    const modeLabel = mode === 'flux' ? '{{ flux_sources }} flux' : 'magnitude';
 
     // Show loading indicator
     document.getElementById('loading-indicator').style.display = 'block';
