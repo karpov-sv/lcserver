@@ -40,6 +40,17 @@ class Target(models.Model):
     def complete(self):
         self.completed = now()
 
+    def forget_unfinished_sources(self):
+        """Drop the sources a run never reached.
+
+        A run marks everything it means to attempt as pending, so the contents
+        list can show what is still to come. If it ends early - cancelled, or
+        stopped by a gating step - whatever never ran would otherwise sit there
+        claiming to be waiting for a worker that is no longer coming.
+        """
+        self.source_states = {k: v for k, v in (self.source_states or {}).items()
+                              if v not in ('pending', 'running')}
+
     @classmethod
     def update_atomic(cls, id, apply, fields):
         """Apply a change to a freshly read row, writing only the named fields.

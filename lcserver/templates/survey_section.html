@@ -6,17 +6,11 @@
 {# A running chain attempts every step regardless of per-survey conditions, so show them all until it ends #}
 {% if source_config|survey_condition_met:target or running_chain %}
   <hr>
-  {# data-toc marks the section for the contents list, and carries its short label #}
+  {# data-toc marks the section for the contents list, which is where its
+     state is shown - always in view, rather than only when scrolled to #}
   <h3 id="section-{{ source_id }}" data-toc="{{ source_config.short_name }}"
-      data-toc-title="{{ source_config.name }}">
-    {{ source_config.name }}
-    {# How this source itself last fared - the target's own state can only speak for one step #}
-    {% with state=target|source_state:source_id %}
-      <span class="source-state badge align-middle fs-6 fw-normal
-                   {% if state == 'running' %}bg-primary{% elif state == 'failed' %}bg-danger{% elif state == 'done' %}bg-success{% else %}d-none{% endif %}"
-            data-source="{{ source_id }}">{{ state }}</span>
-    {% endwith %}
-  </h3>
+      data-toc-title="{{ source_config.name }}" data-toc-source="{{ source_id }}"
+      data-toc-state="{{ target|source_state:source_id }}">{{ source_config.name }}</h3>
 
   {% if user_may_submit and form %}
     <form action="" method="POST" class="mb-2">

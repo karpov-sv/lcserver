@@ -185,12 +185,29 @@ html.toc-enabled {
 }
 
 .toc .nav-link {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
   padding: 0.1rem 0.4rem;
   color: var(--bs-secondary-color);
   border-left: 2px solid transparent;
+}
+
+/* The name gives way before the state mark does, as the mark is the thing
+   worth seeing at a glance while a run is going */
+.toc-label {
+  flex: 1 1 auto;
+  min-width: 0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.toc-state {
+  flex: 0 0 auto;
+  font-size: 0.75rem;
+  width: 0.85rem;
+  text-align: center;
 }
 
 .toc .nav-link:hover {

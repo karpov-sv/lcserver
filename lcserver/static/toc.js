@@ -7,6 +7,24 @@
  * not there.
  */
 
+// How a source's state is drawn beside its entry. Font Awesome carries the
+// spin for us, so a running step needs no animation of its own here.
+var TOC_STATES = {
+  pending: {icon: 'fa-clock-o',           css: 'text-secondary', title: 'waiting for a worker'},
+  running: {icon: 'fa-spinner fa-spin',   css: 'text-primary',   title: 'running'},
+  done:    {icon: 'fa-check',             css: 'text-success',   title: 'done'},
+  failed:  {icon: 'fa-times',             css: 'text-danger',    title: 'failed'},
+};
+
+
+function tocApplyState(mark, state) {
+  var shown = TOC_STATES[state];
+
+  mark.className = 'toc-state fa ' + (shown ? shown.icon + ' ' + shown.css : '');
+  mark.title = shown ? shown.title : '';
+}
+
+
 document.addEventListener('DOMContentLoaded', function() {
   var headings = Array.prototype.slice
       .call(document.querySelectorAll('[data-toc]'))
@@ -35,12 +53,23 @@ document.addEventListener('DOMContentLoaded', function() {
     var link = document.createElement('a');
     link.className = 'nav-link';
     link.href = '#' + heading.id;
+    link.title = heading.dataset.tocTitle || heading.textContent.trim();
+
     // The short name, with the full one left for the tooltip - the rail is
     // deliberately too narrow for 'Mini-MegaTORTORA'
-    link.textContent = heading.dataset.toc || heading.textContent.trim();
-    // The heading holds a status badge as well, so the full name is carried
-    // separately rather than scraped back out of it
-    link.title = heading.dataset.tocTitle || heading.textContent.trim();
+    var label = document.createElement('span');
+    label.className = 'toc-label';
+    label.textContent = heading.dataset.toc || heading.textContent.trim();
+    link.appendChild(label);
+
+    // How the source stands, which the page keeps up to date as it polls.
+    // It lives here rather than beside the heading so that it is in view
+    // whichever part of the page is being read.
+    var mark = document.createElement('i');
+    if (heading.dataset.tocSource)
+      mark.dataset.source = heading.dataset.tocSource;
+    tocApplyState(mark, heading.dataset.tocState);
+    link.appendChild(mark);
 
     item.appendChild(link);
     list.appendChild(item);
@@ -72,6 +101,13 @@ document.addEventListener('DOMContentLoaded', function() {
     if (event.key === 'Escape')
       nav.classList.remove('toc-open');
   });
+
+  // The page hands over each source's state as it polls for it
+  window.tocSetStates = function(states) {
+    nav.querySelectorAll('.toc-state[data-source]').forEach(function(mark) {
+      tocApplyState(mark, states[mark.dataset.source]);
+    });
+  };
 
   // Scoped to the pages that have a contents list, rather than imposed on
   // every page in the application

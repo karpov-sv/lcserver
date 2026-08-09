@@ -518,6 +518,8 @@ def targets(request, id=None):
                             args=[target.id])
                         target.celery_id = signature.freeze().id
                         target.state = survey_config['state_acquiring']
+                        target.source_states = dict(target.source_states or {},
+                                                    **{source_id: 'pending'})
                         target.save()
 
                         signature.apply_async()

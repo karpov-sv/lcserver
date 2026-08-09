@@ -56,20 +56,11 @@
            stateElem.addClass('text-success');
          }
 
-         // Each section says how its own source stands. The target state can
-         // only ever describe one step, so these are what to watch once the
-         // sources no longer take turns.
-         if(json.source_states){
-           $('.source-state').each(function(){
-             var badge = $(this);
-             var state = json.source_states[badge.data('source')] || '';
-             badge.removeClass('bg-primary bg-danger bg-success d-none');
-             if(state == 'running')     badge.addClass('bg-primary');
-             else if(state == 'failed') badge.addClass('bg-danger');
-             else if(state == 'done')   badge.addClass('bg-success');
-             else                       badge.addClass('d-none');
-             badge.text(state);
-           });
+         // How each source stands, shown in the contents list. The target
+         // state can only ever describe one step, so these are what to watch
+         // now that the sources no longer take turns.
+         if(json.source_states && window.tocSetStates){
+           window.tocSetStates(json.source_states);
          }
 
          // Live-update the log of the currently running step
@@ -190,7 +181,8 @@
     </div>
 
     <hr>
-    <h3 id="section-info" data-toc="Info">Basic info</h3>
+    <h3 id="section-info" data-toc="Info" data-toc-source="info"
+        data-toc-state="{{ target|source_state:'info' }}">Basic info</h3>
 
     {% if user_may_submit %}
       <form action="" method="POST" class="mb-2">

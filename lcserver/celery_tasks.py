@@ -244,6 +244,7 @@ def task_finalize(self, id, steps=None):
     target.celery_id = None
     target.celery_chain_ids = []
     target.complete()
+    target.forget_unfinished_sources()
     target.save()
 
 
@@ -303,6 +304,7 @@ def task_break_if_step_failed(self, id, source_id):
     target.celery_chain_ids = []
     target.complete()
     target.config.pop('refresh_cache', None)
+    target.forget_unfinished_sources()
     target.save()
 
     raise RuntimeError(f"Cannot continue past a failed {source_id} step")
@@ -479,6 +481,12 @@ def run_target_steps(target, steps):
     target.celery_chain_ids = list(reversed(_collect_ids(res)))
     target.celery_id = res.id
     target.state = 'running'
+
+    # What the run means to attempt. A group is queued all at once but only
+    # worker_concurrency of it runs, so most of these sit waiting - which is
+    # worth showing rather than leaving the sections blank until their turn.
+    target.source_states = dict(target.source_states or {},
+                                **{_: 'pending' for _ in steps})
     target.save()
 
     return task_chain.apply_async()
