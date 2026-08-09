@@ -409,8 +409,8 @@ def get_cache_files():
     cache_patterns = [
         # Glob patterns for coordinate/name-based cache files
         'cache/*.vot',
-        # TESS mastDownload directory
-        'cache/mastDownload',
+        # lightkurve downloads, a directory per source
+        'cache/mast_*',
     ]
 
     return cache_patterns
@@ -482,25 +482,14 @@ CACHE_PREFIXES = {
     'gaiadr3syn_': 'info',
     'ps1_': 'info',
     'skymapper_': 'info',
-    # lightkurve's downloads are deliberately absent - see CACHE_SHARED below
-}
-
-
-# Cache entries that no single source owns. lightkurve puts every mission's
-# downloads under one directory, and the community products of all three sit
-# together in its HLSP subdirectory, named for the pipeline rather than the
-# mission - so the entry cannot be attributed to one source, and dropping it
-# from here drops all three. Each source refreshes only its own products.
-CACHE_SHARED = {
-    'mastDownload': ('tess', 'kepler'),
+    # lightkurve downloads, one directory per source
+    'mast_tess': 'tess',
+    'mast_kepler': 'kepler',
 }
 
 
 def cache_source_for(name):
     """Which source a cache entry belongs to, or None if it is unrecognized."""
-    if name in CACHE_SHARED:
-        return None
-
     for prefix in sorted(CACHE_PREFIXES, key=len, reverse=True):
         if name.startswith(prefix):
             return CACHE_PREFIXES[prefix]
@@ -512,13 +501,3 @@ def cache_source_for(name):
 
     return None
 
-
-def cache_shared_label(name):
-    """Label for a cache entry several sources share, or None if not one."""
-    sources = CACHE_SHARED.get(name)
-
-    if not sources:
-        return None
-
-    return ' / '.join(SURVEY_SOURCES[_]['short_name']
-                      for _ in sources if _ in SURVEY_SOURCES)

@@ -290,34 +290,27 @@ def log_conversion(verbose, source, formula, params=None, npoints=None, note=Non
         log(f"  note: {note}")
 
 
-def drop_mast_downloads(basepath, mission, authors, log):
-    """Drop one mission's lightkurve downloads, leaving the other missions be.
+def mast_download_dir(basepath, source_id):
+    """Where lightkurve should put a source's downloads.
 
-    lightkurve files a mission's official products under a directory named for
-    the mission, but the community ones all go to a shared HLSP directory, as
-    hlsp_{pipeline}_{mission}_... - so a mission's cache is its own directory
-    plus whichever HLSP entries its pipelines produced. Dropping the whole
-    mastDownload tree instead would throw away the other missions with it.
+    A directory of its own for each source, rather than the single tree
+    lightkurve arranges by mission. The missions used to share that tree, and
+    its HLSP folder holds the community products of all of them named for the
+    pipeline rather than the mission - so a source had to pick its own out of
+    the others', and two of them acquiring at once wrote into the same place.
     """
-    mast = os.path.join(basepath, 'cache', 'mastDownload')
+    return os.path.join(basepath, 'cache', f'mast_{source_id}')
 
-    if not os.path.exists(mast):
+
+def drop_mast_downloads(basepath, source_id, log):
+    """Drop a source's lightkurve downloads.
+
+    A source owns its download directory outright, so this is all of them.
+    """
+    path = mast_download_dir(basepath, source_id)
+
+    if not os.path.exists(path):
         return
 
-    dropped = 0
-
-    own = os.path.join(mast, mission)
-    if os.path.isdir(own):
-        shutil.rmtree(own, ignore_errors=True)
-        dropped += 1
-
-    hlsp = os.path.join(mast, 'HLSP')
-    if os.path.isdir(hlsp):
-        prefixes = tuple(f"hlsp_{_.lower()}_" for _ in authors)
-
-        for name in os.listdir(hlsp):
-            if name.lower().startswith(prefixes):
-                shutil.rmtree(os.path.join(hlsp, name), ignore_errors=True)
-                dropped += 1
-
-    log(f"Dropped {dropped} cached {mission} download(s) as requested")
+    shutil.rmtree(path, ignore_errors=True)
+    log("Dropped the cached downloads as requested")

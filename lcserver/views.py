@@ -350,22 +350,13 @@ def target_cache_entries(target):
         source_id = surveys.cache_source_for(name)
         source = surveys.SURVEY_SOURCES.get(source_id) if source_id else None
 
-        # An entry several sources share is named for all of them, so that
-        # dropping it does not look like it only affects one
-        shared = surveys.cache_shared_label(name)
-
-        if source:
-            source_name = source['short_name']
-        else:
-            source_name = shared or 'Unknown'
-
         entries.append({
             'name': name,
             'path': os.path.join('cache', name),
             'size': size,
             'modified': Time(os.path.getmtime(fullpath), format='unix').datetime,
             'source_id': source_id,
-            'source_name': source_name,
+            'source_name': source['short_name'] if source else 'Unknown',
             'is_dir': os.path.isdir(fullpath),
         })
 

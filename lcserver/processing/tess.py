@@ -17,7 +17,7 @@ import lightkurve as lk
 from stdpipe import plots
 
 from ..surveys import survey_source, get_output_files
-from .utils import cleanup_paths, drop_mast_downloads
+from .utils import cleanup_paths, drop_mast_downloads, mast_download_dir
 
 
 @survey_source(
@@ -65,12 +65,10 @@ def target_tess(config, basepath=None, verbose=True, show=False):
     # Simple wrapper around print for logging in verbose mode only
     log = (verbose if callable(verbose) else print) if verbose else lambda *args,**kwargs: None
 
-    # TESS caches through lightkurve, which keeps its downloads under
-    # cache/mastDownload and skips anything already there. Kepler and K2 share
-    # that directory, so only TESS's own products are dropped. The flag is read
-    # rather than consumed - see the other sources.
+    # TESS caches through lightkurve, which skips whatever it has already
+    # downloaded. The flag is read rather than consumed - see the other sources.
     if config.get('refresh_cache', False):
-        drop_mast_downloads(basepath, 'TESS', ['TESS-SPOC', 'QLP', 'SPOC'], log)
+        drop_mast_downloads(basepath, 'tess', log)
 
     # Cleanup stale plots
     cleanup_paths(get_output_files('tess'), basepath=basepath)
@@ -112,7 +110,7 @@ def target_tess(config, basepath=None, verbose=True, show=False):
                 is_done = False
 
                 for row in res[idx2]:
-                    lc = row.download(download_dir=os.path.join(basepath, 'cache'))
+                    lc = row.download(download_dir=mast_download_dir(basepath, 'tess'))
                     if not lc:
                         continue
 

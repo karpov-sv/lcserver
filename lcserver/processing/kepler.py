@@ -27,7 +27,8 @@ import lightkurve as lk
 from stdpipe import plots
 
 from ..surveys import survey_source, get_output_files
-from .utils import cleanup_paths, drop_mast_downloads, log_bands, log_conversion
+from .utils import (cleanup_paths, drop_mast_downloads, mast_download_dir,
+                    log_bands, log_conversion)
 
 
 # Days between BKJD and BJD, as the mission counts time in both phases
@@ -142,7 +143,7 @@ def _acquire_phase(config, basepath, log, show, phase, sr, cadence):
                 continue
 
             row = res[idx][0]
-            lc = row.download(download_dir=os.path.join(basepath, 'cache'))
+            lc = row.download(download_dir=mast_download_dir(basepath, 'kepler'))
 
             if not lc:
                 continue
@@ -262,12 +263,11 @@ def target_kepler(config, basepath=None, verbose=True, show=False):
     # Simple wrapper around print for logging in verbose mode only
     log = (verbose if callable(verbose) else print) if verbose else lambda *args,**kwargs: None
 
-    # lightkurve caches under cache/mastDownload and skips whatever is already
-    # there. TESS shares that directory, so only this mission's own products are
-    # dropped. The flag is read rather than consumed - see the other sources.
+    # lightkurve skips whatever it has already downloaded, for both phases at
+    # once as they share this source's directory. The flag is read rather than
+    # consumed - see the other sources.
     if config.get('refresh_cache', False):
-        for phase in KEPLER_PHASES:
-            drop_mast_downloads(basepath, phase['mission'], phase['authors'], log)
+        drop_mast_downloads(basepath, 'kepler', log)
 
     # Cleanup stale plots
     cleanup_paths(get_output_files('kepler'), basepath=basepath)
