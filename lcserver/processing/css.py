@@ -4,6 +4,7 @@ Acquires CSS (Catalina Sky Survey) optical lightcurves in V band.
 """
 
 import os
+import ast
 import requests
 import numpy as np
 
@@ -127,7 +128,17 @@ def target_css(config, basepath=None, verbose=True, show=False):
                 end_idx += 3  # Include the closing ]]
 
                 data_str = content[start_idx:end_idx]
-                data_array = eval(data_str)  # Parse JavaScript array format
+
+                # literal_eval rather than eval: this is a string cut out of a
+                # reply fetched over plain HTTP, and the survey offers no TLS
+                # to fetch it over instead. eval() would hand anyone able to
+                # answer in its place - or the host itself, one day - the run
+                # of the worker process.
+                try:
+                    data_array = ast.literal_eval(data_str)
+                except (ValueError, SyntaxError) as e:
+                    log(f"Error: could not parse the data array from CSS: {e}")
+                    return
 
                 if not data_array or len(data_array) == 0:
                     log("No CSS data points found")
