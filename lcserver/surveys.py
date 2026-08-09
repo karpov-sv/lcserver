@@ -462,6 +462,7 @@ CACHE_PREFIXES = {
     'wise_': 'wise',
     'asas3_': 'asas3',
     'wasp_': 'wasp',
+    'omc_': 'omc',
     # Everything the info step collects
     'simbad_': 'info',
     'gaiadr3_phot_': 'info',
