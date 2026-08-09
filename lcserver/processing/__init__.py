@@ -25,6 +25,38 @@ The module is organized into separate files:
 - combined.py: Combined lightcurve plotting
 """
 
+# astroquery keeps a cache of its own under ~/.astropy/cache, holding pickled
+# responses for a week. It is turned off here, before anything can query
+# through it, for three reasons:
+#
+#  - the sources cache their results themselves, per target, under
+#    targets/{id}/cache, so it duplicates a layer we already have;
+#  - that layer invalidates only when asked to, which is the point of it - and
+#    an expiring cache underneath quietly overrode the request, so 'Ignore
+#    cache' would delete our copy, re-run the query and be handed a reply up
+#    to seven days old;
+#  - it writes each response with a plain open() and no rename, so two
+#    equal queries running at once - the NSVS field list is the same for
+#    every target - can leave a half-written pickle that the next read
+#    raises on.
+from astroquery import cache_conf
+from astroquery import query as astroquery_query
+
+cache_conf.cache_active = False
+
+# That switch alone is not enough. astroquery only consults it when the caller
+# leaves the flag as None, and Vizier - the one client here that uses this
+# cache - passes cache=True from its own method defaults instead. Passing
+# cache=False at each call site would not cover it either, as stdpipe queries
+# Vizier on our behalf. So the two ends of the cache are stubbed out directly;
+# should astroquery ever rename them, this raises on import rather than
+# quietly starting to cache again.
+assert hasattr(astroquery_query, 'to_cache')
+assert hasattr(astroquery_query.AstroQuery, 'from_cache')
+
+astroquery_query.to_cache = lambda response, cache_file: None
+astroquery_query.AstroQuery.from_cache = lambda self, cache_location, cache_timeout: None
+
 # Import all utilities
 from .utils import (
     parse_votable_lenient,
