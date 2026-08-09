@@ -288,3 +288,36 @@ def log_conversion(verbose, source, formula, params=None, npoints=None, note=Non
 
     if note:
         log(f"  note: {note}")
+
+
+def drop_mast_downloads(basepath, mission, authors, log):
+    """Drop one mission's lightkurve downloads, leaving the other missions be.
+
+    lightkurve files a mission's official products under a directory named for
+    the mission, but the community ones all go to a shared HLSP directory, as
+    hlsp_{pipeline}_{mission}_... - so a mission's cache is its own directory
+    plus whichever HLSP entries its pipelines produced. Dropping the whole
+    mastDownload tree instead would throw away the other missions with it.
+    """
+    mast = os.path.join(basepath, 'cache', 'mastDownload')
+
+    if not os.path.exists(mast):
+        return
+
+    dropped = 0
+
+    own = os.path.join(mast, mission)
+    if os.path.isdir(own):
+        shutil.rmtree(own, ignore_errors=True)
+        dropped += 1
+
+    hlsp = os.path.join(mast, 'HLSP')
+    if os.path.isdir(hlsp):
+        prefixes = tuple(f"hlsp_{_.lower()}_" for _ in authors)
+
+        for name in os.listdir(hlsp):
+            if name.lower().startswith(prefixes):
+                shutil.rmtree(os.path.join(hlsp, name), ignore_errors=True)
+                dropped += 1
+
+    log(f"Dropped {dropped} cached {mission} download(s) as requested")

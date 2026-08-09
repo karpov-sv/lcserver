@@ -93,11 +93,11 @@ def load_magnitude_data(basepath):
 
 
 def load_flux_data(basepath):
-    """Load flux-based light curve data from TESS"""
+    """Load flux-based light curve data from the space missions"""
     lightcurve_data = []
 
-    # Color palette for multiple TESS sectors
-    color_palette = ['#e74c3c', '#8e44ad', '#3498db', '#e67e22', '#1abc9c']
+    # Fallback palette, for a source that names no colours of its own
+    default_palette = ['#e74c3c', '#8e44ad', '#3498db', '#e67e22', '#1abc9c']
 
     # Iterate over registry to find flux sources
     for source_id, survey_config in surveys.SURVEY_SOURCES.items():
@@ -113,19 +113,46 @@ def load_flux_data(basepath):
         pattern_path = os.path.join(basepath, votable_pattern)
         source_files = glob.glob(pattern_path)
 
-        # Parse filename to extract sector, author, exptime (TESS-specific)
-        filename_pattern = re.compile(r'tess_lc_(\d+)_([^_]+)_(\d+)\.vot')
+        color_palette = survey_config.get('lc_color_palette') or default_palette
 
-        for i, filepath in enumerate(sorted(source_files)):
+        # What the mission calls an observing segment - a TESS sector, a Kepler
+        # quarter, a K2 campaign
+        segment_name = survey_config.get('lc_segment_name') or 'Segment'
+
+        # A source spanning several phases of one mission letters its segments
+        # by phase, as each numbers them from one
+        prefixes = survey_config.get('lc_segment_prefixes') or {}
+
+        # Every flux source writes {source}_lc_{segment}_{author}_{exptime}.vot,
+        # where the segment carries a phase letter only where there is one
+        filename_pattern = re.compile(
+            re.escape(source_id) + r'_lc_([A-Za-z]?)(\d+)_([^_]+)_(\d+)\.vot')
+
+        def sortkey(filepath):
+            """Phases in the order flown, and segments in order within them."""
+            match = filename_pattern.match(os.path.basename(filepath))
+
+            if not match:
+                return (len(prefixes), 0)
+
+            order = list(prefixes).index(match.group(1)) if match.group(1) in prefixes else -1
+            return (order, int(match.group(2)))
+
+        for i, filepath in enumerate(sorted(source_files, key=sortkey)):
             filename = os.path.basename(filepath)
             match = filename_pattern.match(filename)
 
             if not match:
                 continue
 
-            sector = int(match.group(1))
-            author = match.group(2)
-            exptime = int(match.group(3))
+            prefix = match.group(1)
+            sector = int(match.group(2))
+            author = match.group(3)
+            exptime = int(match.group(4))
+
+            # A phase names its own segments - K2's are K2 campaigns, not
+            # Kepler ones, though both are the same source here
+            label_name = prefixes.get(prefix) or f"{survey_config['short_name']} {segment_name}"
 
             try:
                 data = Table.read(filepath)
@@ -174,7 +201,7 @@ def load_flux_data(basepath):
                     flux_err_normalized = flux_err
 
                 # Create label
-                label = f'TESS Sector {sector} ({author}, {exptime}s)'
+                label = f"{label_name} {sector} ({author}, {exptime}s)"
 
                 # Assign color from palette (cycle if >5 sectors)
                 color = color_palette[i % len(color_palette)]

@@ -21,6 +21,7 @@ The module is organized into separate files:
 - omc.py: INTEGRAL OMC lightcurve acquisition
 - nsvs.py: NSVS lightcurve acquisition
 - hipparcos.py: Hipparcos epoch photometry acquisition
+- kepler.py: Kepler lightcurve acquisition, both the original mission and K2
 - combined.py: Combined lightcurve plotting
 """
 
@@ -50,6 +51,7 @@ from .wasp import target_wasp
 from .omc import target_omc
 from .nsvs import target_nsvs
 from .hipparcos import target_hipparcos
+from .kepler import target_kepler
 from .tess import target_tess
 from .dasch import target_dasch
 from .applause import target_applause

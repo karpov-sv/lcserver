@@ -89,6 +89,13 @@ def survey_source(
     lc_color=None,
     lc_mode=None,  # 'magnitude' or 'flux'
     lc_short=False,
+    # Flux sources arrive one file per observing segment, which the mission
+    # names for itself - a TESS sector, a Kepler quarter, a K2 campaign
+    lc_segment_name='Segment',
+    # Where one source spans phases that number their segments independently,
+    # the letter its filenames carry maps to what that phase calls a segment
+    lc_segment_prefixes=None,
+    lc_color_palette=None,
     # Template metadata
     template_layout='simple',  # 'simple', 'with_cutout', 'complex', 'custom'
     requires_coordinates=True,  # False for name-based sources like KWS
@@ -222,6 +229,9 @@ def survey_source(
             'lc_color': lc_color,
             'lc_mode': lc_mode,
             'lc_short': lc_short,
+            'lc_segment_name': lc_segment_name,
+            'lc_segment_prefixes': lc_segment_prefixes or {},
+            'lc_color_palette': lc_color_palette,
             # Template metadata
             'template_layout': template_layout,
             'requires_coordinates': requires_coordinates,
@@ -472,13 +482,25 @@ CACHE_PREFIXES = {
     'gaiadr3syn_': 'info',
     'ps1_': 'info',
     'skymapper_': 'info',
-    # lightkurve keeps the TESS downloads in a directory of its own
-    'mastDownload': 'tess',
+    # lightkurve's downloads are deliberately absent - see CACHE_SHARED below
+}
+
+
+# Cache entries that no single source owns. lightkurve puts every mission's
+# downloads under one directory, and the community products of all three sit
+# together in its HLSP subdirectory, named for the pipeline rather than the
+# mission - so the entry cannot be attributed to one source, and dropping it
+# from here drops all three. Each source refreshes only its own products.
+CACHE_SHARED = {
+    'mastDownload': ('tess', 'kepler'),
 }
 
 
 def cache_source_for(name):
     """Which source a cache entry belongs to, or None if it is unrecognized."""
+    if name in CACHE_SHARED:
+        return None
+
     for prefix in sorted(CACHE_PREFIXES, key=len, reverse=True):
         if name.startswith(prefix):
             return CACHE_PREFIXES[prefix]
@@ -489,3 +511,14 @@ def cache_source_for(name):
         return stem
 
     return None
+
+
+def cache_shared_label(name):
+    """Label for a cache entry several sources share, or None if not one."""
+    sources = CACHE_SHARED.get(name)
+
+    if not sources:
+        return None
+
+    return ' / '.join(SURVEY_SOURCES[_]['short_name']
+                      for _ in sources if _ in SURVEY_SOURCES)
