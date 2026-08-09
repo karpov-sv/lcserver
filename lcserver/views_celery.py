@@ -46,6 +46,10 @@ def revoke_task_chain(target):
     target.celery_chain_ids = []
     target.celery_pid = None
     target.state = 'cancelled'
+    # The run it was asked for is over, and task_finalize will not get to run
+    # to clear it - left behind, it would silently re-query every survey of
+    # the next run that happens to reuse this config
+    target.config.pop('refresh_cache', None)
     target.save()
 
     return len(ids_to_revoke)

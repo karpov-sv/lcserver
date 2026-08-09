@@ -100,7 +100,7 @@
                 <small class="me-2">Modified: <span class="fst-italic">{{ target.modified|timestamp }}</span></small>
               </a>
             </div>
-            <span class="badge bg-{% if target.state == 'failed' %}danger{% else %}primary{% endif %} rounded-pill">{{ target.state }}</span>
+            <span class="badge bg-{% if 'failed' in target.state %}danger{% else %}primary{% endif %} rounded-pill">{{ target.state }}</span>
           </div>
         {% endfor %}
       </div>

@@ -66,20 +66,21 @@ class TaskProcessContext:
     def __exit__(self, exc_type, exc_val, exc_tb):
         self._cleanup_pid()
 
-        # Handle finalization based on target state
         if self.target:
-            # Check if target failed (state ends with '_failed' or equals 'failed')
-            if self.target.state and ('failed' in self.target.state.lower()):
-                # Always break chain on error
-                self.target.celery_id = None
-            elif self.finalize:
-                # Success with finalize=True: mark complete
+            # A step that failed no longer stops the steps after it. The
+            # sources are independent of each other - one survey being down
+            # says nothing about the next - so a failure is recorded, in the
+            # log and in config['failed_sources'], and the chain carries on.
+            # Only cancellation still breaks a chain, and that is signalled by
+            # celery_id being cleared from outside, which
+            # task_break_if_cancelled checks for between the steps.
+            if self.finalize:
                 self.target.celery_id = None
                 self.target.celery_chain_ids = []
                 self.target.complete()
-                # A refresh was asked for this run only
+                # A refresh was asked for this run only. Popped here for a
+                # single step, and in task_finalize for a whole chain.
                 self.target.config.pop('refresh_cache', None)
-            # else: Success with finalize=False: leave celery_id (continue chain)
 
             # Save target (always)
             self.target.save()
@@ -94,6 +95,31 @@ def fix_config(config):
     for key in config.keys():
         if type(config[key]) == np.float32:
             config[key] = float(config[key])
+
+
+# Steps the rest of a chain cannot do without. The info step resolves the
+# coordinates every other source queries by; a survey being down concerns only
+# itself, and the chain carries on past it.
+GATING_STEPS = {'info'}
+
+
+def record_source_result(config, source_id, failed):
+    """Remember whether a source failed on its last run.
+
+    The state field only ever holds the step in progress, and the next step of
+    a chain overwrites it, so a failure has to be recorded somewhere that
+    survives to the end of the run - otherwise carrying on past a failed step
+    would simply hide it.
+    """
+    sources = [_ for _ in config.get('failed_sources', []) if _ != source_id]
+
+    if failed:
+        sources.append(source_id)
+
+    if sources:
+        config['failed_sources'] = sources
+    else:
+        config.pop('failed_sources', None)
 
 
 def create_survey_task(source_id, survey_config):
@@ -119,10 +145,12 @@ def create_survey_task(source_id, survey_config):
                 processing_func = getattr(processing, processing_func_name)
                 processing_func(config, basepath=ctx.basepath, verbose=log)
                 target.state = survey_config['state_acquired']
+                record_source_result(config, source_id, failed=False)
             except:
                 import traceback
                 log("\nError!\n", traceback.format_exc())
                 target.state = 'failed'
+                record_source_result(config, source_id, failed=True)
 
             fix_config(config)
 
@@ -165,7 +193,16 @@ def task_finalize(self, id):
     # what lets a chain refresh all of its sources.
     target.config.pop('refresh_cache', None)
 
-    # Determine if processing succeeded or failed
+    # A chain runs every step it was given, so it can end with some of them
+    # having failed. The state says how many, as the last step to run would
+    # otherwise be the only thing reported; which ones is in
+    # config['failed_sources'], and each has its error in its own log.
+    failed = target.config.get('failed_sources', [])
+
+    if failed:
+        # The field holds 50 characters, so only the count goes in it
+        target.state = f"completed, {len(failed)} failed"
+
     target.celery_id = None
     target.celery_chain_ids = []
     target.complete()
@@ -187,14 +224,50 @@ def task_set_state(self, id, state):
 
 
 @shared_task(bind=True, acks_late=True, reject_on_worker_lost=True)
-def task_break_if_failed(self, id):
+def task_break_if_cancelled(self, id):
+    """Stop a chain that has been cancelled, between one step and the next.
+
+    A step that merely failed does not get here - the sources are independent,
+    so the chain carries on and task_finalize reports what failed. Only an
+    outside hand clearing celery_id, which is what revoke_task_chain does,
+    ends the run early.
+    """
     target = models.Target.objects.get(id=id)
 
     if not target.celery_id:
-        print("Breaking the chain!!!")
+        print(f"Target {id} was cancelled, breaking the chain")
         # Clear chain to prevent further execution
         self.request.chain = None
         raise RuntimeError("Task chain cancelled")
+
+
+@shared_task(bind=True, acks_late=True, reject_on_worker_lost=True)
+def task_break_if_step_failed(self, id, source_id):
+    """Stop a chain whose gating step failed.
+
+    Most steps are independent and a failure in one says nothing about the
+    next, but the info step resolves the coordinates every other source
+    queries by - so if it fails there is nothing for them to look up, and
+    running them would turn one failure into nineteen.
+    """
+    target = models.Target.objects.get(id=id)
+
+    if source_id not in (target.config.get('failed_sources') or []):
+        return
+
+    print(f"Target {id} could not do {source_id}, breaking the chain")
+    self.request.chain = None
+
+    # task_finalize is further down the chain and will not get to run, so the
+    # end-of-run bookkeeping happens here instead. The state is left as the
+    # failed step set it.
+    target.celery_id = None
+    target.celery_chain_ids = []
+    target.complete()
+    target.config.pop('refresh_cache', None)
+    target.save()
+
+    raise RuntimeError(f"Cannot continue past a failed {source_id} step")
 
 
 @shared_task(bind=True)
@@ -228,12 +301,17 @@ def run_target_steps(target, steps):
     """
     Build and execute a chain of processing steps for a target.
 
-    Pattern (from stdweb):
-    - For each step: set_state -> task -> break_if_failed -> set_state
+    Pattern:
+    - For each step: break_if_cancelled -> set_state -> task
+    - A gating step is followed by break_if_step_failed
     - Add finalize at end
     - Freeze chain to get all task IDs
     - Store in target.celery_chain_ids (reversed)
     - Apply chain
+
+    A step that fails does not end the run: the sources are independent, so
+    the chain goes on and task_finalize reports how many failed. Only
+    cancellation, or a gating step failing, stops it early.
     """
     from celery import chain
 
@@ -250,15 +328,24 @@ def run_target_steps(target, steps):
         # Get task function
         task_func = get_survey_task(step)
 
-        # Add to chain: set_state -> task -> break -> set_state
+        # Add to chain: break if cancelled -> set_state -> task
+        #
+        # The cancellation check comes before the state is announced, so that a
+        # cancelled run does not leave 'acquiring ...' behind as its last word.
+        # There is no trailing state step: the task sets its own state, either
+        # acquired or failed, and a step appended here would overwrite a
+        # failure with a claim of success.
+        todo.append(task_break_if_cancelled.subtask(
+            args=[target.id], immutable=True))
         todo.append(task_set_state.subtask(
             args=[target.id, survey_config['state_acquiring']], immutable=True))
         todo.append(task_func.subtask(
             args=[target.id, False], immutable=True))
-        todo.append(task_break_if_failed.subtask(
-            args=[target.id], immutable=True))
-        todo.append(task_set_state.subtask(
-            args=[target.id, survey_config['state_acquired']], immutable=True))
+
+        # The one kind of failure the rest of a chain cannot survive
+        if step in GATING_STEPS:
+            todo.append(task_break_if_step_failed.subtask(
+                args=[target.id, step], immutable=True))
 
     if todo:
         # Add finalize at the end

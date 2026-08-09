@@ -711,7 +711,9 @@ def profile(request):
                    'APPLAUSE acquired', 'PTF acquired', 'CSS acquired',
                    'KWS acquired', 'MMT9 acquired']
     ).count()
-    failed_count = user_targets.filter(state='failed').count()
+    # Contains rather than equals: a chain that ran to the end reports how
+    # many of its steps failed, rather than the bare 'failed' of a single step
+    failed_count = user_targets.filter(state__contains='failed').count()
 
     context = {
         'target_count': target_count,
