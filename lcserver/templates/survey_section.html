@@ -6,7 +6,8 @@
 {# A running chain attempts every step regardless of per-survey conditions, so show them all until it ends #}
 {% if source_config|survey_condition_met:target or running_chain %}
   <hr>
-  <h3>{{ source_config.name }}</h3>
+  {# data-toc marks the section for the contents list, and carries its short label #}
+  <h3 id="section-{{ source_id }}" data-toc="{{ source_config.short_name }}">{{ source_config.name }}</h3>
 
   {% if user_may_submit and form %}
     <form action="" method="POST" class="mb-2">

@@ -12,6 +12,7 @@
 
   {% load static %}
   <script src="{% static 'queue.js' %}"></script>
+  <script src="{% static 'toc.js' %}"></script>
 
   <script language="javascript">
 
@@ -173,7 +174,7 @@
     </div>
 
     <hr>
-    <h3>Basic info</h3>
+    <h3 id="section-info" data-toc="Info">Basic info</h3>
 
     {% if user_may_submit %}
       <form action="" method="POST" class="mb-2">
