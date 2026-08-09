@@ -141,11 +141,8 @@ span.asteriskField {
  * follows the dark theme in dark.css without a second set of rules.
  */
 
-html.toc-enabled {
-  scroll-behavior: smooth;
-}
-
-/* Clears the sticky state bar that appears while a target is running */
+/* Clears the sticky state bar that appears while a target is running. The
+   scrolling itself is done by toc.js, which asks for it smoothly. */
 [data-toc] {
   scroll-margin-top: 5rem;
 }

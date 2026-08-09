@@ -6,8 +6,7 @@
 {# A running chain attempts every step regardless of per-survey conditions, so show them all until it ends #}
 {% if source_config|survey_condition_met:target or running_chain %}
   <hr>
-  {# data-toc marks the section for the contents list, which is where its
-     state is shown - always in view, rather than only when scrolled to #}
+  {# data-toc marks the section for the contents list, which shows its state #}
   <h3 id="section-{{ source_id }}" data-toc="{{ source_config.short_name }}"
       data-toc-title="{{ source_config.name }}" data-toc-source="{{ source_id }}"
       data-toc-state="{{ target|source_state:source_id }}">{{ source_config.name }}</h3>

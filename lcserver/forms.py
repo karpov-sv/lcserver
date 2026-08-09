@@ -119,19 +119,19 @@ def create_survey_form(source_id, survey_config):
                 self.helper.field_template = 'crispy_field.html'
                 self.helper.layout = Layout(
                     'form_type',
+                    # The name and the title are the only controls here with
+                    # anything to say, so they keep a line to themselves
                     Row(
                         Column('name', css_class="col-md-4"),
                         Column('title', css_class="col-md-8"),
-                        css_class='align-items-end'
+                        css_class='align-items-end g-2'
                     ),
+                    # The rest share one, as the sources do
                     Row(
-                        Column('g_minus_r', css_class="col-md"),
-                        Column('B_minus_V', css_class="col-md"),
-                        css_class='align-items-end'
-                    ),
-                    Row(
-                        Column('refresh_cache', css_class="col-md"),
-                        css_class='align-items-end'
+                        Column('g_minus_r', css_class="col-auto"),
+                        Column('B_minus_V', css_class="col-auto"),
+                        Column('refresh_cache', css_class="col-auto ms-auto me-1"),
+                        css_class='align-items-end g-2'
                     ),
                 )
         return TargetInfoForm
@@ -191,18 +191,39 @@ def create_survey_form(source_id, survey_config):
         self.helper.form_tag = False
         self.helper.field_template = 'crispy_field.html'
 
-        # Special layout for ZTF with InlineRadios
-        if source_id == 'ztf' and 'ztf_color_model' in layout_fields:
-            self.helper.layout = Layout(
-                'form_type',
-                Row(
-                    Column(InlineRadios('ztf_color_model', template='crispy_radioselect_inline.html'), css_class='form-group'),
-                    Column('refresh_cache', css_class='form-group'),
-                    css_class='align-items-end'
-                ),
-            )
-        else:
-            self.helper.layout = Layout(*layout_fields)
+        # One row of controls rather than one per line. Most sources have only
+        # a couple of settings, and a line each made their sections several
+        # times taller than the controls themselves needed.
+        columns = []
+
+        for name in layout_fields:
+            if name == 'form_type':
+                continue
+
+            content = name
+
+            # ZTF's colour model reads better as radios side by side
+            if source_id == 'ztf' and name == 'ztf_color_model':
+                content = InlineRadios(name, template='crispy_radioselect_inline.html')
+
+            # Text is given the room left over - a name or a title has no
+            # length to speak of - while a number, a choice or a checkbox
+            # takes only what it needs
+            if isinstance(self.fields[name], forms.CharField):
+                width = 'col-12 col-sm'
+            elif name == 'refresh_cache':
+                width = 'col-auto ms-auto me-1'
+            else:
+                width = 'col-auto'
+
+            columns.append(Column(content, css_class=width))
+
+        # align-items-end lines the checkbox up with the inputs beside it
+        # rather than with the top of their labels
+        self.helper.layout = Layout(
+            'form_type',
+            Row(*columns, css_class='align-items-end g-2') if columns else Layout(),
+        )
 
     FormClass.__init__ = form_init
     return FormClass

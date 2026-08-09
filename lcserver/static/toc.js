@@ -91,10 +91,31 @@ document.addEventListener('DOMContentLoaded', function() {
     nav.classList.toggle('toc-open');
   });
 
-  // Opened over the page, it should get out of the way once it has been used
   nav.addEventListener('click', function(event) {
-    if (event.target.closest('.nav-link'))
-      nav.classList.remove('toc-open');
+    var link = event.target.closest('.nav-link');
+
+    if (!link)
+      return;
+
+    // Opened over the page, it should get out of the way once it has been used
+    nav.classList.remove('toc-open');
+
+    // Let the browser have the ones meant for a new tab or window
+    if (event.button !== 0 || event.metaKey || event.ctrlKey
+        || event.shiftKey || event.altKey)
+      return;
+
+    var section = document.getElementById(link.getAttribute('href').slice(1));
+
+    if (!section)
+      return;
+
+    // Scrolled to rather than navigated to, so the address keeps no record of
+    // it: following the link as a link would leave the section in the URL, and
+    // every later reload of the page would jump back down to it. The offset
+    // that clears the sticky header is scroll-margin-top, in the stylesheet.
+    event.preventDefault();
+    section.scrollIntoView({behavior: 'smooth', block: 'start'});
   });
 
   document.addEventListener('keydown', function(event) {
@@ -108,10 +129,6 @@ document.addEventListener('DOMContentLoaded', function() {
       tocApplyState(mark, states[mark.dataset.source]);
     });
   };
-
-  // Scoped to the pages that have a contents list, rather than imposed on
-  // every page in the application
-  document.documentElement.classList.add('toc-enabled');
 
   // Marks whichever section is currently on screen. The bottom margin keeps
   // the highlight on the section being read rather than the one below it.
