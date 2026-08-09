@@ -96,6 +96,10 @@ def survey_source(
     # the letter its filenames carry maps to what that phase calls a segment
     lc_segment_prefixes=None,
     lc_color_palette=None,
+    # Config keys this source writes for others to convert with. A source that
+    # provides one runs before the sources that read it, rather than alongside
+    # them - see run_target_steps().
+    provides_config=None,
     # Template metadata
     template_layout='simple',  # 'simple', 'with_cutout', 'complex', 'custom'
     requires_coordinates=True,  # False for name-based sources like KWS
@@ -232,6 +236,7 @@ def survey_source(
             'lc_segment_name': lc_segment_name,
             'lc_segment_prefixes': lc_segment_prefixes or {},
             'lc_color_palette': lc_color_palette,
+            'provides_config': provides_config or [],
             # Template metadata
             'template_layout': template_layout,
             'requires_coordinates': requires_coordinates,

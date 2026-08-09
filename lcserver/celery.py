@@ -1,6 +1,7 @@
 import os
 
 from celery import Celery
+from decouple import config
 
 # Set the default Django settings module for the 'celery' program.
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'lcserver.settings')
@@ -21,6 +22,12 @@ app.conf.update(
     task_track_started=True,
     #
     worker_prefetch_multiplier=1,
+    # How many sources are acquired at once. Left unset this follows the
+    # machine's CPU count, which was ten here and is a rude number of
+    # simultaneous queries to point at a survey - several of ours share CDS.
+    # The work is nearly all waiting on a reply, so a small number costs
+    # little. Overridden by -c on the command line.
+    worker_concurrency=config('CELERY_CONCURRENCY', default=4, cast=int),
     broker_transport_options={
         "visibility_timeout": 3600,
     },

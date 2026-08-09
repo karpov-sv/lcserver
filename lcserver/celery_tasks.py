@@ -335,75 +335,150 @@ def task_cleanup(self, id, finalize=True):
 # Named references are preserved for backward compatibility.
 
 
+def _collect_ids(result):
+    """Every task id in a frozen canvas, so that cancelling can revoke them all.
+
+    AsyncResult.as_list() would do it, but only for a straight chain: it walks
+    parents, and a chord's parent is a GroupResult, which does not implement
+    it. So the walk happens here, over both the parent links and the members
+    of any group along the way.
+    """
+    ids = []
+    seen = set()
+
+    def walk(node):
+        if node is None or id(node) in seen:
+            return
+
+        seen.add(id(node))
+
+        for member in getattr(node, 'results', None) or []:
+            walk(member)
+
+        task_id = getattr(node, 'id', None)
+        if task_id and task_id not in ids:
+            ids.append(task_id)
+
+        walk(getattr(node, 'parent', None))
+
+    walk(result)
+
+    return ids
+
+
 # Higher-level interface for running multiple processing steps for the target
 def run_target_steps(target, steps):
     """
     Build and execute a chain of processing steps for a target.
 
     Pattern:
-    - For each step: break_if_cancelled -> set_state -> task
-    - A gating step is followed by break_if_step_failed
-    - Add finalize at end
-    - Freeze chain to get all task IDs
-    - Store in target.celery_chain_ids (reversed)
-    - Apply chain
+
+        providers... -> group(everything else) -> combined -> finalize
+
+    The sources do not depend on one another, so they are acquired together
+    rather than in turn - most of their time is spent waiting on a survey to
+    answer. Three things are kept in order around them:
+
+    - the info step first, and the chain stops if it fails: it resolves the
+      coordinates every source queries by;
+    - any source declaring provides_config, because the others convert their
+      photometry with what it writes. ZTF measures the colour that five of
+      them use, and alongside them they would race it and silently fall back
+      to the catalogue value the info step derived;
+    - the combined plot last, as it reads what all of them wrote.
 
     A step that fails does not end the run: the sources are independent, so
-    the chain goes on and task_finalize reports how many failed. Only
+    the rest carry on and task_finalize reports how many failed. Only
     cancellation, or a gating step failing, stops it early.
+
+    How many sources actually run at once is the worker's concurrency, not the
+    size of the group - see worker_concurrency in celery.py.
     """
-    from celery import chain
+    from celery import chain, chord, group
 
-    todo = []
+    steps = [_ for _ in steps if surveys.get_survey_source(_)]
 
-    for step in steps:
+    # Sources whose results the others read, in the order the registry gives
+    prologue = [_ for _ in steps
+                if _ in GATING_STEPS
+                or surveys.get_survey_source(_).get('provides_config')]
+
+    # Reads every source's output, so it cannot be one of them
+    epilogue = [_ for _ in steps if _ == 'combined']
+
+    parallel = [_ for _ in steps if _ not in prologue and _ not in epilogue]
+
+    if not steps:
+        return None
+
+    print(f"Will run {len(steps)} steps for target {target.id}: "
+          f"{'+'.join(prologue)} then {len(parallel)} at once"
+          + (f" then {'+'.join(epilogue)}" if epilogue else ""))
+
+    def sequential(step):
+        """A step that runs on its own, announcing itself as it goes."""
         survey_config = surveys.get_survey_source(step)
-        if not survey_config:
-            print(f"Unknown step: {step}")
-            continue
-
-        print(f"Will run {step} step for target {target.id}")
-
-        # Get task function
-        task_func = get_survey_task(step)
-
-        # Add to chain: break if cancelled -> set_state -> task
-        #
-        # The cancellation check comes before the state is announced, so that a
-        # cancelled run does not leave 'acquiring ...' behind as its last word.
-        # There is no trailing state step: the task sets its own state, either
-        # acquired or failed, and a step appended here would overwrite a
-        # failure with a claim of success.
-        todo.append(task_break_if_cancelled.subtask(
-            args=[target.id], immutable=True))
-        todo.append(task_set_state.subtask(
-            args=[target.id, survey_config['state_acquiring']], immutable=True))
-        todo.append(task_func.subtask(
-            args=[target.id, False], immutable=True))
+        out = [
+            # The cancellation check comes before the state is announced, so
+            # that a cancelled run does not leave 'acquiring ...' as its last
+            # word. There is no trailing state step: the task sets its own
+            # state, acquired or failed, and a step here would overwrite a
+            # failure with a claim of success.
+            task_break_if_cancelled.subtask(args=[target.id], immutable=True),
+            task_set_state.subtask(
+                args=[target.id, survey_config['state_acquiring']], immutable=True),
+            get_survey_task(step).subtask(args=[target.id, False], immutable=True),
+        ]
 
         # The one kind of failure the rest of a chain cannot survive
         if step in GATING_STEPS:
-            todo.append(task_break_if_step_failed.subtask(
+            out.append(task_break_if_step_failed.subtask(
                 args=[target.id, step], immutable=True))
 
-    if todo:
-        # Add finalize at the end
-        todo.append(task_finalize.subtask(
-            args=[target.id, list(steps)], immutable=True))
+        return out
 
-        # Create the chain and freeze it to get task IDs before applying
-        task_chain = chain(todo)
-        res = task_chain.freeze()
+    todo = []
 
-        # Extract all task IDs from the frozen chain (reversed order)
-        target.celery_chain_ids = list(reversed(res.as_list()))
+    for step in prologue:
+        todo += sequential(step)
 
-        # Apply the chain
-        result = task_chain.apply_async()
-        target.celery_id = result.id
-        target.state = 'running'
-        target.save()
+    tail = []
 
-        return result
+    for step in epilogue:
+        tail += sequential(step)
 
-    return None
+    tail.append(task_finalize.subtask(args=[target.id, list(steps)], immutable=True))
+
+    if parallel:
+        todo.append(task_break_if_cancelled.subtask(args=[target.id], immutable=True))
+        # One announcement for the lot: which of them is doing what is in
+        # source_states, which each of them writes its own key of
+        todo.append(task_set_state.subtask(
+            args=[target.id, 'acquiring lightcurves'], immutable=True))
+
+        # The group members never raise - they record their own failures - so
+        # the callback runs whatever happens to any of them
+        todo.append(chord(
+            group([get_survey_task(_).subtask(args=[target.id, False], immutable=True)
+                   for _ in parallel]),
+            chain(tail)))
+    else:
+        todo += tail
+
+    task_chain = chain(todo)
+
+    # Freezing settles every id up front, which is what apply_async would go on
+    # to use. They are recorded before the run is published rather than after:
+    # the first thing the chain does is ask whether it has been cancelled, by
+    # looking for the very celery_id being assigned here, and a worker can pick
+    # the task up before a save that happens afterwards - reading no id, and
+    # stopping the run before it began.
+    res = task_chain.freeze()
+
+    # Every id the run consists of, so that cancelling revokes all of them
+    target.celery_chain_ids = list(reversed(_collect_ids(res)))
+    target.celery_id = res.id
+    target.state = 'running'
+    target.save()
+
+    return task_chain.apply_async()

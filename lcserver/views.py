@@ -508,11 +508,19 @@ def targets(request, id=None):
                                 target.title = form.cleaned_data.get('title')
                             target.save()
 
-                        # Get task function and start it
-                        task_func = celery_tasks.get_survey_task(source_id)
-                        target.celery_id = task_func.delay(target.id).id
+                        # Get task function and start it. The id is settled and
+                        # recorded before the task is published, not after: the
+                        # task asks on entry whether it still has a celery_id,
+                        # to see whether it has been cancelled, and a worker
+                        # can reach that question before a save that comes
+                        # afterwards - reading none, and doing nothing at all.
+                        signature = celery_tasks.get_survey_task(source_id).subtask(
+                            args=[target.id])
+                        target.celery_id = signature.freeze().id
                         target.state = survey_config['state_acquiring']
                         target.save()
+
+                        signature.apply_async()
 
                         messages.success(request,
                             f"Started getting {survey_config['short_name']} data for target {target.id}")

@@ -81,6 +81,9 @@ def gaussian_smoothing(x, y, dy, scale=100, nsteps=1000):
     log_file='ztf.log',
     output_files=['ztf.log', 'ztf_lc.png', 'ztf_color_mag.png', 'ztf.vot', 'ztf.txt'],
     button_text='Get ZTF lightcurve',
+    # Its measured colour replaces the catalogue one the info step derives,
+    # and five other sources convert their photometry with it
+    provides_config=['g_minus_r'],
     form_fields={
         'ztf_color_model': {
             'type': 'choice',

@@ -47,6 +47,9 @@ GAIA_EPPHOT_BANDS = [
                   'gaia.vot', 'gaia.txt'],
     button_text='Get Target Info',
     button_class='btn-info',
+    # Coordinates every source queries by, and the colours they convert with
+    provides_config=['target_ra', 'target_dec', 'B_minus_V', 'g_minus_r',
+                     'BP_minus_RP'],
     help_text='Resolve target coordinates and fetch catalog photometry',
     order=1,
     # Template metadata
