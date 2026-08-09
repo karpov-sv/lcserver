@@ -20,6 +20,7 @@ The module is organized into separate files:
 - wasp.py: SuperWASP lightcurve acquisition
 - omc.py: INTEGRAL OMC lightcurve acquisition
 - nsvs.py: NSVS lightcurve acquisition
+- hipparcos.py: Hipparcos epoch photometry acquisition
 - combined.py: Combined lightcurve plotting
 """
 
@@ -48,6 +49,7 @@ from .asas3 import target_asas3
 from .wasp import target_wasp
 from .omc import target_omc
 from .nsvs import target_nsvs
+from .hipparcos import target_hipparcos
 from .tess import target_tess
 from .dasch import target_dasch
 from .applause import target_applause

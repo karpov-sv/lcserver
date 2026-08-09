@@ -464,6 +464,7 @@ CACHE_PREFIXES = {
     'wasp_': 'wasp',
     'omc_': 'omc',
     'nsvs_': 'nsvs',
+    'hipparcos_': 'hipparcos',
     # Everything the info step collects
     'simbad_': 'info',
     'gaiadr3_phot_': 'info',
