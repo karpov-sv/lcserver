@@ -1,6 +1,7 @@
-from django.http import HttpResponse, FileResponse, HttpResponseRedirect, JsonResponse
+from django.http import HttpResponse, FileResponse, HttpResponseRedirect, JsonResponse, Http404
 from django.template.response import TemplateResponse
 from django.views.decorators.cache import cache_page
+from django.views.decorators.vary import vary_on_cookie
 from django.views.decorators.http import require_POST
 from django.db.models import Q
 from django.urls import reverse
@@ -37,9 +38,22 @@ def index(request):
 
 
 def sanitize_path(path):
-    # Prevent escaping from parent folder
+    """Confine a user-supplied path to the folder it will be resolved against.
+
+    Rejecting absolute paths is not enough on its own: Django's <path:path>
+    converter hands '..' straight through, and a client that does not
+    normalize the URL for itself - curl --path-as-is, or percent-encoded
+    separators - delivers it to the view intact.
+    """
     if not path or os.path.isabs(path):
-        path = ''
+        return ''
+
+    # normpath collapses the '..' segments first, so anything still climbing
+    # afterwards was really trying to leave the folder
+    path = os.path.normpath(path)
+
+    if path == os.pardir or path.startswith(os.pardir + os.sep) or os.path.isabs(path):
+        return ''
 
     return path
 
@@ -232,14 +246,27 @@ def download(request, path, attachment=True, base=settings.TARGETS_PATH):
 
 
 def target_download(request, id=None, path='', **kwargs):
-    target = models.Target.objects.get(id=id)
+    target = get_object_or_404(models.Target, id=id)
+
+    # These serve a target's own files, so they answer to the same rule as the
+    # target page - which hides itself from everyone else, while these used to
+    # hand the files to anyone who knew the URL
+    if not target.can_view(request.user):
+        raise Http404
 
     return download(request, path, base=target.path(), **kwargs)
 
 
+# vary_on_cookie keeps the cache from answering one user out of another's
+# entry: cache_page is consulted before the view runs, so without it a preview
+# fetched by the owner would be served to whoever asked for the same URL next
 @cache_page(15 * 60)
+@vary_on_cookie
 def target_preview(request, id=None, path='', **kwargs):
-    target = models.Target.objects.get(id=id)
+    target = get_object_or_404(models.Target, id=id)
+
+    if not target.can_view(request.user):
+        raise Http404
 
     return preview(request, path, base=target.path(), **kwargs)
 
@@ -340,8 +367,14 @@ def targets(request, id=None):
     context = {}
 
     if id:
-        target = models.Target.objects.get(id=id)
+        target = get_object_or_404(models.Target, id=id)
         path = target.path()
+
+        # The listing hides other people's targets through accessible_to(), and
+        # every other endpoint asks can_view(), but this page used to show
+        # itself to anyone who had the id
+        if not target.can_view(request.user):
+            raise Http404
 
         # Permissions
         context['user_may_submit'] = target.can_edit(request.user)
