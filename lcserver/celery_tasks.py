@@ -1,7 +1,7 @@
 # Django + Celery imports
 from celery import shared_task
 
-import os, glob, shutil
+import os, glob, shutil, copy
 
 from functools import partial
 
@@ -25,14 +25,23 @@ class TaskProcessContext:
     """
     Context manager for task execution in thread pool mode.
     Handles: cancellation check, celery_pid cleanup, and finalization.
+
+    The target it hands out is a working copy. Nothing the task does to it is
+    written back wholesale - on the way out the config is compared against how
+    it was found, and only the difference is applied to a freshly read row.
+    Two sources acquired at the same time therefore compose, instead of the
+    slower one overwriting the faster one's results with what it read minutes
+    earlier.
     """
-    def __init__(self, celery_task, target_id, finalize=True):
+    def __init__(self, celery_task, target_id, finalize=True, source_id=None):
         self.celery_task = celery_task
         self.target_id = target_id
         self.finalize = finalize
+        self.source_id = source_id
         self.target = None
         self.basepath = None
         self.cancelled = False
+        self.config_before = {}
 
     def __enter__(self):
         self.target = models.Target.objects.get(id=self.target_id)
@@ -46,44 +55,88 @@ class TaskProcessContext:
 
         self.basepath = self.target.path()
 
+        # How the config looked before the task touched it, to tell afterwards
+        # which keys are this task's own doing
+        self.config_before = copy.deepcopy(self.target.config)
+
+        fields = []
+
         # In thread pool mode, celery_pid refers to the whole worker process.
         # Clear any stale PID values to avoid accidental process-group kills.
         if self.target.celery_pid is not None:
             self.target.celery_pid = None
-            self.target.save(update_fields=['celery_pid'])
+            fields.append('celery_pid')
+
+        if self.source_id:
+            self.target.source_states[self.source_id] = 'running'
+            fields.append('source_states')
+
+        if fields:
+            source_id = self.source_id
+
+            def mark(fresh):
+                if 'celery_pid' in fields:
+                    fresh.celery_pid = None
+                if source_id:
+                    fresh.source_states[source_id] = 'running'
+
+            models.Target.update_atomic(self.target_id, mark, fields)
 
         return self
 
-    def _cleanup_pid(self):
-        """Clear PID from database."""
-        if self.target:
-            try:
-                self.target.celery_pid = None
-                self.target.save(update_fields=['celery_pid'])
-            except:
-                pass
-
     def __exit__(self, exc_type, exc_val, exc_tb):
-        self._cleanup_pid()
+        if not self.target:
+            return False
 
-        if self.target:
+        # What this task did to the config, as a set of keys to write and a
+        # set to drop - rather than the whole dictionary as it read it
+        changed = {k: v for k, v in self.target.config.items()
+                   if k not in self.config_before or self.config_before[k] != v}
+        removed = [k for k in self.config_before if k not in self.target.config]
+
+        state = self.target.state
+        source_state = self.target.source_states.get(self.source_id) if self.source_id else None
+        finalize = self.finalize
+        source_id = self.source_id
+
+        def merge(fresh):
+            fresh.celery_pid = None
+
+            for key, value in changed.items():
+                fresh.config[key] = value
+
+            for key in removed:
+                fresh.config.pop(key, None)
+
+            if source_id and source_state:
+                fresh.source_states[source_id] = source_state
+
+            # Cancelled while this task was running: the run is already over
+            # and has said so, so its state is not overwritten here. What the
+            # step managed to do is still recorded above.
+            if fresh.celery_id is None:
+                return
+
+            fresh.state = state
+
             # A step that failed no longer stops the steps after it. The
             # sources are independent of each other - one survey being down
-            # says nothing about the next - so a failure is recorded, in the
-            # log and in config['failed_sources'], and the chain carries on.
-            # Only cancellation still breaks a chain, and that is signalled by
-            # celery_id being cleared from outside, which
-            # task_break_if_cancelled checks for between the steps.
-            if self.finalize:
-                self.target.celery_id = None
-                self.target.celery_chain_ids = []
-                self.target.complete()
-                # A refresh was asked for this run only. Popped here for a
+            # says nothing about the next - so the failure is recorded, in the
+            # log and in source_states, and the chain carries on. Only
+            # cancellation breaks a chain, which task_break_if_cancelled
+            # checks for between the steps.
+            if finalize:
+                fresh.celery_id = None
+                fresh.celery_chain_ids = []
+                fresh.complete()
+                # A refresh was asked for this run only. Dropped here for a
                 # single step, and in task_finalize for a whole chain.
-                self.target.config.pop('refresh_cache', None)
+                fresh.config.pop('refresh_cache', None)
 
-            # Save target (always)
-            self.target.save()
+        models.Target.update_atomic(
+            self.target_id, merge,
+            ['config', 'source_states', 'state', 'celery_pid',
+             'celery_id', 'celery_chain_ids', 'completed'])
 
         return False  # Don't suppress exceptions
 
@@ -103,32 +156,14 @@ def fix_config(config):
 GATING_STEPS = {'info'}
 
 
-def record_source_result(config, source_id, failed):
-    """Remember whether a source failed on its last run.
-
-    The state field only ever holds the step in progress, and the next step of
-    a chain overwrites it, so a failure has to be recorded somewhere that
-    survives to the end of the run - otherwise carrying on past a failed step
-    would simply hide it.
-    """
-    sources = [_ for _ in config.get('failed_sources', []) if _ != source_id]
-
-    if failed:
-        sources.append(source_id)
-
-    if sources:
-        config['failed_sources'] = sources
-    else:
-        config.pop('failed_sources', None)
-
-
 def create_survey_task(source_id, survey_config):
     """Factory function to create a Celery task for a survey source."""
     processing_func_name = survey_config['processing_function']
 
     @shared_task(bind=True, acks_late=True, reject_on_worker_lost=True, name=f'lcserver.celery_tasks.task_{source_id}')
     def survey_task(self, id, finalize=True):
-        with TaskProcessContext(self, id, finalize=finalize) as ctx:
+        with TaskProcessContext(self, id, finalize=finalize,
+                                source_id=source_id) as ctx:
             if ctx.cancelled:
                 return
 
@@ -145,12 +180,12 @@ def create_survey_task(source_id, survey_config):
                 processing_func = getattr(processing, processing_func_name)
                 processing_func(config, basepath=ctx.basepath, verbose=log)
                 target.state = survey_config['state_acquired']
-                record_source_result(config, source_id, failed=False)
+                target.source_states[source_id] = 'done'
             except:
                 import traceback
                 log("\nError!\n", traceback.format_exc())
                 target.state = 'failed'
-                record_source_result(config, source_id, failed=True)
+                target.source_states[source_id] = 'failed'
 
             fix_config(config)
 
@@ -185,7 +220,7 @@ def get_survey_task(source_id):
 
 
 @shared_task(bind=True)
-def task_finalize(self, id):
+def task_finalize(self, id, steps=None):
     target = models.Target.objects.get(id=id)
 
     # The refresh applied to the chain that has just finished, and every step
@@ -195,9 +230,12 @@ def task_finalize(self, id):
 
     # A chain runs every step it was given, so it can end with some of them
     # having failed. The state says how many, as the last step to run would
-    # otherwise be the only thing reported; which ones is in
-    # config['failed_sources'], and each has its error in its own log.
-    failed = target.config.get('failed_sources', [])
+    # otherwise be the only thing reported; which ones is in source_states,
+    # and each has its error in its own log.
+    # Only the steps this run was asked for: a source that failed a week ago
+    # and was not asked for again is not this run's business
+    asked = steps if steps is not None else list(target.source_states)
+    failed = [_ for _ in asked if target.source_states.get(_) == 'failed']
 
     if failed:
         # The field holds 50 characters, so only the count goes in it
@@ -252,7 +290,7 @@ def task_break_if_step_failed(self, id, source_id):
     """
     target = models.Target.objects.get(id=id)
 
-    if source_id not in (target.config.get('failed_sources') or []):
+    if target.source_states.get(source_id) != 'failed':
         return
 
     print(f"Target {id} could not do {source_id}, breaking the chain")
@@ -284,6 +322,7 @@ def task_cleanup(self, id, finalize=True):
     if finalize:
         # End processing
         target.state = 'cleaned'
+        target.source_states = {}
         target.celery_id = None
         target.celery_chain_ids = []
         target.complete()
@@ -349,7 +388,8 @@ def run_target_steps(target, steps):
 
     if todo:
         # Add finalize at the end
-        todo.append(task_finalize.subtask(args=[target.id], immutable=True))
+        todo.append(task_finalize.subtask(
+            args=[target.id, list(steps)], immutable=True))
 
         # Create the chain and freeze it to get task IDs before applying
         task_chain = chain(todo)

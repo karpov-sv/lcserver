@@ -38,7 +38,9 @@ document.addEventListener('DOMContentLoaded', function() {
     // The short name, with the full one left for the tooltip - the rail is
     // deliberately too narrow for 'Mini-MegaTORTORA'
     link.textContent = heading.dataset.toc || heading.textContent.trim();
-    link.title = heading.textContent.trim();
+    // The heading holds a status badge as well, so the full name is carried
+    // separately rather than scraped back out of it
+    link.title = heading.dataset.tocTitle || heading.textContent.trim();
 
     item.appendChild(link);
     list.appendChild(item);

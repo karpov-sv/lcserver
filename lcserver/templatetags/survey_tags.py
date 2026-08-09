@@ -57,3 +57,16 @@ def get_form(forms_dict, source_id):
         {% with form=survey_forms|get_form:source_id %}
     """
     return forms_dict.get(source_id)
+
+
+@register.filter
+def source_state(target, source_id):
+    """How a source fared on its last run: 'running', 'done', 'failed' or ''.
+
+    The target's own state field can only describe one step at a time, so the
+    per-source record is what a section shows about itself.
+
+    Usage in template:
+        {{ target|source_state:source_id }}
+    """
+    return (target.source_states or {}).get(source_id, '')

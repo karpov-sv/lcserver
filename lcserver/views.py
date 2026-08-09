@@ -492,6 +492,7 @@ def targets(request, id=None):
                 elif action == 'cleanup_target':
                     target.celery_id = celery_tasks.task_cleanup.delay(target.id).id
                     target.config = {} # should we reset the config on cleanup?..
+                    target.source_states = {}
                     target.state = 'cleaning'
                     target.save()
                     messages.success(request, f"Started cleanup for target {target.id}")
@@ -683,7 +684,10 @@ def target_state(request, id):
     result = {
         'state': target.state,
         'id': target.id,
-        'celery_id': target.celery_id
+        'celery_id': target.celery_id,
+        # How each source stands, so the sections can show it without waiting
+        # for the reload at the end of a run
+        'source_states': target.source_states or {},
     }
 
     # While running, also return the freshly-rendered log of the active step so

@@ -84,6 +84,20 @@ DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.sqlite3',
         'NAME': os.path.join(BASE_DIR, 'db.sqlite3'),
+        'OPTIONS': {
+            # SQLite has no SELECT ... FOR UPDATE, and Django quietly ignores
+            # the call rather than failing, so a read-modify-write inside
+            # atomic() is not serialised by default: two workers both read
+            # before either writes, and the later write wins. IMMEDIATE takes
+            # the write lock as the transaction opens, which is what makes
+            # Target.update_atomic() actually exclusive here.
+            'transaction_mode': 'IMMEDIATE',
+            # Wait for a busy database rather than failing at once
+            'timeout': 20,
+            # Readers no longer block on a writer, which matters once several
+            # sources are being acquired at the same time
+            'init_command': 'PRAGMA journal_mode=WAL;',
+        },
     }
 }
 

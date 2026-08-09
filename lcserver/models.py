@@ -1,4 +1,4 @@
-from django.db import models
+from django.db import models, transaction
 from django.db.models.signals import pre_delete, post_save
 from django.dispatch import receiver
 from django.utils.timezone import now
@@ -28,11 +28,42 @@ class Target(models.Model):
 
     config = models.JSONField(default=dict, blank=True) #
 
+    # How each source last fared, as {source_id: 'running'|'done'|'failed'}.
+    # The state field above can only describe one step, so it says nothing
+    # useful once the sources no longer take turns; this keeps a place for
+    # each of them, and each writes only its own key.
+    source_states = models.JSONField(default=dict, blank=True, editable=False)
+
     def path(self):
         return os.path.join(settings.TARGETS_PATH, str(self.id))
 
     def complete(self):
         self.completed = now()
+
+    @classmethod
+    def update_atomic(cls, id, apply, fields):
+        """Apply a change to a freshly read row, writing only the named fields.
+
+        A task holds its Target for as long as it runs, which for a slow survey
+        is minutes. Saving that copy at the end writes back every column as it
+        was when the task started, undoing anything that happened meanwhile -
+        a cancellation, or another source's results. So the change is made to a
+        row read here, within the transaction, and `fields` alone are written.
+
+        The lock is real on a backend that has one. SQLite has no
+        SELECT ... FOR UPDATE and Django ignores the call there, so the
+        serialisation comes instead from OPTIONS['transaction_mode'] =
+        'IMMEDIATE' in the settings, which takes the write lock as the
+        transaction opens rather than at its first write.
+        """
+        with transaction.atomic():
+            target = cls.objects.select_for_update().get(id=id)
+            apply(target)
+            # modified is auto_now, and auto_now fields are only touched when
+            # they are named in update_fields
+            target.save(update_fields=sorted(set(fields) | {'modified'}))
+
+            return target
 
     # --- Access control -----------------------------------------------------
     # All target access checks funnel through these helpers so that the rules
