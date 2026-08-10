@@ -22,6 +22,7 @@ The module is organized into separate files:
 - nsvs.py: NSVS lightcurve acquisition
 - hipparcos.py: Hipparcos epoch photometry acquisition
 - lamost.py: LAMOST DR11 spectra
+- desi.py: DESI DR1 spectra
 - kepler.py: Kepler lightcurve acquisition, both the original mission and K2
 - combined.py: Combined lightcurve plotting
 """
@@ -85,6 +86,7 @@ from .omc import target_omc
 from .nsvs import target_nsvs
 from .hipparcos import target_hipparcos
 from .lamost import target_lamost
+from .desi import target_desi
 from .kepler import target_kepler
 from .tess import target_tess
 from .dasch import target_dasch

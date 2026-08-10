@@ -19,3 +19,4 @@ watchdog
 plotly
 lxml
 nifty_ls
+sparclclient
