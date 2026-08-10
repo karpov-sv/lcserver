@@ -312,7 +312,7 @@
         {% endif %}
 
         <div class="row">
-          {% make_list 'galaxy_map.png' as list %}
+          {% make_list 'galaxy_map.png' 'gaia_xp.png' as list %}
           {% for name in list %}
             {% if name in files %}
               <div class="col" style="max-width: 256px">

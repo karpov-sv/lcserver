@@ -16,6 +16,7 @@ from astropy.time import Time
 
 from astroquery.simbad import Simbad
 from astroquery.ipac.irsa.irsa_dust import IrsaDust
+from astroquery.vizier import Vizier
 
 # STDPipe
 from stdpipe import catalogs, resolve, plots
@@ -29,6 +30,10 @@ GAIA_MJD0 = 2455197.5 - 2400000.5
 
 # Cone radius for the epoch photometry, in arcsec
 GAIA_EPPHOT_SR = 5.0
+
+# The sampled XP spectra, as Vizier serves them, and the radius to look in
+GAIA_XP_CATALOGUE = 'I/355/xpsample'
+GAIA_XP_SR = 5.0
 
 # Bands worth tabulating the extinction in: the ones the sources here actually
 # measure. IRSA offers twenty-five, most of them for instruments we never see.
@@ -86,7 +91,7 @@ def _number(row, key):
     state_acquired='info acquired',
     log_file='info.log',
     output_files=['info.log', 'galaxy_map.png', 'ps1.vot', 'ps1.txt',
-                  'gaia.vot', 'gaia.txt'],
+                  'gaia.vot', 'gaia.txt', 'gaia_xp.png', 'gaia_xp.txt'],
     button_text='Get Target Info',
     button_class='btn-info',
     # Coordinates every source queries by, and the colours they convert with
@@ -248,7 +253,8 @@ def target_info(config, basepath=None, verbose=True, show=False):
             cat = catalogs.get_cat_vizier(ra, dec, 5/3600,
                                           'I/355/gaiadr3',
                                           extra=['_RAJ2000', '_DEJ2000', 'e_Gmag', 'e_BPmag', 'e_RPmag',
-                                                 'A0', 'b_A0', 'B_A0', 'AG', 'b_AG', 'B_AG'],
+                                                 'A0', 'b_A0', 'B_A0', 'AG', 'b_AG', 'B_AG',
+                                                 'Source', 'XPsamp'],
                                           get_distance=True, verbose=False)
             if cat and len(cat):
                 cache.save(cat)
@@ -293,6 +299,15 @@ def target_info(config, basepath=None, verbose=True, show=False):
             log("Gaia extinction was not in the cached reply - "
                 "tick 'Ignore cache' to fetch it")
 
+        # Kept for the sections below, which need the star found here
+        if _number(star, 'Source') is not None:
+            config['gaia_source'] = int(star['Source'])
+
+        # Said rather than left to silence: most sources have no XP spectrum,
+        # and its absence below is otherwise indistinguishable from a failure
+        if _number(star, 'XPsamp') == 0:
+            log("No XP spectrum was published for this source")
+
         # Kept for the distances section below, which turns them into a
         # velocity once it knows how far away the star is
         for key, name in [('pmRA', 'gaia_pmra'), ('pmDE', 'gaia_pmdec'),
@@ -300,6 +315,84 @@ def target_info(config, basepath=None, verbose=True, show=False):
             value = _number(star, key)
             if value is not None:
                 config[name] = value
+
+    # Gaia DR3 XP spectrum
+    #
+    # Published for a fraction of the catalogue only, and the catalogue says
+    # which - so nothing is asked for that is known not to be there.
+    if config.get('gaia_source') and _number(star, 'XPsamp'):
+        log("\n---- Gaia DR3 XP spectrum ----\n")
+
+        cache_name = f"gaiaxp_{ra:.4f}_{dec:.4f}.vot"
+
+        with cached_votable_query(cache_name, basepath, log, 'Gaia DR3 XP spectrum',
+                                  refresh=refresh_cache) as cache:
+            if not cache.hit:
+                try:
+                    # Vizier serves the same spectra as the mission archive -
+                    # checked point by point, and identical to the precision
+                    # they are stored at - which keeps this on the one service
+                    # the rest of the step already talks to
+                    res = Vizier(columns=['**'], row_limit=-1).query_region(
+                        SkyCoord(ra, dec, unit='deg'), radius=GAIA_XP_SR*u.arcsec,
+                        catalog=GAIA_XP_CATALOGUE)
+
+                    xp = res[0] if res and len(res) else None
+
+                    if xp is not None and len(xp):
+                        # A cone this size can hold more than one Gaia source,
+                        # each with its own spectrum, so the nearest is taken
+                        if 'Source' in xp.colnames and config.get('gaia_source'):
+                            wanted = xp['Source'] == config['gaia_source']
+                            if np.sum(wanted):
+                                xp = xp[wanted]
+
+                        xp = Table({
+                            'wavelength': np.asarray(xp['lambda'], dtype=float),
+                            'flux': np.asarray(xp['Flux'], dtype=float),
+                            'flux_error': np.asarray(xp['e_Flux'], dtype=float),
+                        })
+                        xp.sort('wavelength')
+                        cache.save(xp)
+                    else:
+                        xp = None
+                except Exception as e:
+                    log(f"Could not fetch the XP spectrum: {e}")
+                    xp = None
+            else:
+                xp = cache.data
+
+        if xp is not None and len(xp):
+            lam = np.asarray(xp['wavelength'], dtype=float)
+            flux = np.asarray(xp['flux'], dtype=float)
+            err = np.asarray(xp['flux_error'], dtype=float)
+
+            log(f"{len(xp)} points from {lam.min():.0f} to {lam.max():.0f} nm")
+            log("Sampled from the basis functions Gaia publishes rather than "
+                "observed as drawn, at a resolution of some tens - the wiggles "
+                "are mostly the reconstruction, not lines")
+
+            # The fluxes run to 1e-14 or so, which no axis should have to say
+            scale = 1e-16
+
+            with plots.figure_saver(os.path.join(basepath, 'gaia_xp.png'),
+                                    figsize=(8, 4), show=show) as fig:
+                ax = fig.add_subplot(1, 1, 1)
+
+                ax.fill_between(lam, (flux - err)/scale, (flux + err)/scale,
+                                alpha=0.25, color='#2980b9', lw=0)
+                ax.plot(lam, flux/scale, '-', lw=1, color='#2980b9')
+
+                ax.grid(alpha=0.2)
+                ax.set_xlabel('Wavelength, nm')
+                ax.set_ylabel(r'Flux, $10^{-16}$ W nm$^{-1}$ m$^{-2}$')
+                ax.set_title(f"{config['target_name']} - Gaia DR3 XP spectrum")
+
+            log("XP spectrum plot saved to file:gaia_xp.png")
+
+            xp.write(os.path.join(basepath, 'gaia_xp.txt'),
+                     format='ascii.commented_header', overwrite=True)
+            log("XP spectrum written to file:gaia_xp.txt")
 
     # Interstellar reddening from the two-dimensional maps
     ra = config.get('target_ra')

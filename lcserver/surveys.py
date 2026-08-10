@@ -492,6 +492,7 @@ CACHE_PREFIXES = {
     'ps1_': 'info',
     'dust_': 'info',
     'dustext_': 'info',
+    'gaiaxp_': 'info',
     'skymapper_': 'info',
     # lightkurve downloads, one directory per source
     'mast_tess': 'tess',
