@@ -544,6 +544,10 @@ def targets(request, id=None):
         context['files'] = [os.path.split(_)[1] for _ in glob.glob(os.path.join(path, '*'))]
 
         # Cached replies from the surveys, so that they can be dropped one by one
+        # Only offer the spectral viewer where there is something to view
+        from .views_spectrum import has_spectra
+        context['has_spectra'] = has_spectra(path)
+
         context['cache_entries'] = target_cache_entries(target)
         context['cache_size'] = sum(_['size'] for _ in context['cache_entries'])
 

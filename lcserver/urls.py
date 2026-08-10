@@ -23,6 +23,7 @@ from django.contrib.auth import views as auth_views
 from . import views
 from . import views_celery
 from . import views_lightcurve
+from . import views_spectrum
 
 urlpatterns = [
     path('', views.index, name='index'),
@@ -36,6 +37,8 @@ urlpatterns = [
     path('targets/<int:id>/lightcurve/', views_lightcurve.target_lightcurve, name='target_lightcurve'),
     path('targets/<int:id>/lightcurve_data/', views_lightcurve.load_lightcurve_data, name='load_lightcurve_data'),
     path('targets/<int:id>/fit_period/', views_lightcurve.fit_period, name='fit_period'),
+    path('targets/<int:id>/spectrum/', views_spectrum.target_spectrum, name='target_spectrum'),
+    path('targets/<int:id>/spectrum_data/', views_spectrum.load_spectrum_json, name='load_spectrum_json'),
     path('targets/<int:id>/files/', views.target_files, {'path': ''}, name='target_files'),
     path('targets/<int:id>/files/<path:path>', views.target_files, name='target_files'),
     path('targets/<int:id>/delete/<path:path>', views.target_file_delete, name='target_file_delete'),

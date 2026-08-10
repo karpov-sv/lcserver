@@ -1,0 +1,283 @@
+{% extends "template.html" %}
+
+{% block ptitle %}Spectra : Target {{ target_id }} : LCServer{% endblock %}
+
+{% block title %}Spectra{% endblock %}
+
+{% block head %}
+<script src="https://cdn.plot.ly/plotly-2.27.0.min.js" charset="utf-8"></script>
+
+<style>
+.control-panel {
+    background-color: var(--bs-light);
+    border: 1px solid var(--bs-border-color);
+    border-radius: 0.375rem;
+    padding: 1rem;
+    margin-bottom: 1rem;
+}
+
+.spectrum-control {
+    display: flex;
+    align-items: center;
+    padding: 0.4rem 0.5rem;
+    margin-bottom: 0.25rem;
+    border-radius: 0.25rem;
+    background-color: var(--bs-body-bg);
+}
+
+.spectrum-control:hover {
+    background-color: var(--bs-secondary-bg);
+}
+
+.spectrum-swatch {
+    width: 26px;
+    height: 26px;
+    border-radius: 3px;
+    margin-right: 0.5rem;
+    border: 1px solid var(--bs-border-color);
+    flex: 0 0 auto;
+}
+
+.spectrum-label {
+    flex: 1;
+    font-weight: 500;
+}
+
+.spectrum-info {
+    color: var(--bs-secondary-color);
+    font-size: 0.875rem;
+    margin-right: 1rem;
+    white-space: nowrap;
+}
+</style>
+{% endblock %}
+
+{% block content %}
+
+<nav aria-label="breadcrumb">
+  <ol class="breadcrumb">
+    <li class="breadcrumb-item">
+      <a href="{% url 'targets' id=target_id %}"><span class="fa fa-angle-left text-body"></span></a>
+      <a href="{% url 'targets' id=target_id %}">Target {{ target_id }}: {{ target.name }}</a>
+    </li>
+    <li class="breadcrumb-item active">Spectra</li>
+  </ol>
+</nav>
+
+<div id="loading-indicator" class="mt-3">
+  <div class="d-flex align-items-center">
+    <strong>Loading spectra...</strong>
+    <div class="spinner-border spinner-border-sm ms-2" role="status"></div>
+  </div>
+</div>
+
+<div id="no-data" class="alert alert-warning mt-3" style="display: none;">
+  No spectra for this target yet. Run the sources that fetch them - the info
+  step for Gaia XP, and the LAMOST and DESI sections.
+</div>
+
+<div id="error-message" class="alert alert-danger mt-3" style="display: none;">
+  <strong>Error loading spectra:</strong> <span id="error-text"></span>
+</div>
+
+<div class="control-panel" id="control-panel" style="display: none;">
+  <div class="d-flex flex-wrap align-items-center gap-3 mb-3">
+    <h5 class="mb-0">Display</h5>
+
+    <div class="btn-group btn-group-sm">
+      <button onclick="setScaling('normalised')" data-scaling="normalised"
+              class="btn btn-sm btn-primary"
+              title="Each spectrum divided by its own median, so their shapes can be compared">
+        Normalised
+      </button>
+      <button onclick="setScaling('raw')" data-scaling="raw"
+              class="btn btn-sm btn-outline-primary"
+              title="As measured, in whatever units each survey publishes">
+        As measured
+      </button>
+    </div>
+
+    <div class="form-check">
+      <input class="form-check-input" type="checkbox" id="stack-check" onchange="redraw()">
+      <label class="form-check-label" for="stack-check">Stack apart</label>
+    </div>
+
+    <div class="form-check">
+      <input class="form-check-input" type="checkbox" id="lines-check" checked onchange="redraw()">
+      <label class="form-check-label" for="lines-check">Lines</label>
+    </div>
+
+    <div class="form-check">
+      <input class="form-check-input" type="checkbox" id="telluric-check" onchange="redraw()">
+      <label class="form-check-label" for="telluric-check"
+             title="Bands where the atmosphere absorbs, not the star">Telluric bands</label>
+    </div>
+
+    <div class="form-check">
+      <input class="form-check-input" type="checkbox" id="log-check" onchange="redraw()">
+      <label class="form-check-label" for="log-check">Log flux</label>
+    </div>
+  </div>
+
+  <div id="spectrum-controls"></div>
+</div>
+
+<div id="plotly-container" style="width: 100%; height: 620px; display: none;"></div>
+
+<script>
+ let spectra = [];
+ let lines = [];
+ let telluric = [];
+ let state = [];
+ let scaling = 'normalised';
+
+ function setScaling(mode) {
+     scaling = mode;
+     document.querySelectorAll('.btn-group button[data-scaling]').forEach(btn => {
+         const on = btn.dataset.scaling === mode;
+         btn.classList.toggle('btn-primary', on);
+         btn.classList.toggle('btn-outline-primary', !on);
+     });
+     redraw();
+ }
+
+ // Divided by its own median unless asked otherwise: the three surveys publish
+ // fluxes that differ by twelve orders of magnitude, and drawn as measured all
+ // but one of them is a flat line along the axis.
+ function values(spectrum, offset) {
+     const scale = (scaling === 'normalised' && spectrum.median) ? spectrum.median : 1;
+     const y = spectrum.flux.map(f => f / scale + offset);
+
+     // A null tells Plotly to lift the pen: the segments of a spectrum are
+     // separate measurements and nothing was observed between them
+     (spectrum.breaks || []).forEach(i => { y[i] = null; });
+
+     return y;
+ }
+
+ function redraw() {
+     const stacked = document.getElementById('stack-check').checked;
+     const traces = [];
+     let shown = 0;
+
+     spectra.forEach((spectrum, i) => {
+         if (!state[i].visible) return;
+
+         // Only meaningful once every spectrum is on the same scale
+         const offset = (stacked && scaling === 'normalised') ? shown * 1.0 : 0;
+
+         traces.push({
+             x: spectrum.wavelength,
+             y: values(spectrum, offset),
+             type: 'scattergl',
+             mode: 'lines',
+             name: spectrum.label + (offset ? ` (+${offset})` : ''),
+             line: {color: spectrum.color, width: 1},
+             hovertemplate: '%{x:.1f} A<br>%{y:.4g}<extra>' + spectrum.label + '</extra>',
+         });
+
+         shown++;
+     });
+
+     const shapes = [];
+     const annotations = [];
+
+     if (document.getElementById('telluric-check').checked) {
+         telluric.forEach(band => {
+             shapes.push({
+                 type: 'rect', xref: 'x', yref: 'paper',
+                 x0: band.from, x1: band.to, y0: 0, y1: 1,
+                 fillcolor: '#888', opacity: 0.13, line: {width: 0}, layer: 'below',
+             });
+         });
+     }
+
+     if (document.getElementById('lines-check').checked) {
+         lines.forEach(line => {
+             shapes.push({
+                 type: 'line', xref: 'x', yref: 'paper',
+                 x0: line.wavelength, x1: line.wavelength, y0: 0, y1: 1,
+                 line: {color: '#999', width: 1, dash: 'dot'}, layer: 'below',
+             });
+             annotations.push({
+                 x: line.wavelength, y: 1, xref: 'x', yref: 'paper',
+                 text: line.label, showarrow: false, textangle: -90,
+                 xanchor: 'left', yanchor: 'top',
+                 font: {size: 9, color: '#999'},
+             });
+         });
+     }
+
+     Plotly.react('plotly-container', traces, {
+         margin: {l: 60, r: 20, t: 30, b: 50},
+         xaxis: {title: 'Wavelength, A', showgrid: true, gridcolor: 'rgba(128,128,128,0.2)'},
+         yaxis: {
+             title: scaling === 'normalised' ? 'Flux / median' : 'Flux, as published',
+             type: document.getElementById('log-check').checked ? 'log' : 'linear',
+             showgrid: true, gridcolor: 'rgba(128,128,128,0.2)',
+         },
+         shapes: shapes,
+         annotations: annotations,
+         hovermode: 'closest',
+         showlegend: true,
+         legend: {orientation: 'h', y: -0.15},
+         paper_bgcolor: 'rgba(0,0,0,0)',
+         plot_bgcolor: 'rgba(0,0,0,0)',
+     }, {responsive: true, displaylogo: false});
+ }
+
+ function buildControls() {
+     const host = document.getElementById('spectrum-controls');
+     host.innerHTML = '';
+
+     spectra.forEach((spectrum, i) => {
+         const row = document.createElement('div');
+         row.className = 'spectrum-control';
+         row.innerHTML = `
+           <div class="spectrum-swatch" style="background:${spectrum.color}"></div>
+           <div class="form-check me-2">
+             <input class="form-check-input" type="checkbox" id="vis-${i}" ${state[i].visible ? 'checked' : ''}>
+           </div>
+           <label class="spectrum-label" for="vis-${i}">${spectrum.label}</label>
+           <span class="spectrum-info">${spectrum.n_points} points</span>
+           <span class="spectrum-info">${spectrum.wavelength_min.toFixed(0)} - ${spectrum.wavelength_max.toFixed(0)} A</span>
+         `;
+         host.appendChild(row);
+
+         row.querySelector(`#vis-${i}`).addEventListener('change', e => {
+             state[i].visible = e.target.checked;
+             redraw();
+         });
+     });
+ }
+
+ fetch(`/targets/{{ target_id }}/spectrum_data/`)
+     .then(r => r.ok ? r.json() : r.json().then(e => { throw new Error(e.error || 'Server error'); }))
+     .then(data => {
+         document.getElementById('loading-indicator').style.display = 'none';
+
+         spectra = data.spectra || [];
+         lines = data.lines || [];
+         telluric = data.telluric || [];
+
+         if (!spectra.length) {
+             document.getElementById('no-data').style.display = 'block';
+             return;
+         }
+
+         state = spectra.map(() => ({visible: true}));
+
+         document.getElementById('control-panel').style.display = 'block';
+         document.getElementById('plotly-container').style.display = 'block';
+
+         buildControls();
+         redraw();
+     })
+     .catch(err => {
+         document.getElementById('loading-indicator').style.display = 'none';
+         document.getElementById('error-text').textContent = err.message;
+         document.getElementById('error-message').style.display = 'block';
+     });
+</script>
+
+{% endblock %}

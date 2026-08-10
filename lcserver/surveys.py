@@ -96,6 +96,14 @@ def survey_source(
     # the letter its filenames carry maps to what that phase calls a segment
     lc_segment_prefixes=None,
     lc_color_palette=None,
+    # Spectra, for the spectral viewer. A source writing them says where they
+    # are and what its wavelengths are in; the tables themselves carry a
+    # 'wavelength' and a 'flux' column by convention.
+    spectrum_files=None,             # glob pattern, one table per spectrum
+    spectrum_label=None,             # what to call them, if not the short name
+    spectrum_wavelength_scale=1.0,   # multiplied to give Angstrom
+    spectrum_color=None,             # a source with one spectrum
+    spectrum_palette=None,           # a source with several, told apart by shade
     # Config keys this source writes for others to convert with. A source that
     # provides one runs before the sources that read it, rather than alongside
     # them - see run_target_steps().
@@ -239,6 +247,11 @@ def survey_source(
             'lc_segment_name': lc_segment_name,
             'lc_segment_prefixes': lc_segment_prefixes or {},
             'lc_color_palette': lc_color_palette,
+            'spectrum_files': spectrum_files,
+            'spectrum_label': spectrum_label,
+            'spectrum_wavelength_scale': spectrum_wavelength_scale,
+            'spectrum_color': spectrum_color,
+            'spectrum_palette': spectrum_palette,
             'provides_config': provides_config or [],
             'clears_other_sources': clears_other_sources,
             # Template metadata

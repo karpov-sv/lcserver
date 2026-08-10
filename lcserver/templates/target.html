@@ -197,6 +197,12 @@
             <i class="fa fa-line-chart"></i> Light curves
           </a>
 
+          {% if has_spectra %}
+            <a href="{% url 'target_spectrum' id=target.id %}" class="btn btn-info ms-2" title="Interactive spectral viewer">
+              <i class="fa fa-bar-chart"></i> Spectra
+            </a>
+          {% endif %}
+
           <button type="submit" name="action" value="cleanup_target" class="btn btn-danger ms-4"
                   title="Delete all processing results and configurations">Cleanup</button>
 

@@ -156,6 +156,8 @@ def _find(ra, dec, sr, log):
     help_text='DESI DR1 spectra, 3600-9800 A, northern sky',
     order=28,
     # Spectra rather than a light curve, so no lc_mode is declared
+    spectrum_files='desi_*.txt',
+    spectrum_palette=['#16a085', '#27ae60', '#1abc9c', '#2ecc71'],
     template_layout='complex',
     additional_plots=['desi_*.png'],
 )

@@ -101,6 +101,11 @@ def _number(row, key):
     clears_other_sources=True,
     help_text='Resolve target coordinates and fetch catalog photometry',
     order=1,
+    # Spectral viewer: Gaia publishes XP in nanometres
+    spectrum_files='gaia_xp.txt',
+    spectrum_label='Gaia XP',
+    spectrum_wavelength_scale=10.0,
+    spectrum_color='#2980b9',
     # Template metadata
     template_layout='custom',
 )

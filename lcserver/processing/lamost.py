@@ -101,6 +101,44 @@ def _fetch_spectrum(obsid, resolution, log):
     return vstack(rows)
 
 
+def _trim_dead_edges(spectrum, log):
+    """Drop the dead pixels each arm begins and ends on.
+
+    An arm is padded with a dozen or two exact zeros, which the published
+    inverse variance does mark as worthless. The pixel or two just inside them
+    is not marked at all - it carries an ordinary weight - and still comes out
+    at minus eight hundred where the spectrum runs at three thousand. So the
+    leading and trailing runs of non-positive flux go, both being edge
+    artefacts rather than measurements of anything.
+
+    Only the runs at the two ends: a negative in the middle of an arm is the
+    noise of a faint object, which is a measurement and stays.
+    """
+    arms = np.asarray(spectrum['arm'], dtype=str)
+    flux = np.asarray(spectrum['flux'], dtype=float)
+
+    keep = np.ones(len(spectrum), dtype=bool)
+    dropped = 0
+
+    for arm in dict.fromkeys(arms):
+        here = np.where(arms == arm)[0]
+        good = np.where(flux[here] > 0)[0]
+
+        if not len(good):
+            continue
+
+        # Everything outside the first and last real measurement of this arm
+        edges = here[np.concatenate([np.arange(good[0]),
+                                     np.arange(good[-1] + 1, len(here))])]
+        keep[edges] = False
+        dropped += len(edges)
+
+    if dropped:
+        log(f"  dropped {dropped} dead pixels from the ends of the arms")
+
+    return spectrum[keep]
+
+
 def _query(catalogue, ra, dec, sr, basepath, log, name, refresh):
     """The observations of one survey at a position, cached."""
     cache_name = f"lamost_{name}_{ra:.4f}_{dec:.4f}_{sr:.1f}.vot"
@@ -159,8 +197,12 @@ def _value(row, key):
     },
     help_text='LAMOST DR11 spectra, northern sky, 3700-9100 A',
     order=27,
-    # Spectra rather than a light curve, so the viewer has nothing to show for
-    # it and no lc_mode is declared
+    # Spectra rather than a light curve, so no lc_mode is declared
+    spectrum_files='lamost_*.txt',
+    # A target may have several - low and medium resolution, and more than one
+    # epoch of either - and they are taken in filename order, which puts the
+    # low-resolution ones first
+    spectrum_palette=['#c0392b', '#e67e22', '#8e44ad', '#d35400', '#7f8c8d'],
     template_layout='complex',
     additional_plots=['lamost_*.png'],
 )
@@ -317,6 +359,13 @@ def target_lamost(config, basepath=None, verbose=True, show=False):
                 spectrum = cache.data
 
         if spectrum is None or not len(spectrum):
+            continue
+
+        # After the cache as well as before it, so that what was already
+        # fetched is cleaned up too
+        spectrum = _trim_dead_edges(spectrum, log)
+
+        if not len(spectrum):
             continue
 
         name = f"lamost_{prefix}_{obsid}"
