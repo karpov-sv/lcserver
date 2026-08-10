@@ -100,6 +100,9 @@ def survey_source(
     # provides one runs before the sources that read it, rather than alongside
     # them - see run_target_steps().
     provides_config=None,
+    # Set where a source deletes what every other source produced, so that
+    # their recorded states stop describing anything that is still on disk
+    clears_other_sources=False,
     # Template metadata
     template_layout='simple',  # 'simple', 'with_cutout', 'complex', 'custom'
     requires_coordinates=True,  # False for name-based sources like KWS
@@ -237,6 +240,7 @@ def survey_source(
             'lc_segment_prefixes': lc_segment_prefixes or {},
             'lc_color_palette': lc_color_palette,
             'provides_config': provides_config or [],
+            'clears_other_sources': clears_other_sources,
             # Template metadata
             'template_layout': template_layout,
             'requires_coordinates': requires_coordinates,
@@ -486,6 +490,8 @@ CACHE_PREFIXES = {
     'gaiadr3_dist_': 'info',
     'gaiadr3syn_': 'info',
     'ps1_': 'info',
+    'dust_': 'info',
+    'dustext_': 'info',
     'skymapper_': 'info',
     # lightkurve downloads, one directory per source
     'mast_tess': 'tess',

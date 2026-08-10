@@ -74,10 +74,22 @@ class TaskProcessContext:
         if fields:
             source_id = self.source_id
 
+            # The info step deletes what every other source produced, so their
+            # marks would otherwise go on claiming results that are no longer
+            # there. Anything this run has queued keeps its place.
+            clears = bool(surveys.SURVEY_SOURCES.get(source_id, {})
+                          .get('clears_other_sources'))
+
             def mark(fresh):
                 if 'celery_pid' in fields:
                     fresh.celery_pid = None
+
                 if source_id:
+                    if clears:
+                        fresh.source_states = {
+                            k: v for k, v in (fresh.source_states or {}).items()
+                            if v in ('pending', 'running')}
+
                     fresh.source_states[source_id] = 'running'
 
             models.Target.update_atomic(self.target_id, mark, fields)
