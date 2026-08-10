@@ -76,7 +76,7 @@ def _segments(res):
     return np.array(out)
 
 
-def _acquire_phase(config, basepath, log, show, phase, sr, cadence):
+def _acquire_phase(config, basepath, log, show, phase, sr, cadence, wanted_author):
     """Fetch one phase of the mission, a file per observing segment.
 
     Returns the number of segments written and of points in them.
@@ -86,6 +86,15 @@ def _acquire_phase(config, basepath, log, show, phase, sr, cadence):
     authors = phase['authors']
 
     log(f"\n==== {mission} ====\n")
+
+    # A pipeline asked for by name belongs to one phase or the other, so the
+    # phase that does not have it has nothing to do
+    if wanted_author != 'auto':
+        if wanted_author not in authors:
+            log(f"{wanted_author} is not a {mission} pipeline, skipping this phase")
+            return 0, 0
+
+        authors = [wanted_author]
 
     res = lk.search_lightcurve(
         SkyCoord(config.get('target_ra'), config.get('target_dec'), unit='deg'),
@@ -162,7 +171,10 @@ def _acquire_phase(config, basepath, log, show, phase, sr, cadence):
                 # bkjd, not btjd - lightkurve would hand over either
                 time = lc.time.bkjd
                 flux = lc.normalize().flux
-                flux[lc['quality'] != 0] = np.nan
+                # Not every pipeline reports one - K2SFF publishes eight
+                # columns and no quality among them
+                if 'quality' in lc.colnames:
+                    flux[lc['quality'] != 0] = np.nan
 
                 ax.axhline(1, ls='--', color='gray', alpha=0.3)
                 ax.plot(time, flux, drawstyle='steps', lw=1, color=phase['color'])
@@ -213,6 +225,19 @@ def _acquire_phase(config, basepath, log, show, phase, sr, cadence):
             'type': 'float',
             'label': 'Search radius, arcsec',
             'initial': 10.0,
+            'required': False,
+        },
+        'kepler_author': {
+            'type': 'choice',
+            'label': 'Pipeline',
+            'choices': [('auto', 'Best available'),
+                        ('Kepler', 'Kepler (official)'),
+                        ('KBONUS-BKG', 'KBONUS-BKG'),
+                        ('K2', 'K2 (official)'),
+                        ('K2SFF', 'K2SFF - drift corrected'),
+                        ('EVEREST', 'EVEREST - drift corrected'),
+                        ('K2VARCAT', 'K2VARCAT')],
+            'initial': 'auto',
             'required': False,
         },
         'kepler_cadence': {
@@ -278,6 +303,11 @@ def target_kepler(config, basepath=None, verbose=True, show=False):
     sr = config.get('kepler_sr', 10.0)
     cadence = str(config.get('kepler_cadence', 'long'))
 
+    # Which reduction to take. The drift-corrected K2 pipelines are worth
+    # asking for by name: the official one leaves the six-hour thruster cycle
+    # in, which the others remove.
+    wanted_author = str(config.get('kepler_author', 'auto'))
+
     log(f"Requesting Kepler data for {config['target_name']} within {sr:.1f} arcsec")
 
     nwritten = 0
@@ -285,7 +315,8 @@ def target_kepler(config, basepath=None, verbose=True, show=False):
     covered = []
 
     for phase in KEPLER_PHASES:
-        n, points = _acquire_phase(config, basepath, log, show, phase, sr, cadence)
+        n, points = _acquire_phase(config, basepath, log, show, phase, sr,
+                                   cadence, wanted_author)
 
         nwritten += n
         npoints += points
