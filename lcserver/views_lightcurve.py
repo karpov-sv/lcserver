@@ -15,6 +15,8 @@ from astropy.time import Time
 from astropy.timeseries import LombScargle
 from scipy.signal import find_peaks
 
+import lightkurve as lk
+
 from . import models
 from . import surveys
 
@@ -352,6 +354,58 @@ PERIOD_NPEAKS = 5
 # solar and sidereal day with their harmonics, and the year
 PERIOD_ALIASES = [1.0, 0.5, 1/3, 0.99726957, 0.49863478, 365.25]
 
+# Order of the polynomial the detrending filter fits inside its window
+DETREND_POLYORDER = 2
+
+
+def detrend_series(mjds, values, window_days, subtract):
+    """Remove variation slower than `window_days`, and return what it removed.
+
+    A Savitzky-Golay filter, through lightkurve's flatten, which splits the
+    series at its gaps and clips outliers as it goes rather than smoothing
+    across either. The window is given in days and converted here using each
+    series' own cadence, since a selection may put TESS at ten minutes beside
+    K2 at half an hour.
+
+    Slow variation is not noise, and on a target like K2-18 it is the star's
+    rotation - the largest real signal there is. This exists so that a short
+    period can be searched for underneath it, not because the trend is wrong,
+    which is why nothing calls it unless asked.
+
+    `subtract` picks the arithmetic: magnitudes are logarithmic, so their trend
+    comes off by subtraction, while a flux is divided by it.
+    """
+    if len(mjds) < 2 * DETREND_POLYORDER + 3:
+        return values, None
+
+    cadence = float(np.median(np.diff(np.sort(mjds))))
+
+    if not np.isfinite(cadence) or cadence <= 0:
+        return values, None
+
+    # An odd window, wide enough for the polynomial to be worth fitting
+    window = int(round(window_days / cadence))
+    window = max(window | 1, DETREND_POLYORDER + 3 | 1)
+
+    if window >= len(mjds):
+        return values, None
+
+    curve = lk.LightCurve(time=Time(mjds, format='mjd'), flux=values)
+
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore')
+        flat, trend = curve.flatten(window_length=window,
+                                    polyorder=DETREND_POLYORDER,
+                                    return_trend=True)
+
+    trend = np.asarray(trend.flux.value, dtype=float)
+
+    if subtract:
+        # Keep the level, so the series still plots where it did
+        return values - trend + np.median(trend), trend
+
+    return np.asarray(flat.flux.value, dtype=float), trend
+
 
 def find_period(mjds, values, errors, pmin, pmax):
     """Lomb-Scargle periodogram of a light curve and its highest peaks.
@@ -445,6 +499,20 @@ def fit_period(request, id):
         period_min = data.get('period_min', 0.1)  # Default: 0.1 days
         period_max = data.get('period_max', 100)  # Default: 100 days
 
+        # Width of the detrending window, in days. Absent or zero leaves the
+        # light curve alone, which is the default: what it would remove is
+        # often the real signal.
+        try:
+            detrend_window = float(data.get('detrend_window') or 0)
+        except (TypeError, ValueError):
+            detrend_window = 0.0
+
+        if detrend_window and detrend_window <= 0:
+            return JsonResponse({
+                'error': 'Invalid detrending window',
+                'details': f'The window must be a positive number of days (got {detrend_window})'
+            }, status=400)
+
         if not series_list:
             return JsonResponse({'error': 'No series data provided'}, status=400)
 
@@ -478,6 +546,10 @@ def fit_period(request, id):
         times = []
         values = []
         errors = []
+
+        # What detrending left behind, so the viewer can show and fold the same
+        # points the periodogram was computed from
+        detrended = []
 
         for i, requested in enumerate(series_list):
             label = requested.get('label')
@@ -514,6 +586,21 @@ def fit_period(request, id):
                 continue
 
             t, y, dy = t[valid], y[valid], dy[valid]
+
+            # Detrended one series at a time, before they are pooled: each has
+            # its own cadence and its own gaps, and a window in days means a
+            # different number of points in each
+            if detrend_window:
+                y, trend = detrend_series(t, y, detrend_window,
+                                          subtract=(mode != 'flux'))
+
+                if trend is not None:
+                    detrended.append({
+                        'index': index if isinstance(index, int) else None,
+                        'label': series['label'],
+                        'mjd': [round(float(_), 6) for _ in t],
+                        'value': [round(float(_), 6) for _ in y],
+                    })
 
             # Every series sits at a level of its own - magnitudes differ from
             # band to band, and the normalized fluxes of the TESS sectors are
@@ -566,6 +653,10 @@ def fit_period(request, id):
                 'details': f'Data span ({time_span:.2f} days) should be at least 2× minimum period ({period_min:.2f} days) for reliable fitting'
             }, status=400)
 
+        if detrend_window:
+            print(f'Detrended with a {detrend_window:g} d window, '
+                  f'{len(detrended)} of {len(times)} series')
+
         print(f'Starting period fit: {period_min:.3f} - {period_max:.3f} days')
         print(f'Data: {n_points} points, span {time_span:.2f} days, {len(times)} series')
 
@@ -604,6 +695,16 @@ def fit_period(request, id):
         if best_period > period_max * (1 - period_tolerance):
             notes.append(f'Best period ({best_period:.4f} days) is at the upper edge of the search range ({period_max:.4f} days). Try increasing the maximum period - the signal may have a longer one.')
 
+        # A filter narrower than a few times the period does not only remove
+        # the trend, it removes the signal - which shows up as a period at half
+        # the true one, or as a peak that fades as the window is narrowed
+        if detrend_window and best_period > detrend_window / 3.0:
+            notes.append(
+                f'The detrending window ({detrend_window:g} days) is less than three times '
+                f'the period found ({best_period:.4f} days), so the filter is removing part '
+                f'of the signal along with the trend. Widen the window and refit - if the '
+                f'period changes, it was the filter talking.')
+
         # Warn if best period is close to data span (aliasing risk)
         if best_period > 0.8 * time_span:
             notes.append(f'Best period ({best_period:.2f} days) is close to data span ({time_span:.2f} days). Period may be poorly constrained.')
@@ -640,6 +741,10 @@ def fit_period(request, id):
             'aliases': pg['aliases'],
             'nfreq': pg['nfreq'],
             'truncated': pg['truncated'],
+            'detrend_window': float(detrend_window),
+            # The points the periodogram was actually computed from, so that
+            # what is folded and drawn is what was fitted
+            'detrended': detrended,
         }
 
         if fap is not None:

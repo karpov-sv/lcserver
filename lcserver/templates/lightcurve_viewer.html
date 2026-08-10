@@ -264,6 +264,24 @@
     <div class="col-auto">
       <small class="text-muted">days</small>
     </div>
+
+    <div class="col-auto ms-auto">
+      <div class="form-check">
+        <input class="form-check-input" type="checkbox" id="detrend-check"
+               onchange="onDetrendToggle()"
+               title="Remove variation slower than the window before searching, so a short period can be seen underneath a long one">
+        <label class="form-check-label small" for="detrend-check">Remove trend</label>
+      </div>
+    </div>
+    <div class="col-auto">
+      <input type="number" class="form-control form-control-sm" id="detrend-window-input"
+             style="width: 90px;" step="0.1" min="0.01" value="1"
+             title="Window in days. It must be several times the period being looked for, or the filter eats the signal along with the trend."
+             disabled>
+    </div>
+    <div class="col-auto">
+      <small class="text-muted">d window</small>
+    </div>
   </div>
 
   <div class="mt-2">
@@ -1144,6 +1162,76 @@ function getCookie(name) {
 }
 
 // Fit period using Lomb-Scargle multiband periodogram
+// Detrending is asked for with the fit, not applied on its own: the server
+// removes the slow variation and sends back the points it actually searched,
+// which then stand in for the originals so that the plot and the phase fold
+// show the same curve the period came from. Unticking puts the originals back.
+let detrendedApplied = false;
+
+function detrendWindow() {
+    if (!document.getElementById('detrend-check').checked) return 0;
+    return parseFloat(document.getElementById('detrend-window-input').value) || 0;
+}
+
+function onDetrendToggle() {
+    const on = document.getElementById('detrend-check').checked;
+    document.getElementById('detrend-window-input').disabled = !on;
+
+    if (!on && detrendedApplied) restoreDetrended();
+}
+
+function restoreDetrended() {
+    lightcurveData.forEach(series => {
+        if (series._undetrended) {
+            series.mjd = series._undetrended.mjd;
+            series[isMagnitudeMode ? 'mag' : 'flux'] = series._undetrended.value;
+            series[isMagnitudeMode ? 'magerr' : 'flux_err'] = series._undetrended.error;
+            delete series._undetrended;
+        }
+    });
+
+    detrendedApplied = false;
+    redrawAfterDetrend();
+}
+
+function applyDetrended(detrended) {
+    if (!detrended || !detrended.length) return;
+
+    const key = isMagnitudeMode ? 'mag' : 'flux';
+    const errKey = isMagnitudeMode ? 'magerr' : 'flux_err';
+
+    detrended.forEach(part => {
+        const series = lightcurveData.find(s => s.label === part.label);
+        if (!series) return;
+
+        // Kept once, so a second fit does not save the detrended copy as the
+        // original
+        if (!series._undetrended) {
+            series._undetrended = {mjd: series.mjd, value: series[key], error: series[errKey]};
+        }
+
+        // The server dropped whatever it could not use, so the errors are
+        // matched back to the points that survived
+        const errors = new Map();
+        series._undetrended.mjd.forEach((t, i) => errors.set(t, series._undetrended.error[i]));
+
+        series.mjd = part.mjd;
+        series[key] = part.value;
+        series[errKey] = part.mjd.map(t => errors.has(t) ? errors.get(t) : 0);
+    });
+
+    detrendedApplied = true;
+    redrawAfterDetrend();
+}
+
+function redrawAfterDetrend() {
+    if (plotInitialized) {
+        plotInitialized = false;
+        updatePlot();
+        plotInitialized = true;
+    }
+}
+
 function fitPeriod() {
     // Check if data is loaded
     if (!dataLoaded) {
@@ -1200,7 +1288,8 @@ function fitPeriod() {
             series: visibleSeries,
             mode: isMagnitudeMode ? 'magnitude' : 'flux',
             period_min: periodMin,
-            period_max: periodMax
+            period_max: periodMax,
+            detrend_window: detrendWindow()
         })
     })
     .then(response => {
@@ -1247,6 +1336,12 @@ function fitPeriod() {
         message += `Time span: ${data.time_span.toFixed(2)} days\n`;
         message += `Fitted ${data.n_points} points from ${data.n_series} series.`;
 
+        if (data.detrend_window) {
+            message += `\n\nVariation slower than ${data.detrend_window} d was removed first`
+                     + ` - the plot now shows what was searched. Untick "Remove trend"`
+                     + ` to put it back.`;
+        }
+
         // Add warnings if present
         if (data.warnings && data.warnings.length > 0) {
             message += '\n\n⚠️  Warnings:\n';
@@ -1256,6 +1351,14 @@ function fitPeriod() {
         }
 
         alert(message);
+
+        // Before the plot is touched, so that both it and the phase fold show
+        // the same points the period was found in
+        if (data.detrend_window) {
+            applyDetrended(data.detrended);
+        } else if (detrendedApplied) {
+            restoreDetrended();
+        }
 
         // Show the periodogram, so that any of its peaks can simply be clicked
         plotPeriodogram(data);
