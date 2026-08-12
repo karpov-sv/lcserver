@@ -4,12 +4,70 @@ import os
 import glob
 import shutil
 import re
+import requests
 import dill as pickle
 from io import BytesIO
 from contextlib import contextmanager
 
 from astropy.io.votable import parse as votable_parse
 from astropy.table import Table
+
+
+class SourceError(RuntimeError):
+    """A source could not get its data.
+
+    Not to be confused with finding none: the archive refused, stalled, or
+    answered with something that could not be read, and the step ends without
+    data because of that. Raised rather than logged and returned, so that the
+    run records the step as failed instead of as a survey with nothing to
+    show; and reported as its message alone, there being no bug here to trace
+    - the reason is the whole of the story.
+    """
+
+
+# How long any one request to IRSA may take. Their TAP service answers a cone
+# search in seconds when it answers at all, so this is long enough to be no
+# constraint on a working service and short enough to give up on a dead one.
+IRSA_TIMEOUT = 120
+
+
+class _TimeoutSession(requests.Session):
+    """A session that will not wait for an answer forever.
+
+    requests takes its timeout per call and offers nothing session-wide, so a
+    library that asks for none - pyvo does, and that is what astroquery hands
+    this to - would wait indefinitely on a service that accepts the connection
+    and then says nothing. The timeout covers the wait between bytes as well as
+    the connection, which matters for a body that is streamed.
+    """
+
+    def __init__(self, timeout):
+        super().__init__()
+        self.timeout = timeout
+
+    def request(self, *args, **kwargs):
+        kwargs.setdefault('timeout', self.timeout)
+        return super().request(*args, **kwargs)
+
+
+def irsa_client(timeout=IRSA_TIMEOUT):
+    """astroquery's IRSA client, made to give up rather than hang.
+
+    astroquery builds its TAP service around a session of its own making and
+    never gives it conf.timeout - that setting governs the older paths, and is
+    referenced nowhere in the class the queries here go through - so the
+    request pyvo ends up making carries no timeout at all. A service that
+    stalls would then hold the step until Celery's own limit killed it half an
+    hour later. The session is replaced once, and the TAP service dropped so
+    that it is built again around the new one.
+    """
+    from astroquery.ipac.irsa import Irsa
+
+    if not isinstance(Irsa._session, _TimeoutSession):
+        Irsa._session = _TimeoutSession(timeout)
+        Irsa._tap = None
+
+    return Irsa
 
 
 def parse_votable_lenient(xml_content):

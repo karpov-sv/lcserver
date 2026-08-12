@@ -16,7 +16,7 @@ from stdpipe import plots
 
 from .. import surveys
 from ..surveys import survey_source, get_output_files
-from .utils import cleanup_paths, cached_votable_query, log_bands, log_conversion
+from .utils import SourceError, cleanup_paths, cached_votable_query, log_bands, log_conversion
 
 
 @survey_source(
@@ -103,10 +103,11 @@ def target_asas(config, basepath=None, verbose=True, show=False):
             except Exception as e:
                 import traceback
                 traceback.print_exc()
-                # Said outright: what follows is that nothing came back, which
-                # on its own would read as the survey having no data here
-                log(f"Error: could not query ASAS-SN - {type(e).__name__}: {e}")
-                lcq = None
+                # Raised rather than passed over: what followed was a report of
+                # no data, which is what an archive that is down looks like
+                # from the outside
+                raise SourceError("could not query ASAS-SN - "
+                                  f"{type(e).__name__}: {e}")
 
             if not lcq or not len(lcq.data):
                 log("Warning: No ASAS-SN data found")

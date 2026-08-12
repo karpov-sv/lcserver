@@ -18,7 +18,7 @@ from stdpipe import plots
 
 from .. import surveys
 from ..surveys import survey_source, get_output_files
-from .utils import cleanup_paths, cached_votable_query, log_bands, log_conversion
+from .utils import SourceError, cleanup_paths, cached_votable_query, log_bands, log_conversion
 
 
 ASAS_CATALOG_URL = 'https://www.astrouw.edu.pl/cgi-asas/asas_cat_input'
@@ -275,8 +275,8 @@ def target_asas3(config, basepath=None, verbose=True, show=False):
             except Exception as e:
                 import traceback
                 traceback.print_exc()
-                log(f"Error: could not download the data - {type(e).__name__}: {e}")
-                return
+                raise SourceError("could not download the data - "
+                                  f"{type(e).__name__}: {e}")
 
             if asas3 is None or not len(asas3):
                 log("Warning: No ASAS-3 data points found")

@@ -26,7 +26,7 @@ from stdpipe import plots
 
 from .. import surveys
 from ..surveys import survey_source, get_output_files
-from .utils import cleanup_paths, cached_votable_query, log_bands, log_conversion
+from .utils import SourceError, cleanup_paths, cached_votable_query, log_bands, log_conversion
 
 
 NSVS_BASE_URL = 'https://cdsarc.cds.unistra.fr/ftp/II/287'
@@ -276,8 +276,7 @@ def target_nsvs(config, basepath=None, verbose=True, show=False):
                 rows = _stream_lightcurve(field, obj['id'], log)
 
                 if rows is None:
-                    log("Error: the object was not found in the field file")
-                    return
+                    raise SourceError("the object was not found in the field file")
 
                 times = _frame_times(log)
 
@@ -298,8 +297,8 @@ def target_nsvs(config, basepath=None, verbose=True, show=False):
             except Exception as e:
                 import traceback
                 traceback.print_exc()
-                log(f"Error: could not download the data - {type(e).__name__}: {e}")
-                return
+                raise SourceError("could not download the data - "
+                                  f"{type(e).__name__}: {e}")
 
             if not len(nsvs):
                 log("Warning: No NSVS data points found")

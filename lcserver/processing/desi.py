@@ -28,7 +28,7 @@ from astropy import units as u
 from stdpipe import plots
 
 from ..surveys import survey_source, get_output_files
-from .utils import cleanup_paths, cached_votable_query
+from .utils import SourceError, cleanup_paths, cached_votable_query
 
 
 # Optional: the client is a NOIRLab package of its own, and everything else
@@ -88,8 +88,8 @@ def _query_tap(query, log):
 
     # A failed query comes back as a VOTable saying so, whatever was asked for
     if res.status_code != 200 or res.text.lstrip().startswith('<'):
-        log(f"Error: the table service refused the query: {res.text[:160]}")
-        return None
+        raise SourceError("the table service refused the query: "
+                          f"{res.text[:160]}")
 
     # A list of lines rather than a StringIO: the fast reader wants bytes from
     # a file-like object and refuses one that gives it text

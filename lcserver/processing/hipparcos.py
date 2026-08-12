@@ -25,7 +25,7 @@ from stdpipe import plots
 
 from .. import surveys
 from ..surveys import survey_source, get_output_files
-from .utils import cleanup_paths, cached_votable_query, log_bands, log_conversion
+from .utils import SourceError, cleanup_paths, cached_votable_query, log_bands, log_conversion
 
 
 HIP_ANNEXE_URL = 'https://cdsarc.cds.unistra.fr/ftp/I/239/epophot/hep.gz'
@@ -267,8 +267,8 @@ def target_hipparcos(config, basepath=None, verbose=True, show=False):
             except Exception as e:
                 import traceback
                 traceback.print_exc()
-                log(f"Error: could not download the data - {type(e).__name__}: {e}")
-                return
+                raise SourceError("could not download the data - "
+                                  f"{type(e).__name__}: {e}")
 
             if not len(hipp):
                 log("Warning: No Hipparcos data points found")

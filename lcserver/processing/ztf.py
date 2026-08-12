@@ -18,7 +18,7 @@ from stdpipe import plots
 
 from .. import surveys
 from ..surveys import survey_source, get_output_files
-from .utils import cleanup_paths, cached_votable_query, log_bands, log_conversion
+from .utils import SourceError, cleanup_paths, cached_votable_query, log_bands, log_conversion
 
 
 # Some convenience code for gaussian process based smoothing of unevenly spaced 1d data
@@ -184,6 +184,7 @@ def target_ztf(config, basepath=None, verbose=True, show=False):
             r = requests.get(
                 "https://db.ztf.snad.space/api/v3/data/latest/circle/full/json",
                 params={"ra": ra, "dec": dec, "radius_arcsec": ztf_sr},
+                timeout=180,
             )
 
             lcq = None
@@ -200,7 +201,7 @@ def target_ztf(config, basepath=None, verbose=True, show=False):
                     lcq.data['catflags'] = np.zeros_like(lcq.data['clrcoeff'], dtype=int)
 
             else:
-                log(f"Error: {r.status_code} accessing ZTF photometry")
+                raise SourceError(f"the ZTF archive answered {r.status_code}")
 
             if not lcq or not len(lcq.data):
                 log("Warning: No ZTF data found")

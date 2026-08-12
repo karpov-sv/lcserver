@@ -798,6 +798,7 @@ def target_info(config, basepath=None, verbose=True, show=False):
             # Query Pan-STARRS DR2 - only if not cached
             try:
                 res = requests.get('https://catalogs.mast.stsci.edu/api/v0.1/panstarrs/dr2/detection.csv',
+                                   timeout=120,
                                    params={'ra': ra, 'dec': dec, 'radius': 2/3600, 'format': 'csv',
                                           'columns': ['obsTime', 'filterID', 'psfQfPerfect', 'psfFlux', 'psfFluxErr']})
                 ps1_raw = Table.read(BytesIO(res.content), format='csv')

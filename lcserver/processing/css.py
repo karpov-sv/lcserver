@@ -17,7 +17,7 @@ from stdpipe import plots
 
 from .. import surveys
 from ..surveys import survey_source, get_output_files
-from .utils import cleanup_paths, cached_votable_query, log_bands, log_conversion
+from .utils import SourceError, cleanup_paths, cached_votable_query, log_bands, log_conversion
 
 
 @survey_source(
@@ -100,8 +100,8 @@ def target_css(config, basepath=None, verbose=True, show=False):
                 )
                 res.raise_for_status()
             except requests.RequestException as e:
-                log(f"Error: Error querying CSS: {e}")
-                return
+                raise SourceError("could not query CSS - "
+                                  f"{type(e).__name__}: {e}")
 
             # Parse response
             # CSS returns CSV data embedded in HTML with a specific format
@@ -122,8 +122,7 @@ def target_css(config, basepath=None, verbose=True, show=False):
                 start_idx += len(start_marker) - 2  # Include the opening [[
                 end_idx = content.find(end_marker, start_idx)
                 if end_idx == -1:
-                    log("Error: malformed CSS response - no data end marker")
-                    return
+                    raise SourceError("malformed CSS response - no data end marker")
 
                 end_idx += 3  # Include the closing ]]
 
@@ -137,8 +136,8 @@ def target_css(config, basepath=None, verbose=True, show=False):
                 try:
                     data_array = ast.literal_eval(data_str)
                 except (ValueError, SyntaxError) as e:
-                    log(f"Error: could not parse the data array from CSS: {e}")
-                    return
+                    raise SourceError("could not parse the data array from CSS"
+                                      f" - {type(e).__name__}: {e}")
 
                 if not data_array or len(data_array) == 0:
                     log("Warning: No CSS data points found")
@@ -149,11 +148,13 @@ def target_css(config, basepath=None, verbose=True, show=False):
 
                 cache.save(css)
 
+            except SourceError:
+                raise
             except Exception as e:
                 import traceback
-                log(f"Error: Error parsing CSS response: {e}")
-                log(traceback.format_exc())
-                return
+                traceback.print_exc()
+                raise SourceError("could not parse the CSS response - "
+                                  f"{type(e).__name__}: {e}")
 
         css = cache.data
 

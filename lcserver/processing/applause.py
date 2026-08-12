@@ -130,7 +130,7 @@ def target_applause(config, basepath=None, verbose=True, show=False):
             # Parse VOTable with lenient error handling
             # The APPLAUSE TAP service sometimes returns malformed XML with undefined entities
             result_url = job.result_uri
-            response = requests.get(result_url)
+            response = requests.get(result_url, timeout=300)
 
             # Use helper function to parse potentially malformed VOTable
             applause = parse_votable_lenient(response.content)

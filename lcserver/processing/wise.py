@@ -12,14 +12,14 @@ from astropy.time import Time
 from astropy.coordinates import SkyCoord
 from astropy import units as u
 
-from astroquery.ipac.irsa import Irsa
 
 # STDPipe
 from stdpipe import plots
 
 from .. import surveys
 from ..surveys import survey_source, get_output_files
-from .utils import cleanup_paths, cached_votable_query, log_bands, log_conversion
+from .utils import (SourceError, cleanup_paths, cached_votable_query,
+                    irsa_client, log_bands, log_conversion)
 
 
 # The two IRSA tables that between them cover the whole mission, and the bands
@@ -147,6 +147,7 @@ def target_wise(config, basepath=None, verbose=True, show=False):
     coords = SkyCoord(ra, dec, unit='deg')
 
     rows = []
+    failures = []
 
     for phase in WISE_PHASES:
         cache_name = f"wise_{phase['phase']}_{ra:.4f}_{dec:.4f}_{wise_sr:.1f}.vot"
@@ -158,13 +159,18 @@ def target_wise(config, basepath=None, verbose=True, show=False):
             if not cache.hit:
                 log(f"within {wise_sr:.1f} arcsec")
                 try:
-                    data = Irsa.query_region(coords, catalog=phase['catalog'],
-                                             spatial='Cone', radius=wise_sr*u.arcsec)
+                    data = irsa_client().query_region(
+                        coords, catalog=phase['catalog'],
+                        spatial='Cone', radius=wise_sr*u.arcsec)
                 except Exception as e:
                     import traceback
                     traceback.print_exc()
+                    # Not raised here: WISE and NEOWISE are separate archives,
+                    # and one of them being down says nothing about the other.
+                    # Remembered, in case neither answers.
                     log(f"Error: could not query {phase['name']} - "
                         f"{type(e).__name__}: {e}")
+                    failures.append(f"{phase['name']} ({type(e).__name__})")
                     data = None
 
                 if data is not None and len(data):
@@ -216,6 +222,9 @@ def target_wise(config, basepath=None, verbose=True, show=False):
             }))
 
     if not rows:
+        if failures:
+            raise SourceError("could not query " + ", nor ".join(failures))
+
         log("\nWarning: No usable WISE photometry")
         return
 

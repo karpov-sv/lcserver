@@ -193,6 +193,13 @@ def create_survey_task(source_id, survey_config):
                 processing_func(config, basepath=ctx.basepath, verbose=log)
                 target.state = survey_config['state_acquired']
                 target.source_states[source_id] = 'done'
+            except processing.SourceError as e:
+                # The source could not get its data and has said why. That is
+                # the whole of what the user needs: no traceback, the failure
+                # being in the archive rather than in the code here.
+                log(f"\nError: {e}")
+                target.state = 'failed'
+                target.source_states[source_id] = 'failed'
             except:
                 import traceback
                 log("\nError: the step did not finish\n", traceback.format_exc())

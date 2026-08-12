@@ -11,14 +11,14 @@ from astropy.time import Time
 from astropy import units as u
 from astropy.coordinates import SkyCoord
 
-from astroquery.ipac.irsa import Irsa
 
 # STDPipe
 from stdpipe import plots
 
 from .. import surveys
 from ..surveys import survey_source, get_output_files
-from .utils import cleanup_paths, cached_votable_query, log_bands, log_conversion
+from .utils import (SourceError, cleanup_paths, cached_votable_query, irsa_client,
+                    log_bands, log_conversion)
 
 
 @survey_source(
@@ -83,7 +83,7 @@ def target_ptf(config, basepath=None, verbose=True, show=False):
             # Query PTF catalog - only if not cached
             try:
                 target = SkyCoord(ra, dec, unit='deg')
-                table = Irsa.query_region(
+                table = irsa_client().query_region(
                     coordinates=target,
                     spatial='Cone',
                     catalog='ptf_lightcurves',
@@ -99,9 +99,9 @@ def target_ptf(config, basepath=None, verbose=True, show=False):
 
             except Exception as e:
                 import traceback
-                log(f"Error: Error querying PTF: {e}")
-                log(traceback.format_exc())
-                return
+                traceback.print_exc()
+                raise SourceError("could not query PTF - "
+                                  f"{type(e).__name__}: {e}")
 
         # Use cached or freshly queried data
         table = cache.data

@@ -19,7 +19,7 @@ from stdpipe import plots
 
 from .. import surveys
 from ..surveys import survey_source, get_output_files
-from .utils import cleanup_paths, cached_votable_query, log_bands, log_conversion
+from .utils import SourceError, cleanup_paths, cached_votable_query, log_bands, log_conversion
 
 
 OMC_FORM_URL = 'https://sdc.cab.inta-csic.es/omc/secure/form_busqueda.jsp'
@@ -257,8 +257,8 @@ def target_omc(config, basepath=None, verbose=True, show=False):
             except Exception as e:
                 import traceback
                 traceback.print_exc()
-                log(f"Error: could not download the data - {type(e).__name__}: {e}")
-                return
+                raise SourceError("could not download the data - "
+                                  f"{type(e).__name__}: {e}")
 
             if omc is None or not len(omc):
                 log("Warning: No OMC data points found")
@@ -275,8 +275,7 @@ def target_omc(config, basepath=None, verbose=True, show=False):
     magcol, errcol = OMC_APERTURES.get(setting, OMC_APERTURES['standard'])
 
     if magcol not in omc.colnames or errcol not in omc.colnames:
-        log(f"Error: aperture column {magcol} is missing from the reply")
-        return
+        raise SourceError(f"aperture column {magcol} is missing from the reply")
 
     log(f"Using {magcol}" + (" (the survey's own choice, a 3x3 pixel aperture)"
                              if setting == 'standard' else ''))

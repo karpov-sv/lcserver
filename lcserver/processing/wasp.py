@@ -18,7 +18,7 @@ from stdpipe import plots
 
 from .. import surveys
 from ..surveys import survey_source, get_output_files
-from .utils import cleanup_paths, cached_votable_query, log_bands, log_conversion
+from .utils import SourceError, cleanup_paths, cached_votable_query, log_bands, log_conversion
 
 
 WASP_SEARCH_URL = 'https://wasp.cerit-sc.cz/search'
@@ -226,8 +226,8 @@ def target_wasp(config, basepath=None, verbose=True, show=False):
             except Exception as e:
                 import traceback
                 traceback.print_exc()
-                log(f"Error: could not download the data - {type(e).__name__}: {e}")
-                return
+                raise SourceError("could not download the data - "
+                                  f"{type(e).__name__}: {e}")
 
             if wasp is None or not len(wasp):
                 log("Warning: No SuperWASP data points found")

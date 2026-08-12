@@ -15,7 +15,7 @@ from stdpipe import plots
 
 from .. import surveys
 from ..surveys import survey_source, get_output_files
-from .utils import cleanup_paths, cached_votable_query, log_bands, log_conversion
+from .utils import SourceError, cleanup_paths, cached_votable_query, log_bands, log_conversion
 
 
 @survey_source(
@@ -122,8 +122,8 @@ def target_mmt9(config, basepath=None, verbose=True, show=False):
                 response = requests.get(api_url, params=params, timeout=60)
                 response.raise_for_status()
             except requests.exceptions.RequestException as e:
-                log(f'Error: Error downloading Mini-MegaTORTORA lightcurve: {e}')
-                return
+                raise SourceError('could not download the Mini-MegaTORTORA '
+                                  f'lightcurve - {type(e).__name__}: {e}')
 
             # Parse whitespace-separated table with commented header
             from io import StringIO
@@ -134,8 +134,8 @@ def target_mmt9(config, basepath=None, verbose=True, show=False):
                 mmt9.rename_column('Magerr', 'magerr')
 
             except Exception as e:
-                log(f'Error: Error parsing Mini-MegaTORTORA data: {e}')
-                return
+                raise SourceError('could not parse the Mini-MegaTORTORA data'
+                                  f' - {type(e).__name__}: {e}')
 
             if not len(mmt9):
                 log("Warning: No Mini-MegaTORTORA data found")
@@ -154,8 +154,7 @@ def target_mmt9(config, basepath=None, verbose=True, show=False):
         if 'time' in mmt9.colnames:
             mmt9['mjd'] = mmt9['time']
         else:
-            log('Error: Cannot find time column in Mini-MegaTORTORA data')
-            return
+            raise SourceError('no time column in the Mini-MegaTORTORA data')
 
     mmt9['time'] = Time(mmt9['mjd'], format='mjd')
     mmt9.sort('time')

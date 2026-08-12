@@ -15,7 +15,7 @@ from stdpipe import plots
 
 from .. import surveys
 from ..surveys import survey_source, get_output_files
-from .utils import cleanup_paths, cached_votable_query, log_bands, log_conversion
+from .utils import SourceError, cleanup_paths, cached_votable_query, log_bands, log_conversion
 
 
 # Largest separation between a V and an Ic measurement still counted as
@@ -107,8 +107,8 @@ def target_kws(config, basepath=None, verbose=True, show=False):
                 )
                 res.raise_for_status()
             except requests.RequestException as e:
-                log(f"Error: Error querying KWS: {e}")
-                return
+                raise SourceError("could not query KWS - "
+                                  f"{type(e).__name__}: {e}")
 
             # Parse response
             # KWS returns HTML with embedded table
@@ -127,8 +127,7 @@ def target_kws(config, basepath=None, verbose=True, show=False):
 
                 end_idx = content.find(end_marker, start_idx)
                 if end_idx == -1:
-                    log("Error: malformed KWS response - no table end")
-                    return
+                    raise SourceError("malformed KWS response - no table end")
 
                 end_idx += len(end_marker)
 
@@ -154,11 +153,13 @@ def target_kws(config, basepath=None, verbose=True, show=False):
 
                 log(f"Found {len(kws)} KWS data points")
 
+            except SourceError:
+                raise
             except Exception as e:
                 import traceback
-                log(f"Error: Error parsing KWS response: {e}")
-                log(traceback.format_exc())
-                return
+                traceback.print_exc()
+                raise SourceError("could not parse the KWS response - "
+                                  f"{type(e).__name__}: {e}")
 
         kws = cache.data
 
