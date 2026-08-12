@@ -10,7 +10,7 @@ from django.contrib.auth.decorators import login_required
 from django.conf import settings
 from django.shortcuts import get_object_or_404
 
-import os, io, glob, shutil
+import os, io, glob, shutil, time
 
 import mimetypes
 import magic
@@ -664,15 +664,40 @@ def targets_actions(request):
     return HttpResponseRedirect(reverse('targets'))
 
 
-def state_log_files():
-    """Map each running state to the log file the corresponding step writes, so
-    that the state poller can live-refresh it. States without an entry (e.g. the
-    '... acquired' ones) have no actively-growing log."""
-    return {
-        config['state_acquiring']: config['log_file']
-        for config in surveys.SURVEY_SOURCES.values()
-        if config.get('state_acquiring') and config.get('log_file')
-    }
+# How long after a log stops growing it is still worth sending. The page asks
+# every three seconds, so this covers the lines a step writes between the last
+# poll it was running for and the moment it finished - which otherwise waited
+# for the reload at the end of the whole run.
+LIVE_LOG_SECONDS = 30
+
+
+def live_logs(target):
+    """The log files worth sending to a page that is watching this run.
+
+    Read from source_states rather than from the target's own state: that field
+    can only name one step, and the sources no longer take turns - four of them
+    run at once, and the last one to write the state is not the only one with
+    something to say. A step that has just finished is included too, so that the
+    end of its log arrives rather than waiting for the reload.
+    """
+    now = time.time()
+    files = []
+
+    for source_id, state in (target.source_states or {}).items():
+        name = (surveys.SURVEY_SOURCES.get(source_id) or {}).get('log_file')
+
+        if not name or state == 'pending':
+            continue
+
+        try:
+            recent = now - os.path.getmtime(os.path.join(target.path(), name))
+        except OSError:
+            continue
+
+        if state == 'running' or recent < LIVE_LOG_SECONDS:
+            files.append(name)
+
+    return files
 
 
 def target_state(request, id):
@@ -695,14 +720,12 @@ def target_state(request, id):
         'source_states': surveys.get_source_states(target),
     }
 
-    # While running, also return the freshly-rendered log of the active step so
-    # the page can update it in place without a full reload.
+    # While running, also return the freshly-rendered logs of whatever is
+    # writing, so the page can update them in place without a full reload.
     if target.celery_id:
-        log_file = state_log_files().get(target.state)
-        if log_file and os.path.exists(os.path.join(target.path(), log_file)):
-            from .templatetags.tags import target_file_contents
-            result['log_file'] = log_file
-            result['log_html'] = target_file_contents(target, log_file, highlight=True)
+        from .templatetags.tags import target_file_contents
+        result['logs'] = {name: target_file_contents(target, name, highlight=True)
+                          for name in live_logs(target)}
 
     return JsonResponse(result)
 

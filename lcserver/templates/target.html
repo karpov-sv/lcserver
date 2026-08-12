@@ -63,21 +63,29 @@
            window.tocSetStates(json.source_states);
          }
 
-         // Live-update the log of the currently running step
-         if(json.log_file && json.log_html !== undefined
-            && json.log_html !== last_log[json.log_file]){
-           var pre = $('.target-log[data-logfile="' + json.log_file + '"]');
-           // If the step has no section on the page yet, just skip it - the
-           // final reload will render it. Reloading here would throw the user
-           // back to the top of the page on every step of a chain.
-           if(pre.length){
-             last_log[json.log_file] = json.log_html;
+         // Live-update the logs of the steps that are writing. Several of them
+         // run at once, so this is a map of every log with something new in it
+         // rather than the single one of when the steps took turns.
+         if(json.logs){
+           $.each(json.logs, function(file, html){
+             if(html === last_log[file])
+               return;
+
+             var pre = $('.target-log[data-logfile="' + file + '"]');
+
+             // If the step has no section on the page yet, just skip it - the
+             // final reload will render it. Reloading here would throw the user
+             // back to the top of the page on every step of a chain.
+             if(!pre.length)
+               return;
+
+             last_log[file] = html;
              // Preserve the user's scroll position unless already at the bottom
              var atBottom = pre[0].scrollHeight - pre[0].scrollTop - pre[0].clientHeight < 4;
-             pre.html(json.log_html);
+             pre.html(html);
              if(atBottom)
                pre[0].scrollTop = pre[0].scrollHeight;
-           }
+           });
          }
 
          // Reload if task finished
