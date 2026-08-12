@@ -59,6 +59,17 @@ def target_file_contents(target, filename, highlight=False):
                           partial(target_file_link, target=target),
                           contents, flags=re.MULTILINE)
 
+        # Last, so that it only ever sees the text: the links put in above are
+        # relative, and carry no scheme for this to match inside. The text is
+        # escaped by now, so an ampersand in a query string arrives as &amp; -
+        # which is what an href should hold anyway - and the quotes and angle
+        # brackets ending the match cannot occur inside a URL any more. The
+        # last character may not be punctuation, so that a URL at the end of a
+        # sentence, or in brackets, does not swallow what closes it.
+        contents = re.sub(r"""(https?://[^\s<>"']+[^\s<>"'.,;:!?)\]}])""",
+                          r"<a href='\1' target='_blank' rel='noopener'>\1</a>",
+                          contents, flags=re.MULTILINE)
+
     return mark_safe(contents)
 
 

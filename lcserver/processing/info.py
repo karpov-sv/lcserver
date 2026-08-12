@@ -35,6 +35,24 @@ GAIA_EPPHOT_SR = 5.0
 GAIA_XP_CATALOGUE = 'I/355/xpsample'
 GAIA_XP_SR = 5.0
 
+# AAVSO VSX, the variable star index, and the radius to look in. Wider than the
+# cones above: many VSX positions come from surveys with coarse astrometry, or
+# from discovery papers a century old.
+VSX_CATALOGUE = 'B/vsx/vsx'
+VSX_SR = 10.0
+
+# What VSX means by its variability flag
+VSX_FLAGS = {
+    0: 'variable',
+    1: 'suspected variable',
+    2: 'constant or non-existing',
+    3: 'misidentification or duplicate',
+    4: 'not found',
+}
+
+# HJD to MJD, the epochs being quoted the old way
+JD_TO_MJD = 2400000.5
+
 # Bands worth tabulating the extinction in: the ones the sources here actually
 # measure. IRSA offers twenty-five, most of them for instruments we never see.
 DUST_FILTERS = [
@@ -62,13 +80,22 @@ GAIA_EPPHOT_BANDS = [
 ]
 
 
+def _has(row, key):
+    """Whether a row - a dict or a table row - carries a column at all.
+
+    A table Row defines no membership test of its own, so `in` would fall back
+    to iterating its values and compare the name against each of them.
+    """
+    return key in (row.colnames if hasattr(row, 'colnames') else row)
+
+
 def _number(row, key):
     """A column as a float, or None where Vizier has nothing to give.
 
     A missing cell arrives masked rather than absent or NaN, so it answers to
     neither of the usual tests.
     """
-    if key not in row:
+    if not _has(row, key):
         return None
 
     value = row[key]
@@ -82,6 +109,38 @@ def _number(row, key):
         return None
 
     return value if np.isfinite(value) else None
+
+
+def _text(row, key):
+    """A column as a stripped string, blank where Vizier has nothing to give."""
+    if not _has(row, key):
+        return ''
+
+    value = row[key]
+
+    if value is None or value is np.ma.masked:
+        return ''
+
+    return str(value).strip()
+
+
+def _vsx_magnitude(row, key):
+    """A VSX magnitude with everything it is qualified by.
+
+    Each of them carries a limit flag when the star was only seen to be
+    brighter or fainter than that, a colon when the value itself is uncertain,
+    and the passband it was measured in - which is as often unfiltered or
+    photographic as it is a standard one.
+    """
+    value = _number(row, key)
+
+    if value is None:
+        return None
+
+    text = f"{_text(row, 'l_' + key)}{value:.2f}{_text(row, 'u_' + key)}"
+    band = _text(row, 'n_' + key)
+
+    return f"{text} {band}" if band else text
 
 
 @survey_source(
@@ -188,6 +247,108 @@ def target_info(config, basepath=None, verbose=True, show=False):
             #     log(f"Dist = {r['Distance_distance']:.2f} +{r['Distance_perr']:.2f} -{-r['Distance_merr']:.2f} {r['Distance_unit']}")
 
             break
+
+    # AAVSO VSX, where a variable star is described by whoever has looked at it
+    # most recently - so this is the place its period and type come from, if
+    # anyone has ever published either
+    log("\n---- AAVSO VSX ----\n")
+
+    ra = config.get('target_ra')
+    dec = config.get('target_dec')
+    cache_name = f"vsx_{ra:.4f}_{dec:.4f}.vot"
+
+    with cached_votable_query(cache_name, basepath, log, 'AAVSO VSX',
+                              refresh=refresh_cache) as cache:
+        if not cache.hit:
+            try:
+                res = Vizier(columns=['**'], row_limit=-1).query_region(
+                    SkyCoord(ra, dec, unit='deg'), radius=VSX_SR*u.arcsec,
+                    catalog=VSX_CATALOGUE)
+
+                vsx = res[0] if res and len(res) else None
+
+                if vsx is not None and len(vsx):
+                    cache.save(vsx)
+                else:
+                    vsx = None
+            except Exception as e:
+                log(f"Could not reach VizieR: {e}")
+                vsx = None
+        else:
+            vsx = cache.data
+
+    if vsx is not None and len(vsx):
+        # Vizier's own _r is in the units the radius was given in, so the
+        # separations are measured here rather than read off
+        sep = SkyCoord(ra, dec, unit='deg').separation(
+            SkyCoord(np.asarray(vsx['RAJ2000'], dtype=float),
+                     np.asarray(vsx['DEJ2000'], dtype=float),
+                     unit='deg')).arcsec
+        vsx = vsx[np.argsort(sep)]
+        sep = np.sort(sep)
+
+        if len(vsx) > 1:
+            log(f"{len(vsx)} entries within {VSX_SR:.0f} arcsec, nearest first")
+
+        for i, row in enumerate(vsx):
+            # A zero flag is the ordinary case - a variable star, which is what
+            # the catalogue is made of - so only the rest is worth saying
+            flag = _number(row, 'V')
+            flag = VSX_FLAGS.get(int(flag)) if flag else None
+
+            log(f"{_text(row, 'Name') or '(unnamed)'} at {sep[i]:.1f} arcsec"
+                + (f" - {flag}" if flag else ""))
+
+            vtype = _text(row, 'Type')
+            if vtype:
+                log(f"  Type = {vtype}")
+
+            bright = _vsx_magnitude(row, 'max')
+            faint = _vsx_magnitude(row, 'min')
+
+            if bright and faint:
+                # The second column holds an amplitude rather than a magnitude
+                # whenever this flag is raised, which is how VSX records the
+                # stars whose faint state nobody has measured
+                if _text(row, 'f_min') == 'Y':
+                    log(f"  Brightness = {bright}, amplitude {faint}")
+                else:
+                    log(f"  Brightness = {bright} ... {faint}")
+            elif bright:
+                log(f"  Brightness = {bright}")
+
+            period = _number(row, 'Period')
+            if period is not None:
+                log(f"  Period = {_text(row, 'l_Period')}{period:.8g}"
+                    f"{_text(row, 'u_Period')} d")
+
+            epoch = _number(row, 'Epoch')
+            if epoch is not None:
+                # Quoted as an HJD, while every lightcurve here is in MJD
+                log(f"  Epoch = HJD {epoch:.4f}{_text(row, 'u_Epoch')} "
+                    f"= MJD {epoch - JD_TO_MJD:.4f}")
+
+            sptype = _text(row, 'Sp')
+            if sptype:
+                log(f"  SpType = {sptype}")
+
+            oid = _number(row, 'OID')
+            if oid is not None:
+                log("  https://www.aavso.org/vsx/index.php?view=detail.top&oid="
+                    f"{int(oid)}")
+
+            # The nearest entry only: a second one is a neighbour, not a better
+            # description of the same star
+            if not i:
+                for key, name in [('Name', 'vsx_name'), ('Type', 'vsx_type')]:
+                    if _text(row, key):
+                        config[name] = _text(row, key)
+
+                for key, name in [('Period', 'vsx_period'), ('Epoch', 'vsx_epoch')]:
+                    if _number(row, key) is not None:
+                        config[name] = _number(row, key)
+    else:
+        log(f"No VSX entries within {VSX_SR:.0f} arcsec")
 
     # Catalogues to get photometry
     for catname in ['gaiadr3syn', 'ps1', 'skymapper']:
