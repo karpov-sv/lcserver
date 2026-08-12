@@ -242,3 +242,20 @@ span.asteriskField {
     display: block;
   }
 }
+
+/* Hover state color changes */
+.hover-primary:hover {
+  color: var(--bs-primary) !important;
+}
+
+.hover-info:hover {
+  color: var(--bs-info) !important;
+}
+
+.hover-warning:hover {
+  color: var(--bs-warning) !important;
+}
+
+.hover-danger:hover {
+  color: var(--bs-danger) !important;
+}

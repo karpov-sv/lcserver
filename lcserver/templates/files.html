@@ -84,7 +84,7 @@
                     class="{% if file.type == 'dir' %}ms-auto{% endif %} ms-2"
                     onsubmit="return confirm('Delete {{ file.name|escapejs }}? This cannot be undone.');">
                 {% csrf_token %}
-                <button type="submit" class="btn btn-sm btn-outline-danger p-0 ps-1 pe-1" title="Delete">
+                <button type="submit" class="btn btn-sm hover-danger p-0 ps-1" title="Delete">
                   <i class="fa fa-trash-o"></i>
                 </button>
               </form>

@@ -15,7 +15,7 @@ var TOC_STATES = {
   done:    {icon: 'fa-check',             css: 'text-success',   title: 'done'},
   // Ran, and there was nothing to be had - which is not a failure, and is
   // drawn quietly so that the sources carrying data are what stands out
-  empty:   {icon: 'fa-minus',             css: 'text-secondary', title: 'no data'},
+  empty:   {icon: 'fa-minus',             css: 'text-secondary opacity-50', title: 'no data'},
   failed:  {icon: 'fa-times',             css: 'text-danger',    title: 'failed'},
 };
 
