@@ -254,10 +254,10 @@ def target_omc(config, basepath=None, verbose=True, show=False):
                     + (f" ({closest['name']})" if closest['name'] else ''))
 
                 omc = _download_lightcurve(session, closest['obj_id'], closest['lct_id'])
-            except:
+            except Exception as e:
                 import traceback
                 traceback.print_exc()
-                log("Error: could not download the data")
+                log(f"Error: could not download the data - {type(e).__name__}: {e}")
                 return
 
             if omc is None or not len(omc):

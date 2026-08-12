@@ -272,10 +272,10 @@ def target_asas3(config, basepath=None, verbose=True, show=False):
                 log(f"Requesting the light curve of ASAS {designation}")
                 text = _download_lightcurve(designation, log)
                 asas3 = _parse_lightcurve(text, log)
-            except:
+            except Exception as e:
                 import traceback
                 traceback.print_exc()
-                log("Error: could not download the data")
+                log(f"Error: could not download the data - {type(e).__name__}: {e}")
                 return
 
             if asas3 is None or not len(asas3):

@@ -100,9 +100,12 @@ def target_asas(config, basepath=None, verbose=True, show=False):
                     catalog='master_list',
                     download=True
                 )
-            except:
+            except Exception as e:
                 import traceback
                 traceback.print_exc()
+                # Said outright: what follows is that nothing came back, which
+                # on its own would read as the survey having no data here
+                log(f"Error: could not query ASAS-SN - {type(e).__name__}: {e}")
                 lcq = None
 
             if not lcq or not len(lcq.data):

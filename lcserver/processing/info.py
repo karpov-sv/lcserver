@@ -799,10 +799,10 @@ def target_info(config, basepath=None, verbose=True, show=False):
                     cache.save(ps1_raw)
                 else:
                     ps1_raw = None
-            except:
+            except Exception as e:
                 import traceback
                 traceback.print_exc()
-                log("Error: could not download the data")
+                log(f"Error: could not download the data - {type(e).__name__}: {e}")
                 ps1_raw = None
         else:
             ps1_raw = cache.data
@@ -894,10 +894,10 @@ def target_info(config, basepath=None, verbose=True, show=False):
                     cache.save(epphot)
                 else:
                     epphot = None
-            except:
+            except Exception as e:
                 import traceback
                 traceback.print_exc()
-                log("Error: could not download the data")
+                log(f"Error: could not download the data - {type(e).__name__}: {e}")
                 epphot = None
         else:
             epphot = cache.data

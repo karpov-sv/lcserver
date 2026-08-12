@@ -264,10 +264,10 @@ def target_hipparcos(config, basepath=None, verbose=True, show=False):
                     'hip': np.full(len(data), star['hip']),
                     'nused': np.full(len(data), nused),
                 })
-            except:
+            except Exception as e:
                 import traceback
                 traceback.print_exc()
-                log("Error: could not download the data")
+                log(f"Error: could not download the data - {type(e).__name__}: {e}")
                 return
 
             if not len(hipp):

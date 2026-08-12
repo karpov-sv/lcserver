@@ -177,10 +177,10 @@ def target_wasp(config, basepath=None, verbose=True, show=False):
                     + (f", {obj['npts']} points" if obj['npts'] else ''))
 
                 wasp = _download_lightcurve(obj['name'], log)
-            except:
+            except Exception as e:
                 import traceback
                 traceback.print_exc()
-                log("Error: could not download the data")
+                log(f"Error: could not download the data - {type(e).__name__}: {e}")
                 return
 
             if wasp is None or not len(wasp):

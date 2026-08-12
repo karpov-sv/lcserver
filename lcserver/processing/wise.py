@@ -160,10 +160,11 @@ def target_wise(config, basepath=None, verbose=True, show=False):
                 try:
                     data = Irsa.query_region(coords, catalog=phase['catalog'],
                                              spatial='Cone', radius=wise_sr*u.arcsec)
-                except:
+                except Exception as e:
                     import traceback
                     traceback.print_exc()
-                    log(f"Error: could not query {phase['name']}")
+                    log(f"Error: could not query {phase['name']} - "
+                        f"{type(e).__name__}: {e}")
                     data = None
 
                 if data is not None and len(data):
