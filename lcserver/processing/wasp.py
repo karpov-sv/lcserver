@@ -34,6 +34,23 @@ WASP_NMIN = 10
 # The archive quotes HJD
 WASP_MJD0 = -2400000.5
 
+# How much worse than the star's own typical error a camera may be before it
+# is dropped whole. Across the stars this was checked on, an ordinary camera
+# quotes between a tenth and twice the median error for its star, while the
+# ones that saw it badly start at ten times - so five separates them with room
+# on either side. A camera holding most of the points cannot exceed the median
+# of a sample it dominates, so this can never empty a light curve.
+WASP_CAMERA_MAX_ERR_RATIO = 5.0
+
+# How far above what its own camera achieved at the same brightness a single
+# point may sit before it is dropped: the bad frame rather than the bad camera
+WASP_POINT_MAX_ERR_RATIO = 5.0
+
+# Brightness bins that comparison is made in, and the fewest points a camera
+# needs before there is anything to bin
+WASP_ERR_BINS = 5
+WASP_ERR_BIN_NMIN = 20
+
 
 def _search(ra, dec, sr, nmin, log):
     """Which SuperWASP objects sit at this position.
@@ -83,6 +100,35 @@ def _download_lightcurve(name, log):
 
     # As a list of lines rather than a stream, which the fast reader declines
     return Table.read(res.text.splitlines(), format='ascii.csv')
+
+
+def _typical_error(mag, err):
+    """What one camera's error usually is at each of these brightnesses.
+
+    A point cannot be judged against the camera's median error, as photometry
+    grows less certain the fainter the star is: on a variable that would
+    condemn every measurement of its faint state and leave a light curve that
+    only ever shows the star bright. The comparison is with what the same
+    camera achieved at the same brightness instead, taken as the median error
+    within bins holding equal numbers of points, and held flat beyond the ends.
+    """
+    edges = np.quantile(mag, np.linspace(0, 1, WASP_ERR_BINS + 1))
+    brightness, typical = [], []
+
+    for lo, hi in zip(edges[:-1], edges[1:]):
+        idx = (mag >= lo) & (mag <= hi)
+
+        # A bin of one or two says more about those points than about the
+        # camera, and the bins are quantiles, so a repeated magnitude can
+        # empty one altogether
+        if np.sum(idx) >= 3:
+            brightness.append(np.median(mag[idx]))
+            typical.append(np.median(err[idx]))
+
+    if len(brightness) < 2:
+        return np.full(len(mag), np.median(err))
+
+    return np.interp(mag, brightness, typical)
 
 
 @survey_source(
@@ -224,9 +270,66 @@ def target_wasp(config, basepath=None, verbose=True, show=False):
         log("Warning: No valid SuperWASP data points")
         return
 
+    # WASP observed with several cameras, and one of them may have seen this
+    # particular star badly - saturated, out of focus for something this
+    # bright, or on a poor part of the chip. It shows in the errors it quotes,
+    # and it affects everything that camera took rather than a stretch of it,
+    # so the camera goes as a whole. Which one it is differs from star to star
+    # - the camera worst here is the best elsewhere - so it is found from the
+    # data each time rather than known in advance.
     if 'camera' in columns:
-        cameras = sorted(set(np.asarray(wasp[columns['camera']]).astype(str)))
+        camera = np.asarray(wasp[columns['camera']]).astype(str)
+        cameras = sorted(set(camera))
         log(f"{len(cameras)} cameras contributed: {', '.join(cameras)}")
+
+        typical = np.median(wasp['magerr'])
+        keep = np.ones(len(wasp), dtype=bool)
+
+        for name in cameras:
+            idx = camera == name
+            ratio = np.median(wasp['magerr'][idx]) / typical
+
+            if ratio > WASP_CAMERA_MAX_ERR_RATIO:
+                log(f"Warning: dropping camera {name} - its {int(np.sum(idx))} "
+                    f"points carry errors {ratio:.0f} times the median for this "
+                    f"star, which is the camera rather than the star")
+                keep &= ~idx
+
+        dropped = not np.all(keep)
+
+        if dropped:
+            wasp = wasp[keep]
+            camera = camera[keep]
+
+        # What is left to catch inside a camera is the single bad frame - cloud,
+        # moon, a trail across the star - which the archive reports honestly as
+        # a large error. Judged against what that camera managed at the same
+        # brightness, so that a variable seen in its faint state is not read as
+        # a run of bad measurements.
+        clip = np.zeros(len(wasp), dtype=bool)
+
+        for name in sorted(set(camera)):
+            idx = np.where(camera == name)[0]
+
+            if len(idx) < WASP_ERR_BIN_NMIN:
+                continue
+
+            mag = np.asarray(wasp['mag'])[idx]
+            err = np.asarray(wasp['magerr'])[idx]
+            clip[idx] = err > WASP_POINT_MAX_ERR_RATIO * _typical_error(mag, err)
+
+        if np.any(clip):
+            counts = ', '.join(
+                f"{name}: {int(np.sum(clip[camera == name]))}"
+                for name in sorted(set(camera)) if np.any(clip[camera == name]))
+            log(f"Warning: dropping {int(np.sum(clip))} points ({counts}) whose "
+                f"errors are more than {WASP_POINT_MAX_ERR_RATIO:.0f} times what "
+                f"their camera managed at the same brightness")
+            wasp = wasp[~clip]
+            dropped = True
+
+        if dropped:
+            log(f"{len(wasp)} data points left")
 
     # The common g scale, as for the other V-band surveys
     g_minus_r = config.get('g_minus_r', 0.0)
