@@ -200,7 +200,7 @@ def target_ztf(config, basepath=None, verbose=True, show=False):
                     lcq.data['catflags'] = np.zeros_like(lcq.data['clrcoeff'], dtype=int)
 
             else:
-                log("Error {r.status_code} accessing ZTF photometry")
+                log(f"Error: {r.status_code} accessing ZTF photometry")
 
             if not lcq or not len(lcq.data):
                 log("Warning: No ZTF data found")
@@ -231,7 +231,7 @@ def target_ztf(config, basepath=None, verbose=True, show=False):
     log("  Latest: ", Time(np.max(ztf['mjd']), format='mjd').datetime.strftime('%Y-%m-%s %H:%M:%S'))
 
     if not np.sum(ztf['filtercode'] == 'zr') and not np.sum(ztf['filtercode'] == 'zg'):
-        log("No datapoints in zg or zr filters")
+        log("Warning: No datapoints in zg or zr filters")
         return
 
     if np.nanmin(ztf['mag']) < 13.2:

@@ -79,7 +79,7 @@ def _query_catalogue(coords, sr, nmin, log):
     designations = re.findall(r'/cgi-asas/asas_variable/([^,]+),asas3', res.text)
 
     if not designations:
-        log(f"No ASAS-3 object within {sr:.0f} arcsec of {coo}")
+        log(f"Warning: No ASAS-3 object within {sr:.0f} arcsec of {coo}")
         return None
 
     # Keeping the order, so that the survey's own best match comes first
@@ -279,7 +279,7 @@ def target_asas3(config, basepath=None, verbose=True, show=False):
                 return
 
             if asas3 is None or not len(asas3):
-                log("No ASAS-3 data points found")
+                log("Warning: No ASAS-3 data points found")
                 return
 
             cache.save(asas3)
@@ -317,7 +317,7 @@ def target_asas3(config, basepath=None, verbose=True, show=False):
     asas3 = asas3[keep]
 
     if not len(asas3):
-        log("No ASAS-3 data points left after filtering")
+        log("Warning: No ASAS-3 data points left after filtering")
         return
 
     datasets = sorted(set(np.asarray(asas3['dataset']).astype(str)))

@@ -234,8 +234,8 @@ def target_omc(config, basepath=None, verbose=True, show=False):
                                   rad=f'{omc_sr/60:.4f}')
 
                 if not objects:
-                    log("No OMC object at this position - INTEGRAL only observed "
-                        "where it was pointed")
+                    log("Warning: No OMC object at this position - INTEGRAL "
+                        "only observed where it was pointed")
                     return
 
                 # The cone may hold several, so take the one actually asked for
@@ -261,7 +261,7 @@ def target_omc(config, basepath=None, verbose=True, show=False):
                 return
 
             if omc is None or not len(omc):
-                log("No OMC data points found")
+                log("Warning: No OMC data points found")
                 return
 
             cache.save(omc)
@@ -305,7 +305,7 @@ def target_omc(config, basepath=None, verbose=True, show=False):
     omc.sort('mjd')
 
     if not len(omc):
-        log("No valid OMC data points")
+        log("Warning: No valid OMC data points")
         return
 
     # The common g scale, as for the other V-band surveys

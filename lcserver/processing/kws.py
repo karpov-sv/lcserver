@@ -121,7 +121,7 @@ def target_kws(config, basepath=None, verbose=True, show=False):
 
                 start_idx = content.find(start_marker)
                 if start_idx == -1:
-                    log("No table found in KWS response")
+                    log("Warning: No table found in KWS response")
                     log("Object might not be in KWS database or name not resolved")
                     return
 
@@ -144,7 +144,7 @@ def target_kws(config, basepath=None, verbose=True, show=False):
                 )
 
                 if not len(kws):
-                    log("No KWS data points found")
+                    log("Warning: No KWS data points found")
                     return
 
                 # Convert time to MJD
@@ -171,7 +171,7 @@ def target_kws(config, basepath=None, verbose=True, show=False):
     log(f"{len(kws)} data points after filtering")
 
     if not len(kws):
-        log("No valid KWS data points after filtering")
+        log("Warning: No valid KWS data points after filtering")
         return
 
     # Add time column for plotting

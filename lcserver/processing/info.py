@@ -871,7 +871,7 @@ def target_info(config, basepath=None, verbose=True, show=False):
         log("Pan-STARRS DR2 warp photometry written to file:ps1.txt")
 
     else:
-        log("No Pan-STARRS DR2 warp data found")
+        log("Warning: No Pan-STARRS DR2 warp data found")
 
     # Gaia DR3 epoch photometry
     log("\n---- Gaia DR3 epoch photometry ----\n")
@@ -970,11 +970,11 @@ def target_info(config, basepath=None, verbose=True, show=False):
             log("Gaia DR3 epoch photometry written to file:gaia.vot")
             log("Gaia DR3 epoch photometry written to file:gaia.txt")
         else:
-            log("No usable Gaia DR3 epoch photometry")
+            log("Warning: No usable Gaia DR3 epoch photometry")
 
     else:
-        log("No Gaia DR3 epoch photometry found - it is published only for the "
-            "sources Gaia treats as variable")
+        log("Warning: No Gaia DR3 epoch photometry found - it is published "
+            "only for the sources Gaia treats as variable")
 
 
 # Register lightcurve-only sources (no processing function)

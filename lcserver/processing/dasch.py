@@ -109,7 +109,7 @@ def target_dasch(config, basepath=None, verbose=True, show=False):
             # Parse CSV response
             csv_lines = response.json()
             if not csv_lines or len(csv_lines) < 2:
-                log('No sources found in DASCH catalog')
+                log('Warning: No sources found in DASCH catalog')
                 return
 
             # Parse CSV to table
@@ -118,7 +118,7 @@ def target_dasch(config, basepath=None, verbose=True, show=False):
             sources = list(reader)
 
             if not sources:
-                log('No sources found in DASCH catalog')
+                log('Warning: No sources found in DASCH catalog')
                 return
 
             # Find closest source based on angular separation
@@ -157,7 +157,7 @@ def target_dasch(config, basepath=None, verbose=True, show=False):
             # Parse CSV response
             csv_lines = response.json()
             if not csv_lines or len(csv_lines) < 2:
-                log('No lightcurve data returned from DASCH')
+                log('Warning: No lightcurve data returned from DASCH')
                 return
 
             # Parse CSV to table
@@ -166,7 +166,7 @@ def target_dasch(config, basepath=None, verbose=True, show=False):
             rows = list(reader)
 
             if not rows:
-                log('No lightcurve data points found')
+                log('Warning: No lightcurve data points found')
                 return
 
             # Convert to astropy Table with proper column names

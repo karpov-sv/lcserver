@@ -204,7 +204,7 @@ def target_desi(config, basepath=None, verbose=True, show=False):
     matches = _find(ra, dec, sr, log)
 
     if not matches:
-        log("\nNo DESI spectra at this position")
+        log("\nWarning: No DESI spectra at this position")
         return
 
     log(f"\n{len(matches)} spectr{'um' if len(matches) == 1 else 'a'} found")

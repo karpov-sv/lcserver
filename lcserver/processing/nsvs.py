@@ -259,7 +259,7 @@ def target_nsvs(config, basepath=None, verbose=True, show=False):
                 obj = _find_object(ra, dec, nsvs_sr, log)
 
                 if obj is None:
-                    log("No NSVS object at this position")
+                    log("Warning: No NSVS object at this position")
                     return
 
                 log(f"NSVS object {obj['id']} at {obj['mag']:.2f} mag"
@@ -302,7 +302,7 @@ def target_nsvs(config, basepath=None, verbose=True, show=False):
                 return
 
             if not len(nsvs):
-                log("No NSVS data points found")
+                log("Warning: No NSVS data points found")
                 return
 
             cache.save(nsvs)
@@ -320,7 +320,7 @@ def target_nsvs(config, basepath=None, verbose=True, show=False):
     nsvs.sort('mjd')
 
     if not len(nsvs):
-        log("No valid NSVS data points")
+        log("Warning: No valid NSVS data points")
         return
 
     # The survey flags its measurements, but what the bits mean is not in the

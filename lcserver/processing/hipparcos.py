@@ -229,7 +229,7 @@ def target_hipparcos(config, basepath=None, verbose=True, show=False):
                 star = _find_star(ra, dec, hip_sr, log)
 
                 if star is None:
-                    log("No Hipparcos star at this position - the catalogue "
+                    log("Warning: No Hipparcos star at this position - the catalogue "
                         "reaches only to about twelfth magnitude")
                     return
 
@@ -271,7 +271,7 @@ def target_hipparcos(config, basepath=None, verbose=True, show=False):
                 return
 
             if not len(hipp):
-                log("No Hipparcos data points found")
+                log("Warning: No Hipparcos data points found")
                 return
 
             cache.save(hipp)
@@ -303,7 +303,7 @@ def target_hipparcos(config, basepath=None, verbose=True, show=False):
     hipp.sort('mjd')
 
     if not len(hipp):
-        log("No valid Hipparcos data points")
+        log("Warning: No valid Hipparcos data points")
         return
 
     log_conversion(

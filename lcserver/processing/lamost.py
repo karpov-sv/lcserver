@@ -247,7 +247,7 @@ def target_lamost(config, basepath=None, verbose=True, show=False):
     nmrs = len(mrs) if mrs is not None else 0
 
     if not nlrs and not nmrs:
-        log("\nNo LAMOST observations at this position")
+        log("\nWarning: No LAMOST observations at this position")
         return
 
     log(f"\n{nlrs} low-resolution and {nmrs} medium-resolution observation(s)")

@@ -91,7 +91,7 @@ def target_ptf(config, basepath=None, verbose=True, show=False):
                 )
 
                 if not len(table):
-                    log(f"No PTF data points found within {ptf_sr:.1f} arcsec")
+                    log(f"Warning: No PTF data points found within {ptf_sr:.1f} arcsec")
                     return
 
                 # Save to cache
@@ -137,7 +137,7 @@ def target_ptf(config, basepath=None, verbose=True, show=False):
     table = table[idx]
 
     if not len(table):
-        log("No PTF data points remaining after quality filtering")
+        log("Warning: No PTF data points remaining after quality filtering")
         return
 
     log(f"Found {len(table)} PTF data points after filtering")
@@ -166,7 +166,7 @@ def target_ptf(config, basepath=None, verbose=True, show=False):
     ])
 
     if not len(ptf):
-        log("No valid PTF data points after filtering")
+        log("Warning: No valid PTF data points after filtering")
         return
 
     # Add time column for plotting

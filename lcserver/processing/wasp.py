@@ -164,7 +164,7 @@ def target_wasp(config, basepath=None, verbose=True, show=False):
                 objects = _search(ra, dec, wasp_sr, WASP_NMIN, log)
 
                 if not objects:
-                    log("No SuperWASP object at this position - its coverage, "
+                    log("Warning: No SuperWASP object at this position - its coverage, "
                         "though wide, is not the whole sky")
                     return
 
@@ -184,7 +184,7 @@ def target_wasp(config, basepath=None, verbose=True, show=False):
                 return
 
             if wasp is None or not len(wasp):
-                log("No SuperWASP data points found")
+                log("Warning: No SuperWASP data points found")
                 return
 
             cache.save(wasp)
@@ -221,7 +221,7 @@ def target_wasp(config, basepath=None, verbose=True, show=False):
     wasp.sort('mjd')
 
     if not len(wasp):
-        log("No valid SuperWASP data points")
+        log("Warning: No valid SuperWASP data points")
         return
 
     if 'camera' in columns:

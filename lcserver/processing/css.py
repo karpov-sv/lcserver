@@ -115,7 +115,7 @@ def target_css(config, basepath=None, verbose=True, show=False):
 
                 start_idx = content.find(start_marker)
                 if start_idx == -1:
-                    log("No data found in CSS response")
+                    log("Warning: No data found in CSS response")
                     log("Response might indicate no objects in search radius")
                     return
 
@@ -141,7 +141,7 @@ def target_css(config, basepath=None, verbose=True, show=False):
                     return
 
                 if not data_array or len(data_array) == 0:
-                    log("No CSS data points found")
+                    log("Warning: No CSS data points found")
                     return
 
                 # Convert to astropy table
@@ -166,7 +166,7 @@ def target_css(config, basepath=None, verbose=True, show=False):
     log(f"{len(css)} data points after filtering")
 
     if not len(css):
-        log("No valid CSS data points after filtering")
+        log("Warning: No valid CSS data points after filtering")
         return
 
     log(f"Found {len(css)} CSS data points")

@@ -174,7 +174,7 @@ def target_wise(config, basepath=None, verbose=True, show=False):
                 data = cache.data
 
         if data is None or not len(data):
-            log("No data")
+            log("Warning: No data")
             continue
 
         mjd = np.asarray(data['mjd'], dtype=float)
@@ -215,7 +215,7 @@ def target_wise(config, basepath=None, verbose=True, show=False):
             }))
 
     if not rows:
-        log("\nNo usable WISE photometry")
+        log("\nWarning: No usable WISE photometry")
         return
 
     wise = vstack(rows)

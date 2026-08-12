@@ -47,7 +47,9 @@ def target_file_contents(target, filename, highlight=False):
                           r"\1<span class='text-danger fw-bold'>\2</span>",
                           contents, flags=re.MULTILINE)
 
-        contents = re.sub(r"^(\S+Error:)(.*)$",
+        # Both a Python exception name from a traceback and the bare Error: the
+        # sources write themselves - hence the star rather than a plus
+        contents = re.sub(r"^(\S*Error:)(.*)$",
                           r"\1<span class='text-danger'>\2</span>",
                           contents, flags=re.MULTILINE)
 

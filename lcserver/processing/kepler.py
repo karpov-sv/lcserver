@@ -101,7 +101,7 @@ def _acquire_phase(config, basepath, log, show, phase, sr, cadence, wanted_autho
         radius=sr*u.arcsec, mission=mission)
 
     if not len(res):
-        log(f"No {mission} data found")
+        log(f"Warning: No {mission} data found")
         return 0, 0
 
     log(f"{len(res)} data products found")
@@ -117,7 +117,7 @@ def _acquire_phase(config, basepath, log, show, phase, sr, cadence, wanted_autho
         wanted = np.ones(len(res), dtype=bool)
 
     if not np.sum(wanted):
-        log(f"No {cadence} cadence data among the {mission} products found")
+        log(f"Warning: No {cadence} cadence data among the {mission} products found")
         return 0, 0
 
     segments = _segments(res)
