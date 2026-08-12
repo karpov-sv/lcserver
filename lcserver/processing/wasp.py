@@ -180,7 +180,7 @@ def target_wasp(config, basepath=None, verbose=True, show=False):
             except:
                 import traceback
                 traceback.print_exc()
-                log("Error while downloading the data")
+                log("Error: could not download the data")
                 return
 
             if wasp is None or not len(wasp):

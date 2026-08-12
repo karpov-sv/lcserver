@@ -127,7 +127,7 @@ def target_kws(config, basepath=None, verbose=True, show=False):
 
                 end_idx = content.find(end_marker, start_idx)
                 if end_idx == -1:
-                    log("Malformed KWS response - could not find table end")
+                    log("Error: malformed KWS response - no table end")
                     return
 
                 end_idx += len(end_marker)

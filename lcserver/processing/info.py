@@ -275,7 +275,7 @@ def target_info(config, basepath=None, verbose=True, show=False):
                 else:
                     vsx = None
             except Exception as e:
-                log(f"Could not reach VizieR: {e}")
+                log(f"Error: could not reach VizieR: {e}")
                 vsx = None
         else:
             vsx = cache.data
@@ -526,7 +526,7 @@ def target_info(config, basepath=None, verbose=True, show=False):
                     else:
                         xp = None
                 except Exception as e:
-                    log(f"Could not fetch the XP spectrum: {e}")
+                    log(f"Error: could not fetch the XP spectrum: {e}")
                     xp = None
             else:
                 xp = cache.data
@@ -588,7 +588,7 @@ def target_info(config, basepath=None, verbose=True, show=False):
                 })
                 cache.save(cat)
             except Exception as e:
-                log(f"Could not reach the IRSA dust service: {e}")
+                log(f"Error: could not reach the IRSA dust service: {e}")
                 cat = None
         else:
             cat = cache.data
@@ -640,7 +640,7 @@ def target_info(config, basepath=None, verbose=True, show=False):
                 ext['Filter_name'] = [str(_) for _ in ext['Filter_name']]
                 cache.save(ext)
             except Exception as e:
-                log(f"Could not fetch the extinction table: {e}")
+                log(f"Error: could not fetch the extinction table: {e}")
                 ext = None
         else:
             ext = cache.data
@@ -802,7 +802,7 @@ def target_info(config, basepath=None, verbose=True, show=False):
             except:
                 import traceback
                 traceback.print_exc()
-                log("Error while downloading the data")
+                log("Error: could not download the data")
                 ps1_raw = None
         else:
             ps1_raw = cache.data
@@ -897,7 +897,7 @@ def target_info(config, basepath=None, verbose=True, show=False):
             except:
                 import traceback
                 traceback.print_exc()
-                log("Error while downloading the data")
+                log("Error: could not download the data")
                 epphot = None
         else:
             epphot = cache.data

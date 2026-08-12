@@ -122,7 +122,7 @@ def target_css(config, basepath=None, verbose=True, show=False):
                 start_idx += len(start_marker) - 2  # Include the opening [[
                 end_idx = content.find(end_marker, start_idx)
                 if end_idx == -1:
-                    log("Malformed CSS response - could not find data end marker")
+                    log("Error: malformed CSS response - no data end marker")
                     return
 
                 end_idx += 3  # Include the closing ]]

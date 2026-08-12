@@ -276,7 +276,7 @@ def target_nsvs(config, basepath=None, verbose=True, show=False):
                 rows = _stream_lightcurve(field, obj['id'], log)
 
                 if rows is None:
-                    log("The object was not found in the field file")
+                    log("Error: the object was not found in the field file")
                     return
 
                 times = _frame_times(log)
@@ -298,7 +298,7 @@ def target_nsvs(config, basepath=None, verbose=True, show=False):
             except:
                 import traceback
                 traceback.print_exc()
-                log("Error while downloading the data")
+                log("Error: could not download the data")
                 return
 
             if not len(nsvs):

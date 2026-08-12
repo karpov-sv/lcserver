@@ -257,7 +257,7 @@ def target_omc(config, basepath=None, verbose=True, show=False):
             except:
                 import traceback
                 traceback.print_exc()
-                log("Error while downloading the data")
+                log("Error: could not download the data")
                 return
 
             if omc is None or not len(omc):
@@ -275,7 +275,7 @@ def target_omc(config, basepath=None, verbose=True, show=False):
     magcol, errcol = OMC_APERTURES.get(setting, OMC_APERTURES['standard'])
 
     if magcol not in omc.colnames or errcol not in omc.colnames:
-        log(f"Aperture column {magcol} is missing from the reply")
+        log(f"Error: aperture column {magcol} is missing from the reply")
         return
 
     log(f"Using {magcol}" + (" (the survey's own choice, a 3x3 pixel aperture)"

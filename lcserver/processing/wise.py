@@ -163,7 +163,7 @@ def target_wise(config, basepath=None, verbose=True, show=False):
                 except:
                     import traceback
                     traceback.print_exc()
-                    log(f"Error while querying {phase['name']}")
+                    log(f"Error: could not query {phase['name']}")
                     data = None
 
                 if data is not None and len(data):

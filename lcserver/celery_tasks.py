@@ -195,7 +195,7 @@ def create_survey_task(source_id, survey_config):
                 target.source_states[source_id] = 'done'
             except:
                 import traceback
-                log("\nError!\n", traceback.format_exc())
+                log("\nError: the step did not finish\n", traceback.format_exc())
                 target.state = 'failed'
                 target.source_states[source_id] = 'failed'
 

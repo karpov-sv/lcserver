@@ -88,7 +88,7 @@ def _query_tap(query, log):
 
     # A failed query comes back as a VOTable saying so, whatever was asked for
     if res.status_code != 200 or res.text.lstrip().startswith('<'):
-        log(f"  the table service refused the query: {res.text[:160]}")
+        log(f"Error: the table service refused the query: {res.text[:160]}")
         return None
 
     # A list of lines rather than a StringIO: the fast reader wants bytes from

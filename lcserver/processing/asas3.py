@@ -275,7 +275,7 @@ def target_asas3(config, basepath=None, verbose=True, show=False):
             except:
                 import traceback
                 traceback.print_exc()
-                log("Error while downloading the data")
+                log("Error: could not download the data")
                 return
 
             if asas3 is None or not len(asas3):
