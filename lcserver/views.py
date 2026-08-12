@@ -692,7 +692,7 @@ def target_state(request, id):
         'celery_id': target.celery_id,
         # How each source stands, so the sections can show it without waiting
         # for the reload at the end of a run
-        'source_states': target.source_states or {},
+        'source_states': surveys.get_source_states(target),
     }
 
     # While running, also return the freshly-rendered log of the active step so

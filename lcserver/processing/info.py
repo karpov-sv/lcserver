@@ -160,6 +160,9 @@ def _vsx_magnitude(row, key):
     clears_other_sources=True,
     help_text='Resolve target coordinates and fetch catalog photometry',
     order=1,
+    # It resolves the target and describes it, which it can always do; the
+    # photometry and the spectrum below are what it finds along the way
+    data_files=[],
     # Spectral viewer: Gaia publishes XP in nanometres
     spectrum_files='gaia_xp.txt',
     spectrum_label='Gaia XP',

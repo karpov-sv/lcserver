@@ -13,6 +13,9 @@ var TOC_STATES = {
   pending: {icon: 'fa-clock-o',           css: 'text-secondary', title: 'waiting for a worker'},
   running: {icon: 'fa-spinner fa-spin',   css: 'text-primary',   title: 'running'},
   done:    {icon: 'fa-check',             css: 'text-success',   title: 'done'},
+  // Ran, and there was nothing to be had - which is not a failure, and is
+  // drawn quietly so that the sources carrying data are what stands out
+  empty:   {icon: 'fa-minus',             css: 'text-secondary', title: 'no data'},
   failed:  {icon: 'fa-times',             css: 'text-danger',    title: 'failed'},
 };
 

@@ -2,6 +2,8 @@
 
 from django import template
 
+from .. import surveys
+
 register = template.Library()
 
 
@@ -61,12 +63,18 @@ def get_form(forms_dict, source_id):
 
 @register.filter
 def source_state(target, source_id):
-    """How a source fared on its last run: 'running', 'done', 'failed' or ''.
+    """How a source fared: 'running', 'done', 'empty', 'failed' or ''.
 
     The target's own state field can only describe one step at a time, so the
-    per-source record is what a section shows about itself.
+    per-source record is what a section shows about itself. 'empty' is not one
+    of the recorded states but read off the files, so the states are worked out
+    once per target and kept for the rest of the page - a section asks for its
+    own, and there are a score of them.
 
     Usage in template:
         {{ target|source_state:source_id }}
     """
-    return (target.source_states or {}).get(source_id, '')
+    if not hasattr(target, '_source_states'):
+        target._source_states = surveys.get_source_states(target)
+
+    return target._source_states.get(source_id, '')

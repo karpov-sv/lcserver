@@ -8,6 +8,9 @@ Adding a new survey source requires:
 2. Decorating it with @survey_source(...) with metadata
 """
 
+import os
+import fnmatch
+
 # Global registry populated by @survey_source decorator
 SURVEY_SOURCES = {}
 
@@ -78,6 +81,12 @@ def survey_source(
     form_fields=None,
     help_text='',
     order=50,
+    # What the source is here to bring back. A run that ends without any of
+    # these found nothing, however cleanly it finished - which is how a step
+    # that came back empty is told apart from one that came back with data.
+    # Defaults to the lightcurve or the spectra the source declares below;
+    # give an empty list where the step is not about acquiring data of its own.
+    data_files=None,
     # Lightcurve metadata
     votable_file=None,
     lc_bands=None,        # List of band() entries - what the viewer displays
@@ -233,6 +242,7 @@ def survey_source(
             'form_fields': form_fields or {},
             'help_text': help_text,
             'order': order,
+            'data_files': data_files,
             # Lightcurve metadata
             'votable_file': votable_file,
             'lc_bands': lc_bands or [],
@@ -420,6 +430,56 @@ def get_output_files(source_id):
     txt_files = [p.replace('.vot', '.txt') for p in files if '.vot' in p]
 
     return files + txt_files
+
+
+def get_data_files(source_id):
+    """The patterns a source's own data lands in, as globs.
+
+    What it declared, or else the lightcurve or the spectra it is registered
+    with, or else its main plot - the last being all a source like Combined
+    leaves behind. An empty list means the step brings back no data of its
+    own, and so can never be said to have come back without any.
+    """
+    config = SURVEY_SOURCES.get(source_id) or {}
+
+    if config.get('data_files') is not None:
+        files = config['data_files']
+    else:
+        files = (config.get('votable_file') or config.get('spectrum_files')
+                 or config.get('main_plot') or [])
+
+    return [files] if isinstance(files, str) else list(files)
+
+
+def source_has_data(source_id, files):
+    """Whether a source's data is among the file names given."""
+    patterns = get_data_files(source_id)
+
+    if not patterns:
+        return True
+
+    return any(fnmatch.filter(files, _) for _ in patterns)
+
+
+def get_source_states(target):
+    """How every source stands, with the empty-handed ones told apart.
+
+    A source that ran cleanly and found nothing is recorded as done - nothing
+    went wrong, there was simply nothing there - so the two are separated here,
+    by what the source left on disk, rather than stored. That way it holds for
+    the targets acquired before this was drawn, and stops holding if the files
+    are cleaned out from under it.
+    """
+    states = dict(target.source_states or {})
+
+    try:
+        files = os.listdir(target.path())
+    except OSError:
+        return states
+
+    return {source_id: ('empty' if state == 'done'
+                        and not source_has_data(source_id, files) else state)
+            for source_id, state in states.items()}
 
 
 def get_cache_files():
