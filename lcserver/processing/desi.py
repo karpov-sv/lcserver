@@ -315,11 +315,16 @@ def target_desi(config, basepath=None, verbose=True, show=False):
             ax.set_ylabel(r'Flux, $10^{-17}$ erg s$^{-1}$ cm$^{-2}$ A$^{-1}$')
             ax.set_title(f"{config['target_name']} - DESI {targetid}")
 
-        spectrum[['wavelength', 'flux', 'ivar']].write(
-            os.path.join(basepath, name + '.txt'),
-            format='ascii.commented_header', overwrite=True)
+        # The VOTable was promised in output_files from the beginning and
+        # never written; both forms are what every other source leaves
+        table = spectrum[['wavelength', 'flux', 'ivar']]
+        table.write(os.path.join(basepath, name + '.vot'),
+                    format='votable', overwrite=True)
+        table.write(os.path.join(basepath, name + '.txt'),
+                    format='ascii.commented_header', overwrite=True)
 
-        log(f"Spectrum written to file:{name}.png")
+        log(f"Spectrum plotted in file:{name}.png, written to "
+            f"file:{name}.vot and file:{name}.txt")
 
         if targetid is not None:
             targetids.append(int(targetid))

@@ -150,7 +150,8 @@ def _vsx_magnitude(row, key):
     state_acquired='info acquired',
     log_file='info.log',
     output_files=['info.log', 'galaxy_map.png', 'ps1.vot', 'ps1.txt',
-                  'gaia.vot', 'gaia.txt', 'gaia_xp.png', 'gaia_xp.txt'],
+                  'gaia.vot', 'gaia.txt', 'gaia_xp.png', 'gaia_xp.vot',
+                  'gaia_xp.txt'],
     button_text='Get Target Info',
     button_class='btn-info',
     # Coordinates every source queries by, and the colours they convert with
@@ -559,8 +560,14 @@ def target_info(config, basepath=None, verbose=True, show=False):
 
             log("XP spectrum plot saved to file:gaia_xp.png")
 
+            # Both forms, as everything else here is written: the VOTable
+            # keeps the units and the column types, the text one opens
+            # anywhere
+            xp.write(os.path.join(basepath, 'gaia_xp.vot'),
+                     format='votable', overwrite=True)
             xp.write(os.path.join(basepath, 'gaia_xp.txt'),
                      format='ascii.commented_header', overwrite=True)
+            log("XP spectrum written to file:gaia_xp.vot")
             log("XP spectrum written to file:gaia_xp.txt")
 
     # Interstellar reddening from the two-dimensional maps

@@ -390,7 +390,12 @@ def target_lamost(config, basepath=None, verbose=True, show=False):
             ax.set_title(f"{config['target_name']} - LAMOST {obsid}"
                          f" ({resolution} resolution)")
 
+        # The VOTable was promised in output_files from the beginning and
+        # never written; both forms are what every other source leaves
+        spectrum.write(os.path.join(basepath, name + '.vot'),
+                       format='votable', overwrite=True)
         spectrum.write(os.path.join(basepath, name + '.txt'),
                        format='ascii.commented_header', overwrite=True)
 
-        log(f"  {obsid}: {len(spectrum)} points written to file:{name}.png")
+        log(f"  {obsid}: {len(spectrum)} points plotted in file:{name}.png,"
+            f" written to file:{name}.vot and file:{name}.txt")
