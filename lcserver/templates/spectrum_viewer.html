@@ -208,6 +208,16 @@
          });
      }
 
+     // Plotly works out the modebar's background, and the shading it dims the
+     // page with while a zoom box is being dragged, from these two colours -
+     // and reads a transparent one as black, alpha and all. Asking for no
+     // background at all therefore bought a modebar on a dark grey slab, and a
+     // selection shaded in white against a white page, which is to say no
+     // visible selection. The page's own colour is what is behind the plot
+     // anyway, so handing it over changes nothing on screen and lets both be
+     // worked out correctly, in either theme.
+     const background = getComputedStyle(document.body).backgroundColor;
+
      Plotly.react('plotly-container', traces, {
          margin: {l: 60, r: 20, t: 30, b: 50},
          xaxis: {title: 'Wavelength, A', showgrid: true, gridcolor: 'rgba(128,128,128,0.2)'},
@@ -221,8 +231,8 @@
          hovermode: 'closest',
          showlegend: true,
          legend: {orientation: 'h', y: -0.15},
-         paper_bgcolor: 'rgba(0,0,0,0)',
-         plot_bgcolor: 'rgba(0,0,0,0)',
+         paper_bgcolor: background,
+         plot_bgcolor: background,
      }, {responsive: true, displaylogo: false});
  }
 
