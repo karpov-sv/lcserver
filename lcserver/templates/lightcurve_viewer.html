@@ -697,12 +697,14 @@ function updatePlot() {
             },
             hovermode: 'closest',
             showlegend: true,
+            // Beneath the axes rather than pinned inside them, as the spectral
+            // viewer has it: a target with a dozen sources, each with its own
+            // bands, ended up with a legend standing over the data it names.
+            // Plotly reserves the room for it, so the plot gives way as the
+            // entries wrap onto further rows rather than the legend being cut.
             legend: {
-                orientation: 'v',
-                yanchor: 'top',
-                y: 1,
-                xanchor: 'right',
-                x: 1
+                orientation: 'h',
+                y: -0.15
             },
             margin: {
                 l: 60,
@@ -791,12 +793,14 @@ function updatePlot() {
             },
             hovermode: 'closest',
             showlegend: true,
+            // Beneath the axes rather than pinned inside them, as the spectral
+            // viewer has it: a target with a dozen sources, each with its own
+            // bands, ended up with a legend standing over the data it names.
+            // Plotly reserves the room for it, so the plot gives way as the
+            // entries wrap onto further rows rather than the legend being cut.
             legend: {
-                orientation: 'v',
-                yanchor: 'top',
-                y: 1,
-                xanchor: 'right',
-                x: 1
+                orientation: 'h',
+                y: -0.15
             },
             margin: {
                 l: 60,
