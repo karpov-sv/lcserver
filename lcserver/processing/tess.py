@@ -17,7 +17,10 @@ import lightkurve as lk
 from stdpipe import plots
 
 from ..surveys import survey_source, get_output_files
-from .utils import cleanup_paths, drop_mast_downloads, mast_download_dir
+from .utils import (cleanup_paths, drop_mast_downloads, mast_download_dir,
+                    mission_quality_mask, log_quality, quality_field,
+                    quality_level,
+                    QUALITY_STANDARD, QUALITY_RELAXED, QUALITY_PUBLISHED)
 
 
 # The reductions TESS light curves come from, in the order they are preferred
@@ -44,6 +47,11 @@ TESS_AUTHORS = ['TESS-SPOC', 'QLP', 'SPOC']
             'initial': 'auto',
             'required': False,
         },
+        'tess_quality': quality_field({
+            QUALITY_STANDARD: 'Drop every cadence the mission flagged',
+            QUALITY_RELAXED: 'Drop only what the mission calls unusable',
+            QUALITY_PUBLISHED: 'None - every cadence as published',
+        }),
     },
     help_text='NASA TESS space telescope',
     order=30,
@@ -149,7 +157,15 @@ def target_tess(config, basepath=None, verbose=True, show=False):
                         # Not every pipeline reports one - K2SFF publishes
                         # eight columns and no quality among them
                         if 'quality' in lc.colnames:
-                            flux[lc['quality'] != 0] = np.nan
+                            keep = mission_quality_mask(
+                                lc['quality'], 'TESS',
+                                quality_level(config, 'tess'))
+                            # What the mask costs, rather than what it marks:
+                            # the SPOC pipelines have already emptied the flux
+                            # of every cadence they flagged
+                            had = np.isfinite(flux)
+                            flux[~keep] = np.nan
+                            log_quality(log, lc['quality'], had & ~keep, 'TESS')
 
                         ax.axhline(1, ls='--', color='gray', alpha=0.3)
                         ax.plot(time, flux, drawstyle='steps', lw=1)

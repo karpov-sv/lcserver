@@ -28,7 +28,10 @@ from stdpipe import plots
 
 from ..surveys import survey_source, get_output_files
 from .utils import (cleanup_paths, drop_mast_downloads, mast_download_dir,
-                    log_bands, log_conversion)
+                    mission_quality_mask, log_quality, quality_field,
+                    quality_level,
+                    log_bands, log_conversion,
+                    QUALITY_STANDARD, QUALITY_RELAXED, QUALITY_PUBLISHED)
 
 
 # Days between BKJD and BJD, as the mission counts time in both phases
@@ -174,7 +177,13 @@ def _acquire_phase(config, basepath, log, show, phase, sr, cadence, wanted_autho
                 # Not every pipeline reports one - K2SFF publishes eight
                 # columns and no quality among them
                 if 'quality' in lc.colnames:
-                    flux[lc['quality'] != 0] = np.nan
+                    keep = mission_quality_mask(lc['quality'], 'Kepler',
+                                                quality_level(config, 'kepler'))
+                    # What the mask costs, rather than what it marks: the
+                    # pipeline may have emptied those cadences already
+                    had = np.isfinite(flux)
+                    flux[~keep] = np.nan
+                    log_quality(log, lc['quality'], had & ~keep, 'Kepler')
 
                 ax.axhline(1, ls='--', color='gray', alpha=0.3)
                 ax.plot(time, flux, drawstyle='steps', lw=1, color=phase['color'])
@@ -221,6 +230,11 @@ def _acquire_phase(config, basepath, log, show, phase, sr, cadence, wanted_autho
     output_files=['kepler.log', 'kepler_lc_*.vot', 'kepler_lc_*.txt', 'kepler_lc_*.png'],
     button_text='Get Kepler lightcurves',
     form_fields={
+        'kepler_quality': quality_field({
+            QUALITY_STANDARD: 'Drop every cadence the mission flagged',
+            QUALITY_RELAXED: 'Drop only what the mission calls unusable',
+            QUALITY_PUBLISHED: 'None - every cadence as published',
+        }),
         'kepler_sr': {
             'type': 'float',
             'label': 'Search radius, arcsec',

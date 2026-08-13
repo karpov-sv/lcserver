@@ -102,6 +102,83 @@ def typical_error(mag, err, nbins=CLIP_BINS):
     return np.interp(mag, brightness, typical)
 
 
+def mission_quality_mask(quality, mission='TESS', level=QUALITY_STANDARD):
+    """Which cadences a mission's own quality flags allow, at this level.
+
+    The space missions flag a cadence for anything from a safe-mode entry to
+    stray light off the Earth, and the two are not comparable: the first
+    leaves nothing to measure, while the second is largely taken out by the
+    pipeline's background model. So 'standard' keeps only what carries no flag
+    at all, which is what this code did before there was a choice, and
+    'relaxed' defers to the mission's own reading - lightkurve's default
+    bitmask, which passes stray light and stops at what it calls unusable.
+
+    Which of them applies depends on the pipeline, and only one of the three
+    offered here is affected at all. SPOC and TESS-SPOC write NaN into the
+    flux of every cadence they flag, so their flagged cadences carry nothing
+    to keep or drop and this changes nothing for them. QLP leaves the flux in
+    place - all 273 flagged cadences of the sector this was checked on - so
+    for QLP light curves the choice decides whether they are plotted.
+
+    Returns a boolean array, True where the cadence is to be kept.
+    """
+    quality = np.asarray(quality)
+
+    if level == QUALITY_PUBLISHED:
+        return np.ones(len(quality), dtype=bool)
+
+    if level != QUALITY_RELAXED:
+        return quality == 0
+
+    try:
+        from lightkurve.utils import TessQualityFlags, KeplerQualityFlags
+    except ImportError:
+        return quality == 0
+
+    flags = (TessQualityFlags if str(mission).upper().startswith('TESS')
+             else KeplerQualityFlags)
+
+    return flags.create_quality_mask(quality, bitmask='default')
+
+
+def log_quality(log, quality, dropped, mission='TESS'):
+    """Say which of the mission's flags cost this segment anything.
+
+    Told what was actually lost rather than what was flagged: a pipeline that
+    writes NaN into the flux of the cadences it flags has already dropped
+    them, and saying so again would credit this code with work the mission
+    did. Only the flags behind a real loss are named.
+    """
+    quality = np.asarray(quality)
+    dropped = np.asarray(dropped)
+
+    if not np.any(dropped):
+        return
+
+    named = ''
+
+    try:
+        from lightkurve.utils import TessQualityFlags, KeplerQualityFlags
+        flags = (TessQualityFlags if str(mission).upper().startswith('TESS')
+                 else KeplerQualityFlags)
+
+        told = []
+        for n in range(32):
+            bit = 1 << n
+            here = ((quality & bit) != 0) & dropped
+
+            if np.any(here):
+                for name in flags.decode(bit):
+                    told.append(f"{name} {int(np.sum(here))}")
+
+        named = ', '.join(told)
+    except Exception:
+        pass
+
+    log(f"    {int(np.sum(dropped))} of {len(quality)} cadences dropped"
+        + (f" on the mission flags: {named}" if named else " on the mission flags"))
+
+
 def clip_noisy_points(mag, err, groups=None, log=None, group_name='group',
                       ratio=CLIP_MAX_ERR_RATIO, nmin=CLIP_NMIN):
     """Which points are noisier than their own kind manages at that brightness.

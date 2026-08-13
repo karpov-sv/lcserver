@@ -19,6 +19,7 @@ import lightkurve as lk
 
 from . import models
 from . import surveys
+from .processing.utils import mission_quality_mask, quality_level
 
 
 def load_magnitude_data(basepath):
@@ -94,8 +95,14 @@ def load_magnitude_data(basepath):
     return lightcurve_data
 
 
-def load_flux_data(basepath):
-    """Load flux-based light curve data from the space missions"""
+def load_flux_data(basepath, config=None):
+    """Load flux-based light curve data from the space missions.
+
+    The config is the target's, and carries how hard each source was asked
+    to filter - the files hold every cadence and the mission flags with
+    them, so the choice takes effect here rather than at acquisition.
+    """
+    config = config or {}
     lightcurve_data = []
 
     # Fallback palette, for a source that names no colours of its own
@@ -184,10 +191,14 @@ def load_flux_data(basepath):
                 # Filter bad data
                 idx = np.isfinite(x) & np.isfinite(flux)
 
-                # Filter by quality flag if present
+                # Filter by quality flag if present, as hard as the source was
+                # asked to. The files keep every cadence and the flags with
+                # them, so this is where the choice takes effect for the
+                # missions - the step itself only applies it to its own plots.
                 if quality_col and quality_col in data.colnames:
-                    quality = data[quality_col]
-                    idx &= (quality == 0)
+                    idx &= mission_quality_mask(
+                        data[quality_col], source_id,
+                        quality_level(config, source_id))
 
                 if not np.sum(idx):
                     continue
@@ -317,7 +328,7 @@ def load_lightcurve_data(request, id):
 
         # Load data based on mode
         if mode == 'flux':
-            lightcurve_data = load_flux_data(basepath)
+            lightcurve_data = load_flux_data(basepath, target.config)
         else:
             lightcurve_data = load_magnitude_data(basepath)
 
@@ -532,7 +543,7 @@ def fit_period(request, id):
         # Load the light curves, exactly as the viewer itself does
         basepath = target.path()
         if mode == 'flux':
-            available = load_flux_data(basepath)
+            available = load_flux_data(basepath, target.config)
             value_key, error_key = 'flux', 'flux_err'
         else:
             available = load_magnitude_data(basepath)
