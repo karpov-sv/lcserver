@@ -97,26 +97,28 @@
     <h5 class="mb-0">Display</h5>
 
     <div class="btn-group btn-group-sm">
-      <button onclick="setScaling('normalised')" data-scaling="normalised"
+      <button onclick="setScaling('raw')" data-scaling="raw"
               class="btn btn-sm btn-primary"
-              title="Each spectrum divided by its own median, so that a faint one and a bright one can be compared by shape">
+              title="The flux each survey published, every one of them in erg/s/cm2/A against Angstrom">
+        Fluxes
+      </button>
+      <button onclick="setScaling('normalised')" data-scaling="normalised"
+              class="btn btn-sm btn-outline-primary"
+              title="Each spectrum divided by its own median, for comparing the shape of a faint one with a bright one">
         Normalised
       </button>
-      <button onclick="setScaling('raw')" data-scaling="raw"
-              class="btn btn-sm btn-outline-primary"
-              title="As measured - every survey in erg/s/cm2/A against Angstrom">
-        As measured
-      </button>
     </div>
 
     <div class="form-check">
-      <input class="form-check-input" type="checkbox" id="stack-check" onchange="redraw()">
-      <label class="form-check-label" for="stack-check">Stack apart</label>
+      <input class="form-check-input" type="checkbox" id="stack-check" disabled onchange="redraw()">
+      <label class="form-check-label" for="stack-check"
+             title="Draws the spectra one above another. Only under Normalised: the step between them is one median, which means nothing against a flux.">Stack apart</label>
     </div>
 
     <div class="form-check">
-      <input class="form-check-input" type="checkbox" id="lines-check" checked onchange="redraw()">
-      <label class="form-check-label" for="lines-check">Lines</label>
+      <input class="form-check-input" type="checkbox" id="lines-check" onchange="redraw()">
+      <label class="form-check-label" for="lines-check"
+             title="Where the strong optical lines fall">Spectral lines</label>
     </div>
 
     <div class="form-check">
@@ -126,12 +128,12 @@
     </div>
 
     <div class="form-check">
-      <input class="form-check-input" type="checkbox" id="log-check" onchange="redraw()">
+      <input class="form-check-input" type="checkbox" id="log-check" checked onchange="redraw()">
       <label class="form-check-label" for="log-check">Log flux</label>
     </div>
 
     <div class="form-check">
-      <input class="form-check-input" type="checkbox" id="logx-check" onchange="redraw()">
+      <input class="form-check-input" type="checkbox" id="logx-check" checked onchange="redraw()">
       <label class="form-check-label" for="logx-check"
              title="An SED runs from the ultraviolet to the far infrared, which linear wavelength crowds into the left of the plot">Log wavelength</label>
     </div>
@@ -147,7 +149,11 @@
  let lines = [];
  let telluric = [];
  let state = [];
- let scaling = 'normalised';
+ // The page opens on the fluxes themselves, and on log axes. Everything is in
+ // the one unit now, so what is drawn is comparable without being divided by
+ // anything; and a target with an SED spans four decades of wavelength and as
+ // many of flux, which linear axes crowd into a corner.
+ let scaling = 'raw';
 
  function setScaling(mode) {
      scaling = mode;
@@ -156,6 +162,12 @@
          btn.classList.toggle('btn-primary', on);
          btn.classList.toggle('btn-outline-primary', !on);
      });
+
+     // Stacking steps the spectra apart by one median each, which is a
+     // distance only the normalised view has. Shown disabled rather than
+     // silently doing nothing, now that the page no longer opens on it.
+     document.getElementById('stack-check').disabled = mode !== 'normalised';
+
      redraw();
  }
 
