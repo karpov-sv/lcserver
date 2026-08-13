@@ -37,6 +37,11 @@ WASP_NMIN = 10
 # The archive quotes HJD
 WASP_MJD0 = -2400000.5
 
+# What the archive writes in place of a magnitude it does not have. Not a
+# judgement to drop it - it is the absence of a measurement, not a poor one -
+# so it goes at every level of filtering.
+WASP_NO_MAGNITUDE = 0.0
+
 # How much worse than the star's own typical error a camera may be before it
 # is dropped whole. Across the stars this was checked on, an ordinary camera
 # quotes between a tenth and twice the median error for its star, while the
@@ -230,6 +235,19 @@ def target_wasp(config, basepath=None, verbose=True, show=False):
     # A handful of points carry uncertainties of several magnitudes, which say
     # nothing about the star. The same cut the other surveys here apply.
     idx &= wasp['magerr'] < 1.0
+
+    # Where the archive has no magnitude it writes one of exactly zero, and
+    # gives it an ordinary-looking error - a tenth of a magnitude - so nothing
+    # else here catches it: three such rows in five thousand for the star this
+    # was found on, drawn at the top of a plot of a fifteenth-magnitude object.
+    # WASP saturates around seventh magnitude, so a zero is a place where a
+    # measurement should have been rather than a very bright star.
+    missing = wasp['mag'] <= WASP_NO_MAGNITUDE
+
+    if np.any(missing & idx):
+        log(f"  {int(np.sum(missing & idx))} rows carry no magnitude at all, "
+            f"written as zero")
+        idx &= ~missing
 
     log(f"{int(np.sum(idx))} data points after filtering")
 
