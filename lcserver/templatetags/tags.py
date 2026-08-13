@@ -54,7 +54,7 @@ def target_file_contents(target, filename, highlight=False):
                           contents, flags=re.MULTILINE)
 
         contents = re.sub(r"^(Warning:)(.*)$",
-                          r"\1<span class='text-danger'>\2</span>",
+                          r"\1<span class='text-warning'>\2</span>",
                           contents, flags=re.MULTILINE)
 
         contents = re.sub(r"\b(file:([\w.-]+\.\w+))\b",
