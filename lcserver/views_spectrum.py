@@ -14,18 +14,34 @@ from . import models
 from . import surveys
 
 
-# Lines worth having drawn on an optical spectrum, in Angstrom, air
-# wavelengths. Kept short on purpose: a spectrum covered in labels is harder to
-# read than one with none.
+# Lines worth having drawn, in Angstrom, air wavelengths. Kept short on
+# purpose: a spectrum covered in labels is harder to read than one with none.
+#
+# The optical ones are for the spectrographs. The infrared ones are for
+# SPHEREx, which reaches five microns and whose range holds things an optical
+# list has no way to mark - the hydrogen series past Paschen, the CO bandheads
+# that say a star is cool, and the three-micron ice band that the mission has
+# a whole survey named after. Only what is drawn within the range on show, so
+# a LAMOST spectrum is not annotated with lines it stops well short of.
 SPECTRAL_LINES = [
     ('Ca II K', 3933.7), ('Ca II H', 3968.5),
     ('H-delta', 4101.7), ('H-gamma', 4340.5), ('H-beta', 4861.3),
     ('Mg I b', 5175.0), ('Na I D', 5892.9), ('H-alpha', 6562.8),
     ('Ca II', 8542.1),
+    ('He I', 10830.3), ('Pa-beta', 12818.1), ('Pa-alpha', 18751.0),
+    ('Br-gamma', 21661.2), ('CO 2-0', 22935.0),
+    ('H2O ice', 30500.0), ('PAH', 33000.0), ('CO 1-0', 46700.0),
 ]
 
 # Bands where the atmosphere absorbs rather than the star, which is worth
-# saying before someone reads one as a feature of the object
+# saying before someone reads one as a feature of the object.
+#
+# Optical only, and deliberately so. The infrared has far heavier telluric
+# absorption - the windows between J, H and K are cut by water - but nothing
+# here observes through it: the only infrared spectra are SPHEREx's, taken
+# from orbit, and shading those would mark an absorption that was never in
+# their light. The bands below are for the ground-based spectrographs, LAMOST
+# and DESI, which is where the light did come through the air.
 TELLURIC_BANDS = [(6860, 6920), (7590, 7700), (8100, 8400), (9300, 9650)]
 
 # A jump this many times the typical spacing is a gap between segments rather

@@ -324,8 +324,22 @@
      const shapes = [];
      const annotations = [];
 
+     // How far the spectra on show actually reach. A line or a band outside
+     // that is not worth drawing - and worse than not worth it, since Plotly
+     // widens the axes to hold its shapes, so one marker at five microns would
+     // stretch an optical spectrum across a plot it occupies a tenth of.
+     let low = Infinity, high = -Infinity;
+
+     spectra.forEach((spectrum, i) => {
+         if (!state[i].visible) return;
+         low = Math.min(low, spectrum.wavelength_min);
+         high = Math.max(high, spectrum.wavelength_max);
+     });
+
+     const within = (from, to) => from <= high && to >= low;
+
      if (document.getElementById('telluric-check').checked) {
-         telluric.forEach(band => {
+         telluric.filter(band => within(band.from, band.to)).forEach(band => {
              shapes.push({
                  type: 'rect', xref: 'x', yref: 'paper',
                  x0: band.from, x1: band.to, y0: 0, y1: 1,
@@ -335,7 +349,7 @@
      }
 
      if (document.getElementById('lines-check').checked) {
-         lines.forEach(line => {
+         lines.filter(line => within(line.wavelength, line.wavelength)).forEach(line => {
              shapes.push({
                  type: 'line', xref: 'x', yref: 'paper',
                  x0: line.wavelength, x1: line.wavelength, y0: 0, y1: 1,
