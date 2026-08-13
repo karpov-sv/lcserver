@@ -24,6 +24,7 @@ The module is organized into separate files:
 - lamost.py: LAMOST DR11 spectra
 - desi.py: DESI DR1 spectra
 - spherex.py: SPHEREx QR2 near-infrared spectrophotometry
+- sed.py: broadband catalogue photometry from VizieR, as an SED
 - kepler.py: Kepler lightcurve acquisition, both the original mission and K2
 - combined.py: Combined lightcurve plotting
 """
@@ -90,6 +91,7 @@ from .hipparcos import target_hipparcos
 from .lamost import target_lamost
 from .desi import target_desi
 from .spherex import target_spherex
+from .sed import target_sed
 from .kepler import target_kepler
 from .tess import target_tess
 from .dasch import target_dasch

@@ -589,6 +589,7 @@ CACHE_PREFIXES = {
     'lamost_': 'lamost',
     'desi_': 'desi',
     'spherex_': 'spherex',
+    'sed_': 'sed',
     # Everything the info step collects
     'simbad_': 'info',
     'gaiadr3_phot_': 'info',
