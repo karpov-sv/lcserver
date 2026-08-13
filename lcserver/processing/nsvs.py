@@ -26,7 +26,9 @@ from stdpipe import plots
 
 from .. import surveys
 from ..surveys import survey_source, get_output_files
-from .utils import SourceError, cleanup_paths, cached_votable_query, log_bands, log_conversion
+from .utils import (SourceError, cleanup_paths, cached_votable_query,
+                    quality_field, quality_level, log_bands, log_conversion,
+                    QUALITY_STANDARD, QUALITY_RELAXED, QUALITY_PUBLISHED)
 
 
 NSVS_BASE_URL = 'https://cdsarc.cds.unistra.fr/ftp/II/287'
@@ -48,6 +50,46 @@ NSVS_OFFSET = 1.0/32000
 # some 190 MB, and the rows are ordered by object, so a search normally stops
 # far sooner than this.
 NSVS_MAX_READ = 220 << 20
+
+# What the survey attaches to each measurement, from Table 2 of Wozniak et al.
+# 2004 (AJ 127, 2436). The low byte is what SExtractor made of the object on
+# the frame; the high byte is how the relative photometry of that part of the
+# sky went.
+NSVS_FLAGS = [
+    (0x0001, 'NEIGHBORS', 'a neighbour or bad pixels over a tenth of the object'),
+    (0x0002, 'BLENDED', 'deblended from another object'),
+    (0x0004, 'SATURATED', 'at least one saturated pixel'),
+    (0x0008, 'ATEDGE', 'truncated by the image boundary'),
+    (0x0010, 'APINCOMPL', 'aperture data incomplete or corrupted'),
+    (0x0020, 'ISINCOMPL', 'isophotal data incomplete or corrupted'),
+    (0x0040, 'DBMEMOVR', 'memory overflow while deblending'),
+    (0x0080, 'EXMEMOVR', 'memory overflow while extracting'),
+    (0x0100, 'NOCORR', 'no relative photometry correction could be calculated'),
+    (0x0200, 'PATCH', 'the correction map was patched to derive one'),
+    (0x0400, 'LONPTS', 'fewer than ten points in the macro-pixel'),
+    (0x0800, 'HISCAT', 'macro-pixel scatter above 0.2 mag'),
+    (0x1000, 'HICORR', 'correction above 0.1 mag'),
+    (0x2000, 'HISIGCORR', 'corrections across the map scattered by over 0.1 mag'),
+    (0x4000, 'RADECFLIP', 'mount flip near the pole'),
+]
+
+# What the survey itself will not call a good photometric point, in Table 3 of
+# the same paper: saturation, and every sign that the relative photometry of
+# that macro-pixel or that frame cannot be trusted. Blending is not among them
+# - a blend measures the wrong star rather than measuring badly, and whether
+# that matters depends on what is being asked.
+NSVS_BAD_FLAGS = (0x0004 | 0x0100 | 0x0400 | 0x0800 | 0x1000 | 0x2000 | 0x4000)
+
+# The one nobody argues about, and all that the relaxed level removes: a
+# saturated star is not being measured at all. Dropping only this keeps twice
+# the points and nearly three times the baseline on a bright star, which is
+# the better set to look for a period in, if not to measure an amplitude.
+NSVS_SATURATED = 0x0004
+
+# The same table's range checks, which are there to catch SExtractor's error
+# codes rather than to judge the photometry
+NSVS_MAG_RANGE = (5.0, 16.0)
+NSVS_MAGERR_MAX = 0.4
 
 
 def _find_object(ra, dec, sr, log):
@@ -196,7 +238,12 @@ def _frame_times(log):
             'label': 'Search radius, arcsec',
             'initial': NSVS_SR,
             'required': False,
-        }
+        },
+        'nsvs_quality': quality_field({
+            QUALITY_STANDARD: "The survey's own definition of a good point",
+            QUALITY_RELAXED: 'Saturated measurements only',
+            QUALITY_PUBLISHED: 'None - every measurement as published',
+        }),
     },
     help_text='Northern Sky Variability Survey, unfiltered, 1999-2000',
     order=25,
@@ -313,6 +360,10 @@ def target_nsvs(config, basepath=None, verbose=True, show=False):
     idx = np.isfinite(nsvs['mjd']) & np.isfinite(nsvs['mag']) & np.isfinite(nsvs['magerr'])
     idx &= nsvs['magerr'] > 0
 
+    # The range checks of Table 3, which catch SExtractor's error codes
+    idx &= ((nsvs['mag'] > NSVS_MAG_RANGE[0]) & (nsvs['mag'] < NSVS_MAG_RANGE[1])
+            & (nsvs['magerr'] < NSVS_MAGERR_MAX))
+
     log(f"{int(np.sum(idx))} data points after filtering")
 
     nsvs = nsvs[idx]
@@ -322,13 +373,38 @@ def target_nsvs(config, basepath=None, verbose=True, show=False):
         log("Warning: No valid NSVS data points")
         return
 
-    # The survey flags its measurements, but what the bits mean is not in the
-    # documentation CDS carries, and no combination of them reproduces the
-    # count of good points the catalogue quotes. So they are kept and reported
-    # rather than acted upon.
+    # The survey says which of its own measurements it would call good, and
+    # the flags carry what the errors do not: the points a magnitude off the
+    # star quote a hundredth of a magnitude and are flagged HISCAT, their
+    # macro-pixel being one the relative photometry could not settle.
+    quality = quality_level(config, 'nsvs')
+    dropping = {QUALITY_STANDARD: NSVS_BAD_FLAGS,
+                QUALITY_RELAXED: NSVS_SATURATED,
+                QUALITY_PUBLISHED: 0}[quality]
+
     flags = np.asarray(nsvs['flags'], dtype=int)
-    log(f"  measurement flags: {int(np.sum(flags == 0))} of {len(flags)} unflagged, "
-        f"{len(set(flags[flags != 0].tolist()))} distinct non-zero values kept as they are")
+    bad = (flags & dropping) != 0
+
+    if np.any(flags):
+        log(f"  what the survey flagged, of these ({quality} filtering):")
+
+        for value, name, meaning in NSVS_FLAGS:
+            count = int(np.sum((flags & value) != 0))
+
+            if count:
+                log(f"    {name:10s} {count:5d}  {meaning}"
+                    + ('' if value & dropping else '  [kept]'))
+
+    if np.any(bad):
+        log(f"Warning: dropping {int(np.sum(bad))} points"
+            + (" the survey would not call good (Wozniak et al. 2004, Table 3)"
+               if quality == QUALITY_STANDARD else " measured through saturation"))
+        nsvs = nsvs[~bad]
+        log(f"{len(nsvs)} data points left")
+
+        if not len(nsvs):
+            log("Warning: No NSVS measurements left at this level of filtering")
+            return
 
     log_conversion(
         log, 'NSVS',

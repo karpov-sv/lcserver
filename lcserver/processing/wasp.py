@@ -19,7 +19,9 @@ from stdpipe import plots
 from .. import surveys
 from ..surveys import survey_source, get_output_files
 from .utils import (SourceError, cleanup_paths, cached_votable_query,
-                    clip_noisy_points, log_bands, log_conversion)
+                    clip_noisy_points, quality_field, quality_level,
+                    log_bands, log_conversion, CLIP_RATIO_BY_LEVEL,
+                    QUALITY_STANDARD, QUALITY_RELAXED, QUALITY_PUBLISHED)
 
 
 WASP_SEARCH_URL = 'https://wasp.cerit-sc.cz/search'
@@ -108,7 +110,12 @@ def _download_lightcurve(name, log):
             'label': 'Search radius, arcsec',
             'initial': WASP_SR,
             'required': False,
-        }
+        },
+        'wasp_quality': quality_field({
+            QUALITY_STANDARD: 'Drop a camera that saw the star badly, and the worst frames',
+            QUALITY_RELAXED: 'Drop such a camera, and only the very worst frames',
+            QUALITY_PUBLISHED: 'None - every measurement as published',
+        }),
     },
     help_text='Wide Angle Search for Planets, broad band, 2004-2008',
     order=22,
@@ -240,7 +247,9 @@ def target_wasp(config, basepath=None, verbose=True, show=False):
     # so the camera goes as a whole. Which one it is differs from star to star
     # - the camera worst here is the best elsewhere - so it is found from the
     # data each time rather than known in advance.
-    if 'camera' in columns:
+    quality = quality_level(config, 'wasp')
+
+    if 'camera' in columns and quality != QUALITY_PUBLISHED:
         camera = np.asarray(wasp[columns['camera']]).astype(str)
         cameras = sorted(set(camera))
         log(f"{len(cameras)} cameras contributed: {', '.join(cameras)}")
@@ -267,7 +276,8 @@ def target_wasp(config, basepath=None, verbose=True, show=False):
         # What is left to catch inside a camera is the single ruined frame,
         # which the archive reports honestly as a large error
         clip = clip_noisy_points(wasp['mag'], wasp['magerr'], camera,
-                                 log=log, group_name='camera')
+                                 log=log, group_name='camera',
+                                 ratio=CLIP_RATIO_BY_LEVEL[quality])
 
         if np.any(clip):
             wasp = wasp[~clip]

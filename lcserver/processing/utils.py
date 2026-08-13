@@ -14,10 +14,56 @@ from astropy.io.votable import parse as votable_parse
 from astropy.table import Table
 
 
+# How hard a source is asked to judge its own measurements. The names are
+# shared, so that one choice can govern a whole run; what each means is the
+# source's own affair, and a source offers only the levels it can tell apart.
+# There is no fourth, stricter level: where one was tried it either changed
+# nothing or began removing the variability it was meant to reveal.
+QUALITY_STANDARD = 'standard'    # what the survey, or this code, calls good
+QUALITY_RELAXED = 'relaxed'      # only what is indefensible
+QUALITY_PUBLISHED = 'published'  # nothing judged, the data as they arrive
+
+QUALITY_LEVELS = [QUALITY_STANDARD, QUALITY_RELAXED, QUALITY_PUBLISHED]
+
 # How far above what its own kind achieved at the same brightness a point may
 # sit before it is dropped: a single ruined frame, rather than a survey that
 # is simply less precise than another
 CLIP_MAX_ERR_RATIO = 5.0
+
+# The same, per level. Between three and ten the light curve hardly changes -
+# the junk has gone by ten and the rest is shaving - so these are the two
+# worth offering, and the third level clips nothing at all.
+CLIP_RATIO_BY_LEVEL = {QUALITY_STANDARD: CLIP_MAX_ERR_RATIO,
+                       QUALITY_RELAXED: 10.0}
+
+
+def quality_field(labels, label='Quality filtering'):
+    """A source's filtering selector, as the registry wants a form field.
+
+    The words are the source's own, since what it can distinguish differs -
+    NSVS has the survey's own definition to appeal to, where another source
+    has only the scatter of its own measurements.
+    """
+    return {
+        'type': 'choice',
+        'label': label,
+        'choices': [(level, labels[level])
+                    for level in QUALITY_LEVELS if level in labels],
+        'initial': QUALITY_STANDARD,
+        'required': False,
+    }
+
+
+def quality_level(config, source_id):
+    """How hard this source was asked to filter.
+
+    What was asked of it, or of the run as a whole, or the standard.
+    """
+    level = (config.get(f'{source_id}_quality')
+             or config.get('quality')
+             or QUALITY_STANDARD)
+
+    return level if level in QUALITY_LEVELS else QUALITY_STANDARD
 
 # Brightness bins the comparison is made in, and the fewest points a group
 # needs before there is anything to bin

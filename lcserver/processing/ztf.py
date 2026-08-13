@@ -198,6 +198,12 @@ def target_ztf(config, basepath=None, verbose=True, show=False):
                 if len(lc):
                     lcq = lambda: None # Fake object able to have attributes
                     lcq.data = pd.concat(lc, ignore_index=True)
+                    # SNAD serves no catflags of its own, having applied
+                    # catflags == 0 when it ingested the data release: what
+                    # arrives here is already through that cut, so the zeros
+                    # are true rather than assumed. The filtering below reads
+                    # the column and is therefore right either way, whether
+                    # the data came from here or from IRSA.
                     lcq.data['catflags'] = np.zeros_like(lcq.data['clrcoeff'], dtype=int)
 
             else:

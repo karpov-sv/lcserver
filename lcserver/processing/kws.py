@@ -16,7 +16,9 @@ from stdpipe import plots
 from .. import surveys
 from ..surveys import survey_source, get_output_files
 from .utils import (SourceError, cleanup_paths, cached_votable_query,
-                    clip_noisy_points, log_bands, log_conversion)
+                    clip_noisy_points, quality_field, quality_level,
+                    log_bands, log_conversion, CLIP_RATIO_BY_LEVEL,
+                    QUALITY_STANDARD, QUALITY_RELAXED, QUALITY_PUBLISHED)
 
 
 # Largest separation between a V and an Ic measurement still counted as
@@ -33,6 +35,13 @@ KWS_COLOR_DT = 0.01
     log_file='kws.log',
     output_files=['kws.log', 'kws_lc.png', 'kws_color_mag.png', 'kws.vot', 'kws.txt'],
     button_text='Get KWS lightcurve',
+    form_fields={
+        'kws_quality': quality_field({
+            QUALITY_STANDARD: 'Drop the frames a band measured worst',
+            QUALITY_RELAXED: 'Drop only the very worst frames',
+            QUALITY_PUBLISHED: 'None - every measurement as published',
+        }),
+    },
     help_text='Kamogata Wide-field Survey',
     order=23,
     # Lightcurve metadata
@@ -182,8 +191,12 @@ def target_kws(config, basepath=None, verbose=True, show=False):
     # as V and Ic are not measured to the same precision, and against what the
     # band achieved at that brightness rather than against its median, so that
     # a Mira at minimum is not mistaken for a run of bad nights.
-    clip = clip_noisy_points(kws['mag'], kws['magerr'], kws['filter'],
-                             log=log, group_name='band')
+    quality = quality_level(config, 'kws')
+    clip = (clip_noisy_points(kws['mag'], kws['magerr'], kws['filter'],
+                              log=log, group_name='band',
+                              ratio=CLIP_RATIO_BY_LEVEL[quality])
+            if quality != QUALITY_PUBLISHED
+            else np.zeros(len(kws), dtype=bool))
 
     if np.any(clip):
         kws = kws[~clip]
