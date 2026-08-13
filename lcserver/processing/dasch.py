@@ -18,7 +18,60 @@ from stdpipe import plots
 
 from .. import surveys
 from ..surveys import survey_source, get_output_files
-from .utils import SourceError, cleanup_paths, cached_votable_query, log_bands, log_conversion
+from .utils import (SourceError, cleanup_paths, cached_votable_query,
+                    quality_field, quality_level, log_bands, log_conversion,
+                    QUALITY_STANDARD, QUALITY_RELAXED, QUALITY_PUBLISHED)
+
+
+# What DASCH found wrong with the local-bin calibration - the patch of plate
+# the star's magnitude was measured against - from the DR7 description of the
+# photometric calibration. These speak against the calibration rather than
+# against the star, and the survey acts on them itself.
+DASCH_REJECT_FLAGS = [
+    (0x1, 'HIZOUT', 'the local correction exceeds 0.5 mag, or its error 0.7'),
+    (0x2, 'MEDIAN', 'the median star in the bin is within 0.5 mag of the limit'),
+    (0x4, 'DRAD', 'astrometric scatter beyond 90 arcsec, or 3 pixels'),
+]
+
+# What the pipeline noted about the measurement itself, from the AFlags
+# enumeration daschlab publishes. Its table numbers the bits from one while the
+# values are 1 << (n - 1); these are the values, taken from the source.
+DASCH_AFLAGS = [
+    (1 << 6,  'HIGH_BACKGROUND', 'high background at the object'),
+    (1 << 7,  'BAD_PLATE_QUALITY', 'the plate fails the general quality checks'),
+    (1 << 8,  'MULT_EXP_UNMATCHED', 'unmatched, on a multiple-exposure plate'),
+    (1 << 9,  'UNCERTAIN_DATE', 'the time is too uncertain to correct extinction'),
+    (1 << 10, 'MULT_EXP_BLEND', 'a blend, on a multiple-exposure plate'),
+    (1 << 11, 'LARGE_ISO_RMS', 'suspiciously large isophotal RMS'),
+    (1 << 12, 'LARGE_LOCAL_SMOOTH_RMS', 'suspiciously large local-binning RMS'),
+    (1 << 13, 'CLOSE_TO_LIMITING', 'too close to the local limiting magnitude'),
+    (1 << 14, 'RADIAL_BIN_9', 'close to the plate edge'),
+    (1 << 15, 'BIN_DRAD_UNKNOWN', 'the spatial bin has no measured drad'),
+    (1 << 19, 'UNCERTAIN_CATALOG_MAG', 'the catalogue star is uncertain or variable'),
+    (1 << 20, 'CASE_B_BLEND', 'several catalogue entries for one imaged star'),
+    (1 << 21, 'CASE_C_BLEND', 'several imaged stars for one catalogue entry'),
+    (1 << 22, 'CASE_BC_BLEND', 'entries and imaged stars mixed up together'),
+    (1 << 23, 'LARGE_DRAD', 'drad large for its bin, or the bin is bad'),
+    (1 << 24, 'PICKERING_WEDGE', 'a Pickering wedge image'),
+    (1 << 25, 'SUSPECTED_DEFECT', 'a suspected plate defect'),
+    (1 << 26, 'SXT_BLEND', 'SExtractor calls it a blend'),
+    (1 << 27, 'REJECTED_BLEND', 'a rejected blend'),
+    (1 << 28, 'LARGE_SMOOTHING_CORRECTION', 'suspiciously large smoothing correction'),
+    (1 << 29, 'TOO_BRIGHT', 'too bright for the calibration to be accurate'),
+    (1 << 30, 'LOW_ALTITUDE', 'within 23.5 degrees of the horizon'),
+]
+
+# Which is set on every measurement of a variable star - it describes the
+# catalogue entry the plate was calibrated against, not the plate - and so is
+# no reason to drop anything here. Cutting on it once emptied the light curve
+# of every variable, which is what these are for.
+DASCH_CATALOG_MAG = 1 << 19
+
+# Beyond this the local calibration is scattered enough that the magnitude
+# means little. Where DASCH could not compute it at all the star was too bright
+# for its bin, which the flags say in as many words: on the star this was
+# written for, the points with no value are exactly the ones flagged TOO_BRIGHT.
+DASCH_MAX_LOCAL_RMS = 0.4
 
 
 @survey_source(
@@ -29,6 +82,13 @@ from .utils import SourceError, cleanup_paths, cached_votable_query, log_bands, 
     log_file='dasch.log',
     output_files=['dasch.log', 'dasch_lc.png', 'dasch.vot', 'dasch.txt'],
     button_text='Get DASCH lightcurve',
+    form_fields={
+        'dasch_quality': quality_field({
+            QUALITY_STANDARD: 'Drop what the pipeline flagged as well',
+            QUALITY_RELAXED: "Drop what DASCH's own calibration rejects",
+            QUALITY_PUBLISHED: 'None - every plate with a calibrated magnitude',
+        }),
+    },
     help_text='Harvard plate archive (historical data)',
     order=40,
     # Lightcurve metadata
@@ -214,27 +274,71 @@ def target_dasch(config, basepath=None, verbose=True, show=False):
     dasch = dasch[dasch['magcal_magdep'] > 0]
     log(f"  {len(dasch)} of {nraw} plates carry a calibrated magnitude")
 
-    # DASCH decides for itself which of its measurements to stand behind, and
-    # reject_flag carries that verdict; zero means it is happy with the point.
-    #
-    # This used to cut on AFLAGS instead, keeping rows below 1 << 19 - a
-    # criterion borrowed from a script written against an older data release.
-    # Under DR7 that bit is set on precisely the points that *have* a
-    # calibrated magnitude, so for a star whose plates carry it the cut threw
-    # away the entire light curve and kept nothing else.
+    quality = quality_level(config, 'dasch')
+
+    # DASCH decides for itself which local-bin calibrations to stand behind,
+    # and reject_flag carries that verdict as a bitfield; zero means it is
+    # happy with the point.
     if 'reject_flag' in dasch.colnames:
         ncal = len(dasch)
-        rejected = np.asarray(dasch['reject_flag']) != 0
+        flags = np.asarray(dasch['reject_flag']).astype(np.int64)
+        rejected = flags != 0
+
         if np.any(rejected):
-            codes, counts = np.unique(np.asarray(dasch['reject_flag'])[rejected],
-                                      return_counts=True)
-            log(f"  DASCH rejects {int(np.sum(rejected))} of them: "
-                + ', '.join(f"{c} for reason {int(v)}" for v, c in zip(codes, counts)))
-        dasch = dasch[~rejected]
-        log(f"  {len(dasch)} of {ncal} accepted by DASCH")
+            told = ', '.join(f"{name} {int(np.sum((flags & value) != 0))}"
+                             for value, name, _ in DASCH_REJECT_FLAGS
+                             if np.any(flags & value))
+            log(f"  DASCH rejects {int(np.sum(rejected))} calibrations: {told}")
+
+            for value, name, meaning in DASCH_REJECT_FLAGS:
+                if np.any(flags & value):
+                    log(f"    {name:8s} {meaning}")
+
+        if quality != QUALITY_PUBLISHED:
+            dasch = dasch[~rejected]
+            log(f"  {len(dasch)} of {ncal} accepted by DASCH")
     else:
         log("Warning: cached data predates the quality flags, so nothing is "
             "filtered on quality. Re-query the survey to apply them.")
+
+    # What the pipeline made of the measurement itself, which the survey
+    # leaves to the reader. All but one of these bits mark something wrong
+    # with the plate or with the extraction; the exception describes the
+    # catalogue star, is set on every measurement of a variable, and is the
+    # reason an earlier cut on this column emptied the light curve.
+    if quality == QUALITY_STANDARD and 'AFLAGS' in dasch.colnames:
+        aflags = np.asarray(dasch['AFLAGS']).astype(np.int64)
+        bad = (aflags & ~np.int64(DASCH_CATALOG_MAG)) != 0
+
+        if np.any(aflags):
+            log("  what the pipeline flagged, of these:")
+
+            for value, name, meaning in DASCH_AFLAGS:
+                count = int(np.sum((aflags & value) != 0))
+
+                if count:
+                    log(f"    {name:26s} {count:5d}  {meaning}"
+                        + ('  [kept]' if value == DASCH_CATALOG_MAG else ''))
+
+        if np.any(bad):
+            log(f"Warning: dropping {int(np.sum(bad))} points the pipeline "
+                f"flagged, of {len(dasch)}")
+            dasch = dasch[~bad]
+
+    # The scatter of the local calibration, where DASCH could compute one. It
+    # grades the points beyond what the flags say, and where it is missing the
+    # star was too bright for its bin - which is not a measurement to keep.
+    if quality == QUALITY_STANDARD and 'magcal_local_rms' in dasch.colnames:
+        rms = np.asarray(dasch['magcal_local_rms'], dtype=float)
+        coarse = ~(rms < DASCH_MAX_LOCAL_RMS)
+
+        if np.any(coarse):
+            log(f"Warning: dropping {int(np.sum(coarse))} more whose local "
+                f"calibration scatters past {DASCH_MAX_LOCAL_RMS:.1f} mag, or "
+                f"could not be made at all")
+            dasch = dasch[~coarse]
+
+    log(f"  {len(dasch)} plates left")
 
     # magcal_local_rms is a scatter estimate that DR7 leaves empty for a good
     # fraction of the points, so it is no use either as a cut - a missing value
