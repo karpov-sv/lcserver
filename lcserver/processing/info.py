@@ -22,7 +22,8 @@ from astroquery.vizier import Vizier
 from stdpipe import catalogs, resolve, plots
 
 from ..surveys import survey_source, get_all_output_files
-from .utils import cleanup_paths, cached_votable_query, log_bands, log_conversion
+from .utils import (cleanup_paths, cached_votable_query, write_spectrum,
+                    log_bands, log_conversion)
 
 
 # Gaia timestamps are barycentric JD in TCB, counted from 2010-01-01
@@ -34,6 +35,13 @@ GAIA_EPPHOT_SR = 5.0
 # The sampled XP spectra, as Vizier serves them, and the radius to look in
 GAIA_XP_CATALOGUE = 'I/355/xpsample'
 GAIA_XP_SR = 5.0
+
+# Vizier serves the XP spectra in W/nm/m2 against wavelengths in nm, where
+# every spectrum here is written in erg/s/cm2/A against Angstrom. A watt is
+# 1e7 erg/s, a square metre 1e4 cm2 and a nanometre 10 Angstrom, so the flux
+# is a hundred times what the catalogue says.
+GAIA_XP_TO_CGS = 100.0
+GAIA_XP_TO_ANGSTROM = 10.0
 
 # AAVSO VSX, the variable star index, and the radius to look in. Wider than the
 # cones above: many VSX positions come from surveys with coarse astrometry, or
@@ -164,10 +172,9 @@ def _vsx_magnitude(row, key):
     # It resolves the target and describes it, which it can always do; the
     # photometry and the spectrum below are what it finds along the way
     data_files=[],
-    # Spectral viewer: Gaia publishes XP in nanometres
+    # Spectral viewer
     spectrum_files='gaia_xp.txt',
     spectrum_label='Gaia XP',
-    spectrum_wavelength_scale=10.0,
     spectrum_color='#2980b9',
     # Template metadata
     template_layout='custom',
@@ -533,9 +540,12 @@ def target_info(config, basepath=None, verbose=True, show=False):
                 xp = cache.data
 
         if xp is not None and len(xp):
+            # As Vizier serves it: nanometres, and W/nm/m2. The cache keeps
+            # that, being the archive's own answer; what is written out is on
+            # the scale every spectrum here is written on.
             lam = np.asarray(xp['wavelength'], dtype=float)
-            flux = np.asarray(xp['flux'], dtype=float)
-            err = np.asarray(xp['flux_error'], dtype=float)
+            flux = np.asarray(xp['flux'], dtype=float) * GAIA_XP_TO_CGS
+            err = np.asarray(xp['flux_error'], dtype=float) * GAIA_XP_TO_CGS
 
             log(f"{len(xp)} points from {lam.min():.0f} to {lam.max():.0f} nm")
             log("Sampled from the basis functions Gaia publishes rather than "
@@ -543,7 +553,7 @@ def target_info(config, basepath=None, verbose=True, show=False):
                 "are mostly the reconstruction, not lines")
 
             # The fluxes run to 1e-14 or so, which no axis should have to say
-            scale = 1e-16
+            scale = 1e-14
 
             with plots.figure_saver(os.path.join(basepath, 'gaia_xp.png'),
                                     figsize=(8, 4), show=show) as fig:
@@ -555,7 +565,7 @@ def target_info(config, basepath=None, verbose=True, show=False):
 
                 ax.grid(alpha=0.2)
                 ax.set_xlabel('Wavelength, nm')
-                ax.set_ylabel(r'Flux, $10^{-16}$ W nm$^{-1}$ m$^{-2}$')
+                ax.set_ylabel(r'Flux, $10^{-14}$ erg s$^{-1}$ cm$^{-2}$ $\AA^{-1}$')
                 ax.set_title(f"{config['target_name']} - Gaia DR3 XP spectrum")
 
             log("XP spectrum plot saved to file:gaia_xp.png")
@@ -563,10 +573,13 @@ def target_info(config, basepath=None, verbose=True, show=False):
             # Both forms, as everything else here is written: the VOTable
             # keeps the units and the column types, the text one opens
             # anywhere
-            xp.write(os.path.join(basepath, 'gaia_xp.vot'),
-                     format='votable', overwrite=True)
-            xp.write(os.path.join(basepath, 'gaia_xp.txt'),
-                     format='ascii.commented_header', overwrite=True)
+            written = Table({
+                'wavelength': lam * GAIA_XP_TO_ANGSTROM,
+                'flux': flux,
+                'flux_error': err,
+            })
+
+            write_spectrum(written, basepath, 'gaia_xp')
             log("XP spectrum written to file:gaia_xp.vot")
             log("XP spectrum written to file:gaia_xp.txt")
 

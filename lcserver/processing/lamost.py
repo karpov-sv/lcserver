@@ -29,7 +29,7 @@ from astroquery.vizier import Vizier
 from stdpipe import plots
 
 from ..surveys import survey_source, get_output_files
-from .utils import cleanup_paths, cached_votable_query
+from .utils import cleanup_paths, cached_votable_query, write_spectrum
 
 
 # The observation lists: low resolution, and medium resolution
@@ -49,6 +49,10 @@ LAMOST_URLS = {
 # A well-visited star can have a great many epochs, and each is a request and a
 # plot, so only this many are drawn
 LAMOST_MAX_SPECTRA = 20
+
+# LAMOST publishes its fluxes in units of 1e-17 erg/s/cm2/A, where every
+# spectrum here is written in erg/s/cm2/A outright
+LAMOST_TO_CGS = 1e-17
 
 
 def _fetch_spectrum(obsid, resolution, log):
@@ -370,32 +374,37 @@ def target_lamost(config, basepath=None, verbose=True, show=False):
 
         name = f"lamost_{prefix}_{obsid}"
 
+        # The survey's own scale, into the one every spectrum here is on. The
+        # cache above keeps the flux as LAMOST published it.
+        written = Table({
+            'wavelength': np.asarray(spectrum['wavelength'], dtype=float),
+            'flux': np.asarray(spectrum['flux'], dtype=float) * LAMOST_TO_CGS,
+            'arm': np.asarray(spectrum['arm'], dtype=str),
+        })
+
         with plots.figure_saver(os.path.join(basepath, name + '.png'),
                                 figsize=(10, 4), show=show) as fig:
             ax = fig.add_subplot(1, 1, 1)
 
             # The medium-resolution spectra come in two disjoint arms, which
             # are drawn apart rather than joined across the gap between them
-            for arm in dict.fromkeys(np.asarray(spectrum['arm'], dtype=str)):
-                part = spectrum[np.asarray(spectrum['arm'], dtype=str) == arm]
-                ax.plot(part['wavelength'], part['flux'], '-', lw=0.7,
-                        label=arm if arm != 'ALL' else None)
+            for arm in dict.fromkeys(np.asarray(written['arm'], dtype=str)):
+                part = written[np.asarray(written['arm'], dtype=str) == arm]
+                ax.plot(part['wavelength'], part['flux'] / LAMOST_TO_CGS,
+                        '-', lw=0.7, label=arm if arm != 'ALL' else None)
 
-            if len(set(np.asarray(spectrum['arm'], dtype=str))) > 1:
+            if len(set(np.asarray(written['arm'], dtype=str))) > 1:
                 ax.legend()
 
             ax.grid(alpha=0.2)
             ax.set_xlabel('Wavelength, A')
-            ax.set_ylabel('Flux')
+            ax.set_ylabel(r'Flux, $10^{-17}$ erg s$^{-1}$ cm$^{-2}$ $\AA^{-1}$')
             ax.set_title(f"{config['target_name']} - LAMOST {obsid}"
                          f" ({resolution} resolution)")
 
         # The VOTable was promised in output_files from the beginning and
         # never written; both forms are what every other source leaves
-        spectrum.write(os.path.join(basepath, name + '.vot'),
-                       format='votable', overwrite=True)
-        spectrum.write(os.path.join(basepath, name + '.txt'),
-                       format='ascii.commented_header', overwrite=True)
+        write_spectrum(written, basepath, name)
 
         log(f"  {obsid}: {len(spectrum)} points plotted in file:{name}.png,"
             f" written to file:{name}.vot and file:{name}.txt")

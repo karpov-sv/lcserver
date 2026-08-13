@@ -28,7 +28,8 @@ from astropy import units as u
 from stdpipe import plots
 
 from ..surveys import survey_source, get_output_files
-from .utils import SourceError, cleanup_paths, cached_votable_query
+from .utils import (SourceError, cleanup_paths, cached_votable_query,
+                    write_spectrum)
 
 
 # Optional: the client is a NOIRLab package of its own, and everything else
@@ -47,6 +48,10 @@ DESI_SR = 3.0
 
 # Each is a request and a plot; DR1 rarely has more than one per star
 DESI_MAX_SPECTRA = 10
+
+# DESI publishes its fluxes in units of 1e-17 erg/s/cm2/A, where every spectrum
+# here is written in erg/s/cm2/A outright
+DESI_TO_CGS = 1e-17
 
 # Where the stellar parameters are, SPARCL not carrying them
 DESI_TAP = 'https://datalab.noirlab.edu/tap/sync'
@@ -312,16 +317,25 @@ def target_desi(config, basepath=None, verbose=True, show=False):
 
             ax.grid(alpha=0.2)
             ax.set_xlabel('Wavelength, A')
-            ax.set_ylabel(r'Flux, $10^{-17}$ erg s$^{-1}$ cm$^{-2}$ A$^{-1}$')
+            ax.set_ylabel(r'Flux, $10^{-17}$ erg s$^{-1}$ cm$^{-2}$ $\AA^{-1}$')
             ax.set_title(f"{config['target_name']} - DESI {targetid}")
+
+        # The survey's own scale, into the one every spectrum here is on, and
+        # its inverse variance as the uncertainty the others all publish. The
+        # cache above keeps both as DESI served them.
+        ivar = np.asarray(spectrum['ivar'], dtype=float)
+
+        with np.errstate(divide='ignore', invalid='ignore'):
+            error = np.where(ivar > 0, DESI_TO_CGS / np.sqrt(ivar), np.nan)
 
         # The VOTable was promised in output_files from the beginning and
         # never written; both forms are what every other source leaves
-        table = spectrum[['wavelength', 'flux', 'ivar']]
-        table.write(os.path.join(basepath, name + '.vot'),
-                    format='votable', overwrite=True)
-        table.write(os.path.join(basepath, name + '.txt'),
-                    format='ascii.commented_header', overwrite=True)
+        table = Table({
+            'wavelength': wavelength,
+            'flux': flux * DESI_TO_CGS,
+            'flux_error': error,
+        })
+        write_spectrum(table, basepath, name)
 
         log(f"Spectrum plotted in file:{name}.png, written to "
             f"file:{name}.vot and file:{name}.txt")

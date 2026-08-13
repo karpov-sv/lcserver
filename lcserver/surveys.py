@@ -105,12 +105,21 @@ def survey_source(
     # the letter its filenames carry maps to what that phase calls a segment
     lc_segment_prefixes=None,
     lc_color_palette=None,
-    # Spectra, for the spectral viewer. A source writing them says where they
-    # are and what its wavelengths are in; the tables themselves carry a
-    # 'wavelength' and a 'flux' column by convention.
+    # Spectra, for the spectral viewer. A source writing them says only where
+    # they are; what is in them is fixed, and the same for every source:
+    #
+    #   wavelength   Angstrom
+    #   flux         erg/s/cm2/A, a flux per unit wavelength
+    #   flux_error   the same, where the survey gives an uncertainty
+    #
+    # The surveys agree on none of that between them - Gaia XP publishes
+    # W/nm/m2 against nanometres, LAMOST and DESI units of 1e-17 erg/s/cm2/A,
+    # SPHEREx uJy against microns, which is per unit frequency and so differs
+    # in the shape of the curve and not merely its height - so each converts
+    # on the way out and the files can be read against each other, and
+    # exported, as they stand. See processing/utils.py for the conversion.
     spectrum_files=None,             # glob pattern, one table per spectrum
     spectrum_label=None,             # what to call them, if not the short name
-    spectrum_wavelength_scale=1.0,   # multiplied to give Angstrom
     spectrum_color=None,             # a source with one spectrum
     spectrum_palette=None,           # a source with several, told apart by shade
     # Config keys this source writes for others to convert with. A source that
@@ -259,7 +268,6 @@ def survey_source(
             'lc_color_palette': lc_color_palette,
             'spectrum_files': spectrum_files,
             'spectrum_label': spectrum_label,
-            'spectrum_wavelength_scale': spectrum_wavelength_scale,
             'spectrum_color': spectrum_color,
             'spectrum_palette': spectrum_palette,
             'provides_config': provides_config or [],

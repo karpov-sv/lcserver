@@ -4,6 +4,7 @@ import os
 import glob
 import shutil
 import re
+import warnings
 import requests
 import numpy as np
 import dill as pickle
@@ -12,6 +13,7 @@ from contextlib import contextmanager
 
 from astropy.io.votable import parse as votable_parse
 from astropy.table import Table
+from astropy.units import UnitsWarning
 
 
 # How hard a source is asked to judge its own measurements. The names are
@@ -40,6 +42,78 @@ CLIP_RATIO_BY_LEVEL = {QUALITY_STANDARD: CLIP_MAX_ERR_RATIO,
 # needs before there is anything to bin
 CLIP_BINS = 5
 CLIP_NMIN = 20
+
+
+# How every spectrum here is stored, whatever the survey publishes: wavelength
+# in Angstrom, and flux per unit wavelength in erg/s/cm2/A. The surveys agree
+# on none of this between them - Gaia XP comes in W/nm/m2 against wavelengths
+# in nm, LAMOST and DESI in units of 1e-17 erg/s/cm2/A, SPHEREx in uJy against
+# microns, which is not even per unit wavelength - so each converts on the way
+# out. The files can then be read against each other, and exported, without
+# carrying a table of what each one meant.
+SPECTRUM_WAVELENGTH_UNIT = 'Angstrom'
+SPECTRUM_FLUX_UNIT = 'erg / (s cm2 Angstrom)'
+
+# The columns those two apply to, wherever a spectrum has them
+SPECTRUM_WAVELENGTH_COLUMNS = ('wavelength', 'bandwidth')
+SPECTRUM_FLUX_COLUMNS = ('flux', 'flux_error', 'scatter')
+
+# Speed of light in Angstrom/s, and a microjansky in erg/s/cm2/Hz, which is
+# what turns a flux per unit frequency into one per unit wavelength
+SPEED_OF_LIGHT = 2.99792458e18
+MICROJANSKY = 1e-29
+
+
+def flambda_from_fnu(flux, wavelength):
+    """A flux per unit frequency, in uJy, as one per unit wavelength.
+
+    f_lambda = f_nu c / lambda^2, with the wavelength in Angstrom and the
+    answer in erg/s/cm2/A. Not a change of units but of variable: the two
+    differ by a factor of lambda squared, so a spectrum converted from one to
+    the other changes shape and not merely scale.
+    """
+    wavelength = np.asarray(wavelength, dtype=float)
+
+    return (np.asarray(flux, dtype=float) * MICROJANSKY
+            * SPEED_OF_LIGHT / wavelength ** 2)
+
+
+def write_spectrum(table, basepath, name):
+    """Write a spectrum out, in the one form they are all written in.
+
+    Every source goes through here rather than writing its own pair of files,
+    so that the format cannot drift between one and another: the units are
+    stamped on the table, and both a VOTable and a text table are left, as
+    everything else here leaves. The VOTable carries the units, so a spectrum
+    exported from here describes itself without anyone having to be told what
+    the survey behind it published; the text form keeps only the column names,
+    which is why those units are the same for every source rather than
+    something each one declares for itself.
+
+    Returns the two file names, for the source to say where it put them.
+    """
+    for column in SPECTRUM_WAVELENGTH_COLUMNS:
+        if column in table.colnames:
+            table[column].unit = SPECTRUM_WAVELENGTH_UNIT
+
+    for column in SPECTRUM_FLUX_COLUMNS:
+        if column in table.colnames:
+            table[column].unit = SPECTRUM_FLUX_UNIT
+
+    # Angstrom and erg are both deprecated in the strict VOUnit standard, in
+    # favour of 0.1nm and cm2.g.s-2, and astropy says so on every write. The
+    # units astronomers read are worth more than the standard's preference,
+    # and the warning is not worth a line of a worker's log for each spectrum.
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore', UnitsWarning)
+
+        table.write(os.path.join(basepath, name + '.vot'),
+                    format='votable', overwrite=True)
+
+    table.write(os.path.join(basepath, name + '.txt'),
+                format='ascii.commented_header', overwrite=True)
+
+    return name + '.vot', name + '.txt'
 
 
 def quality_field(labels, label='Quality filtering'):
