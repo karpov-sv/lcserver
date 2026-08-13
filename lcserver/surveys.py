@@ -119,6 +119,15 @@ def survey_source(
     # on the way out and the files can be read against each other, and
     # exported, as they stand. See processing/utils.py for the conversion.
     spectrum_files=None,             # glob pattern, one table per spectrum
+    # The same, for measurements that are not a curve. SPHEREx builds its
+    # spectrum out of several hundred separate exposures, each at one
+    # wavelength, and the individual ones are worth seeing about the binned
+    # curve - the scatter between them at one wavelength is the target's own
+    # variability between visits, which the curve averages away. Drawn as
+    # points rather than joined, a line through them being a zigzag and not a
+    # spectrum, and normalised with the curve they belong to rather than on
+    # their own, so that the two sit on top of each other.
+    spectrum_points=None,            # glob pattern, drawn as points
     spectrum_label=None,             # what to call them, if not the short name
     spectrum_color=None,             # a source with one spectrum
     spectrum_palette=None,           # a source with several, told apart by shade
@@ -267,6 +276,7 @@ def survey_source(
             'lc_segment_prefixes': lc_segment_prefixes or {},
             'lc_color_palette': lc_color_palette,
             'spectrum_files': spectrum_files,
+            'spectrum_points': spectrum_points,
             'spectrum_label': spectrum_label,
             'spectrum_color': spectrum_color,
             'spectrum_palette': spectrum_palette,
@@ -453,8 +463,13 @@ def get_data_files(source_id):
     if config.get('data_files') is not None:
         files = config['data_files']
     else:
+        # spectrum_points before main_plot, so that a source publishing only
+        # measurements - an SED merged out of catalogues has no curve to draw
+        # - is still judged by its data rather than by whether a picture of it
+        # came out
         files = (config.get('votable_file') or config.get('spectrum_files')
-                 or config.get('main_plot') or [])
+                 or config.get('spectrum_points') or config.get('main_plot')
+                 or [])
 
     return [files] if isinstance(files, str) else list(files)
 

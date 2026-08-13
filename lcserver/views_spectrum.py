@@ -41,24 +41,18 @@ SPECTRUM_PALETTE = ['#2980b9', '#c0392b', '#16a085', '#8e44ad', '#e67e22',
 
 
 def load_spectrum_data(basepath):
-    """Every spectrum written for a target, on one wavelength scale.
+    """Every spectrum written for a target.
 
-    Each source says in the registry where its spectra are and what its
-    wavelengths are in; the tables carry a wavelength and a flux column by
-    convention, and the wavelengths are put into Angstrom here so that a Gaia
-    XP spectrum in nanometres can be laid over a DESI one.
+    Nothing is converted here. Each source says in the registry only where its
+    spectra are; what is in them is the same whoever wrote it - wavelength in
+    Angstrom, flux in erg/s/cm2/A - the sources having each done their own
+    conversion when they wrote the file, so that the files are as comparable
+    on disk as they are on the screen.
     """
     spectra = []
     index = 0
 
     for source_id, survey_config in surveys.SURVEY_SOURCES.items():
-        pattern = survey_config.get('spectrum_files')
-
-        if not pattern:
-            continue
-
-        scale = survey_config.get('spectrum_wavelength_scale') or 1.0
-
         # A source with several spectra tells them apart by shade, counting
         # from its own first one rather than from everything drawn so far
         palette = (survey_config.get('spectrum_palette')
@@ -66,72 +60,110 @@ def load_spectrum_data(basepath):
                        if survey_config.get('spectrum_color') else None)
                    or SPECTRUM_PALETTE)
 
-        for number, path in enumerate(sorted(glob.glob(os.path.join(basepath, pattern)))):
-            try:
-                data = Table.read(path, format='ascii.commented_header')
-            except Exception:
+        # What the source's own curve was divided by, so that its individual
+        # measurements can be divided by the same thing. Normalised on their
+        # own they would sit a little off the curve they came from, the two
+        # having different numbers of points at each wavelength, and the whole
+        # purpose of drawing them is that they lie about it.
+        curve_median = None
+
+        for kind, pattern in (('line', survey_config.get('spectrum_files')),
+                              ('points', survey_config.get('spectrum_points'))):
+            if not pattern:
                 continue
 
-            if 'wavelength' not in data.colnames or 'flux' not in data.colnames:
-                continue
+            for number, path in enumerate(sorted(glob.glob(os.path.join(basepath, pattern)))):
+                try:
+                    data = Table.read(path, format='ascii.commented_header')
+                except Exception:
+                    continue
 
-            wavelength = np.asarray(data['wavelength'], dtype=float) * scale
-            flux = np.asarray(data['flux'], dtype=float)
+                if 'wavelength' not in data.colnames or 'flux' not in data.colnames:
+                    continue
 
-            good = np.isfinite(wavelength) & np.isfinite(flux)
+                wavelength = np.asarray(data['wavelength'], dtype=float)
+                flux = np.asarray(data['flux'], dtype=float)
 
-            if not np.sum(good):
-                continue
+                # Uncertainties are carried for points and not for curves. A
+                # curve of several thousand samples drawn with an error bar on
+                # each is a band of ink, and the sources that publish one draw
+                # the band themselves; a measurement is not much use without
+                # the error on it.
+                error = (np.asarray(data['flux_error'], dtype=float)
+                         if kind == 'points' and 'flux_error' in data.colnames
+                         else None)
 
-            wavelength, flux = wavelength[good], flux[good]
+                good = np.isfinite(wavelength) & np.isfinite(flux)
 
-            order = np.argsort(wavelength)
-            wavelength, flux = wavelength[order], flux[order]
+                if not np.sum(good):
+                    continue
 
-            # Where the spectrum comes in separate pieces - the two arms of a
-            # medium-resolution LAMOST observation are 890 A apart - a null
-            # breaks the line rather than letting it run straight across the
-            # gap, which would draw a feature that is not there
-            steps = np.diff(wavelength)
-            breaks = (np.where(steps > SPECTRUM_GAP_FACTOR * np.median(steps))[0]
-                      if len(steps) else np.array([], dtype=int))
+                wavelength, flux = wavelength[good], flux[good]
+                error = error[good] if error is not None else None
 
-            # What the file says beyond what the pattern already fixed: the
-            # part of its name that the wildcard stood for, so that one
-            # spectrum per source is named for the source alone and several
-            # are told apart by whatever distinguishes them
-            stem = os.path.splitext(os.path.basename(path))[0]
-            fixed = os.path.splitext(pattern)[0].split('*')[0]
-            rest = stem[len(fixed):] if '*' in pattern and stem.startswith(fixed) else ''
+                order = np.argsort(wavelength)
+                wavelength, flux = wavelength[order], flux[order]
+                error = error[order] if error is not None else None
 
-            label = survey_config.get('spectrum_label') or survey_config['short_name']
+                # Where the spectrum comes in separate pieces - the two arms of a
+                # medium-resolution LAMOST observation are 890 A apart - a null
+                # breaks the line rather than letting it run straight across the
+                # gap, which would draw a feature that is not there. Points are
+                # not joined in the first place, so nothing has to be broken.
+                steps = np.diff(wavelength)
+                breaks = (np.where(steps > SPECTRUM_GAP_FACTOR * np.median(steps))[0]
+                          if kind == 'line' and len(steps)
+                          else np.array([], dtype=int))
 
-            if rest:
-                label += ' ' + rest.strip('_').replace('_', ' ')
+                # What the file says beyond what the pattern already fixed: the
+                # part of its name that the wildcard stood for, so that one
+                # spectrum per source is named for the source alone and several
+                # are told apart by whatever distinguishes them
+                stem = os.path.splitext(os.path.basename(path))[0]
+                fixed = os.path.splitext(pattern)[0].split('*')[0]
+                rest = stem[len(fixed):] if '*' in pattern and stem.startswith(fixed) else ''
 
-            # Divided by the median rather than left as measured: these are
-            # compared by shape, and their calibrations have nothing in common
-            median = float(np.median(flux))
+                label = (survey_config.get('spectrum_label')
+                         or survey_config['short_name'])
 
-            spectra.append({
-                'source_id': source_id,
-                'label': label,
-                'file': os.path.basename(path),
-                'color': palette[number % len(palette)],
-                'wavelength': [round(float(_), 3) for _ in wavelength],
-                # Significant figures rather than decimal places: Gaia
-                # publishes XP in W/nm/m2, where six decimals is every value
-                # rounded to zero and the spectrum drawn along the axis
-                'flux': [float(f'{_:.7g}') for _ in flux],
-                # Indices after which the line should be broken
-                'breaks': [int(_) for _ in breaks],
-                'median': median,
-                'n_points': int(len(wavelength)),
-                'wavelength_min': float(wavelength.min()),
-                'wavelength_max': float(wavelength.max()),
-            })
+                if rest:
+                    label += ' ' + rest.strip('_').replace('_', ' ')
 
-            index += 1
+                # All four sources are now in the one unit, so this is no longer
+                # about units: a spectrum of a fifteenth-magnitude quasar and one
+                # of a sixth-magnitude star still differ by a factor of a
+                # thousand, and drawn together the fainter is a line along the
+                # axis. The viewer offers the division as a choice.
+                median = float(np.median(flux))
+
+                if kind == 'points' and curve_median is not None:
+                    median = curve_median
+                elif kind == 'line' and curve_median is None:
+                    curve_median = median
+
+                spectra.append({
+                    'source_id': source_id,
+                    'label': label,
+                    'draw': kind,
+                    'file': os.path.basename(path),
+                    'color': palette[number % len(palette)],
+                    'wavelength': [round(float(_), 3) for _ in wavelength],
+                    # Significant figures rather than decimal places: Gaia
+                    # publishes XP in W/nm/m2, where six decimals is every value
+                    # rounded to zero and the spectrum drawn along the axis
+                    'flux': [float(f'{_:.7g}') for _ in flux],
+                    'flux_error': ([float(f'{_:.4g}') if np.isfinite(_) else None
+                                    for _ in error]
+                                   if error is not None else None),
+                    # Indices after which the line should be broken
+                    'breaks': [int(_) for _ in breaks],
+                    'median': median,
+                    'n_points': int(len(wavelength)),
+                    'wavelength_min': float(wavelength.min()),
+                    'wavelength_max': float(wavelength.max()),
+                })
+
+                index += 1
 
     return spectra
 
@@ -139,10 +171,11 @@ def load_spectrum_data(basepath):
 def has_spectra(basepath):
     """Whether a target has anything for the spectral viewer to show."""
     for survey_config in surveys.SURVEY_SOURCES.values():
-        pattern = survey_config.get('spectrum_files')
+        for key in ('spectrum_files', 'spectrum_points'):
+            pattern = survey_config.get(key)
 
-        if pattern and glob.glob(os.path.join(basepath, pattern)):
-            return True
+            if pattern and glob.glob(os.path.join(basepath, pattern)):
+                return True
 
     return False
 

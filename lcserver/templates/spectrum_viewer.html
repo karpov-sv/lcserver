@@ -19,7 +19,7 @@
 .spectrum-control {
     display: flex;
     align-items: center;
-    padding: 0.4rem 0.5rem;
+    padding: 0.5rem;
     margin-bottom: 0.25rem;
     border-radius: 0.25rem;
     background-color: var(--bs-body-bg);
@@ -30,8 +30,8 @@
 }
 
 .spectrum-swatch {
-    width: 26px;
-    height: 26px;
+    width: 30px;
+    height: 30px;
     border-radius: 3px;
     margin-right: 0.5rem;
     border: 1px solid var(--bs-border-color);
@@ -40,6 +40,7 @@
 
 .spectrum-label {
     flex: 1;
+    margin-right: 0.5rem;
     font-weight: 500;
 }
 
@@ -48,6 +49,17 @@
     font-size: 0.875rem;
     margin-right: 1rem;
     white-space: nowrap;
+}
+
+.size-control {
+    width: 60px;
+    margin-right: 0.5rem;
+}
+
+.control-label {
+    font-size: 0.875rem;
+    color: var(--bs-secondary-color);
+    margin-right: 0.5rem;
 }
 </style>
 {% endblock %}
@@ -87,12 +99,12 @@
     <div class="btn-group btn-group-sm">
       <button onclick="setScaling('normalised')" data-scaling="normalised"
               class="btn btn-sm btn-primary"
-              title="Each spectrum divided by its own median, so their shapes can be compared">
+              title="Each spectrum divided by its own median, so that a faint one and a bright one can be compared by shape">
         Normalised
       </button>
       <button onclick="setScaling('raw')" data-scaling="raw"
               class="btn btn-sm btn-outline-primary"
-              title="As measured, in whatever units each survey publishes">
+              title="As measured - every survey in erg/s/cm2/A against Angstrom">
         As measured
       </button>
     </div>
@@ -116,6 +128,12 @@
     <div class="form-check">
       <input class="form-check-input" type="checkbox" id="log-check" onchange="redraw()">
       <label class="form-check-label" for="log-check">Log flux</label>
+    </div>
+
+    <div class="form-check">
+      <input class="form-check-input" type="checkbox" id="logx-check" onchange="redraw()">
+      <label class="form-check-label" for="logx-check"
+             title="An SED runs from the ultraviolet to the far infrared, which linear wavelength crowds into the left of the plot">Log wavelength</label>
     </div>
   </div>
 
@@ -141,11 +159,28 @@
      redraw();
  }
 
- // Divided by its own median unless asked otherwise: the three surveys publish
- // fluxes that differ by twelve orders of magnitude, and drawn as measured all
- // but one of them is a flat line along the axis.
+ // What a series starts at, and the range the control allows. Only defaults:
+ // how heavily anything is drawn is the reader's to change, per series, the
+ // way the light curve viewer does it. Nothing here decides that a source's
+ // points are subordinate to anything - what puts a curve over its own
+ // measurements is the order they are drawn in, not their weight.
+ const WEIGHT = {
+     points: {value: 4, step: 0.5, min: 0.5, max: 20, label: 'Size'},
+     line:   {value: 1, step: 0.5, min: 0.5, max: 10, label: 'Width'},
+ };
+
+ // Every survey arrives in the one unit - erg/s/cm2/A against Angstrom, each
+ // source having converted before writing its file - so 'as measured' is a
+ // real comparison and not a coincidence of scales. Dividing by the median is
+ // still offered, brightness alone being enough to flatten the fainter of two
+ // spectra against the axis.
  function values(spectrum, offset) {
-     const scale = (scaling === 'normalised' && spectrum.median) ? spectrum.median : 1;
+     const normalised = scaling === 'normalised' && spectrum.median;
+     // The size of the median, not the median: a spectrum of a target too
+     // faint to detect has a negative one, and dividing by it would turn the
+     // noise the right way up and show a non-detection as a spectrum
+     const scale = normalised ? Math.abs(spectrum.median) : 1;
+
      const y = spectrum.flux.map(f => f / scale + offset);
 
      // A null tells Plotly to lift the pen: the segments of a spectrum are
@@ -155,28 +190,104 @@
      return y;
  }
 
+ // The uncertainties on the same scale as the fluxes, which the offset does
+ // not enter into - it moves a spectrum up the page without making it any
+ // better measured.
+ function errors(spectrum) {
+     if (!spectrum.flux_error) return null;
+
+     const normalised = scaling === 'normalised' && spectrum.median;
+     const scale = normalised ? Math.abs(spectrum.median) : 1;
+
+     return spectrum.flux_error.map(e => (e === null ? 0 : e / scale));
+ }
+
+ // The order the legend and the list both show, and the order the traces are
+ // drawn in - one rule for the three, so that what is listed first is what is
+ // drawn first and the two lists agree with each other.
+ //
+ // Sources keep the order they were loaded in, and only within a source is
+ // anything moved: its individual measurements come before the curve binned
+ // from them, so that the curve is drawn over its own points rather than
+ // under them. Sorting on that alone, without the source, put SPHEREx's
+ // measurements ahead of Gaia XP and split the two SPHEREx traces apart.
+ function displayOrder(indices) {
+     const group = new Map();
+
+     spectra.forEach((spectrum, i) => {
+         if (!group.has(spectrum.source_id)) group.set(spectrum.source_id, i);
+     });
+
+     return indices.slice().sort((a, b) => {
+         const first = group.get(spectra[a].source_id) - group.get(spectra[b].source_id);
+
+         return first || (spectra[a].draw === 'points' ? 0 : 1)
+                       - (spectra[b].draw === 'points' ? 0 : 1);
+     });
+ }
+
  function redraw() {
      const stacked = document.getElementById('stack-check').checked;
      const traces = [];
      let shown = 0;
 
+     // Where each spectrum is to be drawn. A source's individual measurements
+     // are put wherever its own curve went rather than a shelf of their own,
+     // so that stacking separates the sources and not a curve from the points
+     // it was made of.
+     const offsets = new Map();
+     const curve = new Map();
+
      spectra.forEach((spectrum, i) => {
          if (!state[i].visible) return;
 
+         if (spectrum.draw === 'points' && curve.has(spectrum.source_id)) {
+             offsets.set(i, curve.get(spectrum.source_id));
+             return;
+         }
+
          // Only meaningful once every spectrum is on the same scale
          const offset = (stacked && scaling === 'normalised') ? shown * 1.0 : 0;
+         offsets.set(i, offset);
+         shown++;
 
-         traces.push({
+         if (spectrum.draw !== 'points') curve.set(spectrum.source_id, offset);
+     });
+
+     displayOrder([...offsets.keys()]).forEach(i => {
+         const spectrum = spectra[i];
+         const offset = offsets.get(i);
+         const points = spectrum.draw === 'points';
+
+         const trace = {
              x: spectrum.wavelength,
              y: values(spectrum, offset),
              type: 'scattergl',
-             mode: 'lines',
+             mode: points ? 'markers' : 'lines',
              name: spectrum.label + (offset ? ` (+${offset})` : ''),
-             line: {color: spectrum.color, width: 1},
              hovertemplate: '%{x:.1f} A<br>%{y:.4g}<extra>' + spectrum.label + '</extra>',
-         });
+         };
 
-         shown++;
+         // Set, rather than set to undefined: the key existing at all is
+         // enough for Plotly to walk into it while working out the defaults,
+         // and it reads an undefined container as an error rather than as an
+         // absent one
+         if (points) {
+             trace.marker = {color: spectrum.color, size: state[i].weight};
+
+             const bars = errors(spectrum);
+
+             if (bars) {
+                 trace.error_y = {
+                     type: 'data', array: bars, visible: true,
+                     color: spectrum.color, thickness: 1, width: 0,
+                 };
+             }
+         } else {
+             trace.line = {color: spectrum.color, width: state[i].weight};
+         }
+
+         traces.push(trace);
      });
 
      const shapes = [];
@@ -220,9 +331,14 @@
 
      Plotly.react('plotly-container', traces, {
          margin: {l: 60, r: 20, t: 30, b: 50},
-         xaxis: {title: 'Wavelength, A', showgrid: true, gridcolor: 'rgba(128,128,128,0.2)'},
+         xaxis: {
+             title: 'Wavelength, A',
+             type: document.getElementById('logx-check').checked ? 'log' : 'linear',
+             showgrid: true, gridcolor: 'rgba(128,128,128,0.2)',
+         },
          yaxis: {
-             title: scaling === 'normalised' ? 'Flux / median' : 'Flux, as published',
+             title: scaling === 'normalised'
+                    ? 'Flux / median' : 'Flux, erg s\u207b\u00b9 cm\u207b\u00b2 \u00c5\u207b\u00b9',
              type: document.getElementById('log-check').checked ? 'log' : 'linear',
              showgrid: true, gridcolor: 'rgba(128,128,128,0.2)',
          },
@@ -240,22 +356,37 @@
      const host = document.getElementById('spectrum-controls');
      host.innerHTML = '';
 
-     spectra.forEach((spectrum, i) => {
+     displayOrder(spectra.map((_, i) => i)).forEach(i => {
+         const spectrum = spectra[i];
          const row = document.createElement('div');
          row.className = 'spectrum-control';
+         // Laid out as the light curve viewer lays its sources out: what the
+         // series is on the left, what to do with it on the right
+         const weight = WEIGHT[spectrum.draw] || WEIGHT.line;
+
          row.innerHTML = `
            <div class="spectrum-swatch" style="background:${spectrum.color}"></div>
-           <div class="form-check me-2">
-             <input class="form-check-input" type="checkbox" id="vis-${i}" ${state[i].visible ? 'checked' : ''}>
-           </div>
            <label class="spectrum-label" for="vis-${i}">${spectrum.label}</label>
            <span class="spectrum-info">${spectrum.n_points} points</span>
            <span class="spectrum-info">${spectrum.wavelength_min.toFixed(0)} - ${spectrum.wavelength_max.toFixed(0)} A</span>
+           <span class="control-label">${weight.label}:</span>
+           <input type="number" class="form-control form-control-sm size-control"
+                  id="weight-${i}" value="${state[i].weight}"
+                  step="${weight.step}" min="${weight.min}" max="${weight.max}">
+           <div class="form-check form-switch">
+             <input class="form-check-input" type="checkbox" id="vis-${i}"
+                    ${state[i].visible ? 'checked' : ''}>
+           </div>
          `;
          host.appendChild(row);
 
          row.querySelector(`#vis-${i}`).addEventListener('change', e => {
              state[i].visible = e.target.checked;
+             redraw();
+         });
+
+         row.querySelector(`#weight-${i}`).addEventListener('change', e => {
+             state[i].weight = parseFloat(e.target.value) || weight.value;
              redraw();
          });
      });
@@ -275,7 +406,10 @@
              return;
          }
 
-         state = spectra.map(() => ({visible: true}));
+         state = spectra.map(spectrum => ({
+            visible: true,
+            weight: (WEIGHT[spectrum.draw] || WEIGHT.line).value,
+        }));
 
          document.getElementById('control-panel').style.display = 'block';
          document.getElementById('plotly-container').style.display = 'block';
