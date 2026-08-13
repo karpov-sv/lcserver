@@ -23,6 +23,7 @@ The module is organized into separate files:
 - hipparcos.py: Hipparcos epoch photometry acquisition
 - lamost.py: LAMOST DR11 spectra
 - desi.py: DESI DR1 spectra
+- spherex.py: SPHEREx QR2 near-infrared spectrophotometry
 - kepler.py: Kepler lightcurve acquisition, both the original mission and K2
 - combined.py: Combined lightcurve plotting
 """
@@ -88,6 +89,7 @@ from .nsvs import target_nsvs
 from .hipparcos import target_hipparcos
 from .lamost import target_lamost
 from .desi import target_desi
+from .spherex import target_spherex
 from .kepler import target_kepler
 from .tess import target_tess
 from .dasch import target_dasch
