@@ -200,7 +200,8 @@ def _value(row, key):
         },
     },
     help_text='LAMOST DR11 spectra, northern sky, 3700-9100 A',
-    order=27,
+    # The spectra sit below the photometry, and together
+    order=80,
     # Spectra rather than a light curve, so no lc_mode is declared
     spectrum_files='lamost_*.txt',
     # A target may have several - low and medium resolution, and more than one

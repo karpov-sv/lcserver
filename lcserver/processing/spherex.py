@@ -960,7 +960,7 @@ def _preview(results, basepath, name, show, log):
         }),
     },
     help_text='SPHEREx QR2 spectrophotometry, all sky, 0.75-5 um',
-    order=29,
+    order=82,
     # Spectrophotometry rather than a light curve, so no lc_mode is declared.
     #
     # The curve is matched by the wildcard, which is also what names it in the

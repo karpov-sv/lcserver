@@ -304,7 +304,7 @@ def _deduplicate(rows, name, log):
         },
     },
     help_text='Broadband photometry from VizieR, 0.15 to 22 um',
-    order=31,
+    order=83,
     # Measurements and no curve, so the viewer draws them as points and they
     # keep the full weight of anything else it shows
     spectrum_points='sed*.txt',
