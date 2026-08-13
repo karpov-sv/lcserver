@@ -36,6 +36,11 @@ CLIP_MAX_ERR_RATIO = 5.0
 CLIP_RATIO_BY_LEVEL = {QUALITY_STANDARD: CLIP_MAX_ERR_RATIO,
                        QUALITY_RELAXED: 10.0}
 
+# Brightness bins the comparison is made in, and the fewest points a group
+# needs before there is anything to bin
+CLIP_BINS = 5
+CLIP_NMIN = 20
+
 
 def quality_field(labels, label='Quality filtering'):
     """A source's filtering selector, as the registry wants a form field.
@@ -64,11 +69,6 @@ def quality_level(config, source_id):
              or QUALITY_STANDARD)
 
     return level if level in QUALITY_LEVELS else QUALITY_STANDARD
-
-# Brightness bins the comparison is made in, and the fewest points a group
-# needs before there is anything to bin
-CLIP_BINS = 5
-CLIP_NMIN = 20
 
 
 def typical_error(mag, err, nbins=CLIP_BINS):
@@ -153,10 +153,10 @@ def clip_noisy_points(mag, err, groups=None, log=None, group_name='group',
                  for name in sorted(set(groups))
                  if name and np.any(clip[groups == name])]
 
-        log(f"Warning: dropping {int(np.sum(clip))} points"
+        log(f"Warning: dropping {int(np.sum(clip))} noisy points"
             + (f" ({', '.join(named)})" if named else '')
-            + f" whose errors are more than {ratio:.0f} times what their "
-            f"{group_name} managed at the same brightness")
+            + f" - errors over {ratio:.0f}x their {group_name}'s at that "
+            f"brightness")
 
     return clip
 

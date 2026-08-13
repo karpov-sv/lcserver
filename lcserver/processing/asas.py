@@ -16,7 +16,36 @@ from stdpipe import plots
 
 from .. import surveys
 from ..surveys import survey_source, get_output_files
-from .utils import SourceError, cleanup_paths, cached_votable_query, log_bands, log_conversion
+from .utils import (SourceError, cleanup_paths, cached_votable_query,
+                    quality_field, quality_level, log_bands, log_conversion,
+                    QUALITY_STANDARD, QUALITY_RELAXED, QUALITY_PUBLISHED)
+
+
+# A non-detection is reported as a magnitude equal to the image's limit, with
+# this error and no flux to speak of - and is labelled good all the same: of
+# the eighty-four in the first target this was tried on, seventy-two said 'G'.
+# Reading the columns for what they say is not a judgement, so this much is
+# done at every level of filtering.
+ASAS_NODATA_ERR = 99.0
+
+# How much shallower than usual an image may be before what it says about the
+# star is not worth having. Cloud and haze cost depth, and a star measured
+# through them comes out too faint - the two correlate at -0.6 in the g band.
+# Half a magnitude is the knee: a quarter gains two hundredths of scatter and
+# costs another few per cent of the points.
+ASAS_DEPTH_MARGIN = 0.5
+
+# How much worse than usual the seeing may be before a saturated star's
+# photometry is not to be trusted, in the pixels the survey quotes it in. Only
+# applied where the star is saturated: elsewhere it costs a quarter of the
+# points and buys almost nothing.
+ASAS_SEEING_MARGIN = 0.35
+
+# Where the survey's own catalogue papers put saturation. Nothing marks a
+# saturated measurement, and the quoted errors say nothing about it - photon
+# noise on a clipped profile, understating the real scatter three hundred
+# times - so a word in the log is all that can be offered.
+ASAS_SATURATION = 11.5
 
 
 @survey_source(
@@ -27,6 +56,13 @@ from .utils import SourceError, cleanup_paths, cached_votable_query, log_bands, 
     log_file='asas.log',
     output_files=['asas.log', 'asas_lc.png', 'asas.vot', 'asas.txt'],
     button_text='Get ASAS-SN lightcurve',
+    form_fields={
+        'asas_quality': quality_field({
+            QUALITY_STANDARD: 'Drop what was measured through cloud as well',
+            QUALITY_RELAXED: 'Drop what the survey calls bad',
+            QUALITY_PUBLISHED: 'None - every detection as published',
+        }),
+    },
     help_text='All-Sky Automated Survey for Supernovae',
     order=20,
     # Lightcurve metadata
@@ -122,11 +158,87 @@ def target_asas(config, basepath=None, verbose=True, show=False):
 
     log(f"{len(asas)} ASAS-SN data points found")
 
+    quality = quality_level(config, 'asas')
+
+    # What the survey did not measure at all. A non-detection carries the
+    # image's limiting magnitude in the magnitude column, so left in it reads
+    # as the star having faded by several magnitudes.
+    good = np.isfinite(asas['mag']) & (asas['mag_err'] < ASAS_NODATA_ERR)
+
+    if 'flux' in asas.colnames:
+        good &= asas['flux'] > 0
+
+    if not np.all(good):
+        log(f"  {int(np.sum(~good))} of them are not detections but upper limits"
+            + (f", {int(np.sum(~good & (asas['quality'] == 'G')))} of those"
+               " labelled good" if 'quality' in asas.colnames else ''))
+
+    if quality != QUALITY_PUBLISHED:
+        # The survey's own letter, and the error cut this source has always
+        # applied - which says little about a saturated star, whose errors are
+        # photon noise on a profile that lost its peak
+        good &= (asas['quality'] == 'G') & (asas['mag_err'] < 0.05)
+
+    # Band by band, since the two cameras differ in what they reach and in what
+    # they saturate at, and since the star has a different brightness in each
+    for fn in ['g', 'V']:
+        here = good & (asas['phot_filter'] == fn)
+
+        if np.sum(here) < 10:
+            continue
+
+        # An image taken through cloud reaches shallower and measures the star
+        # too faint. Judged against the depth this band usually reaches on this
+        # star rather than against a fixed number.
+        if quality == QUALITY_STANDARD and 'limit' in asas.colnames:
+            usual = np.median(asas['limit'][here])
+            shallow = here & (asas['limit'] < usual - ASAS_DEPTH_MARGIN)
+
+            if np.any(shallow):
+                log(f"Warning: dropping {int(np.sum(shallow))} {fn} points from "
+                    f"images over {ASAS_DEPTH_MARGIN:.1f} mag shallower than "
+                    f"the usual {usual:.1f}")
+                good &= ~shallow
+                here &= ~shallow
+
+        # Nothing marks saturation, and nothing can undo it: the star has lost
+        # flux to a clipped profile, so what is left scatters to the faint side
+        # only. Said plainly, as the light curve looks like variability.
+        median = np.median(np.asarray(asas['mag'])[here])
+
+        if median >= ASAS_SATURATION:
+            continue
+
+        log(f"Warning: {fn} = {median:.1f} is past the {ASAS_SATURATION:.1f} "
+            f"ASAS-SN saturates at - this scatter is the survey, not the star")
+
+        # Where the survey corrects a saturated star it corrects a bleed trail,
+        # and in poor seeing that correction is the likeliest to fail: on the
+        # star this was found on, the points a magnitude and more below the
+        # rest were taken in the worst seeing of the run and carry a tenth of
+        # its flux. Only for a saturated star, and only at this level: seeing
+        # costs an ordinary star nothing, and a third of the points is too much
+        # to pay for nothing.
+        if quality == QUALITY_STANDARD and 'fwhm' in asas.colnames:
+            # The survey serves the seeing as text, unlike everything beside it
+            try:
+                fwhm = np.asarray(asas['fwhm'], dtype=float)
+            except (TypeError, ValueError):
+                continue
+
+            usual = np.median(fwhm[here])
+            blurred = here & (fwhm > usual + ASAS_SEEING_MARGIN)
+
+            if np.any(blurred):
+                log(f"Warning: dropping {int(np.sum(blurred))} of those {fn} "
+                    f"points taken in seeing worse than "
+                    f"{usual + ASAS_SEEING_MARGIN:.2f} px, where that "
+                    f"correction fails")
+                good &= ~blurred
+
     for fn in ['g', 'V']:
         idx = asas['phot_filter'] == fn
-        idx_good = idx & (asas['quality'] == 'G') & (asas['mag_err'] < 0.05)
-
-        log(f"  {fn}: {np.sum(idx)} total, {np.sum(idx_good)} good")
+        log(f"  {fn}: {np.sum(idx)} total, {np.sum(idx & good)} kept")
 
     log("Earliest: ", Time(np.min(asas['jd']), format='jd').datetime.strftime('%Y-%m-%s %H:%M:%S'))
     log("  Latest: ", Time(np.max(asas['jd']), format='jd').datetime.strftime('%Y-%m-%s %H:%M:%S'))
@@ -146,9 +258,7 @@ def target_asas(config, basepath=None, verbose=True, show=False):
     with plots.figure_saver(os.path.join(basepath, 'asas_lc.png'), figsize=(12, 4), show=show) as fig:
         ax = fig.add_subplot(1, 1, 1)
 
-        idx = asas['quality'] == 'G'
-        idx &= np.isfinite(asas['mag'])
-        idx &= asas['mag_err'] < 0.05
+        idx = good
 
         idx_V = idx & (asas['phot_filter'] == 'V')
         idx_g = idx & (asas['phot_filter'] == 'g')

@@ -262,9 +262,9 @@ def target_wasp(config, basepath=None, verbose=True, show=False):
             ratio = np.median(wasp['magerr'][idx]) / typical
 
             if ratio > WASP_CAMERA_MAX_ERR_RATIO:
-                log(f"Warning: dropping camera {name} - its {int(np.sum(idx))} "
-                    f"points carry errors {ratio:.0f} times the median for this "
-                    f"star, which is the camera rather than the star")
+                log(f"Warning: dropping camera {name} - {int(np.sum(idx))} "
+                    f"points with errors {ratio:.0f}x this star's median: the "
+                    f"camera, not the star")
                 keep &= ~idx
 
         dropped = not np.all(keep)
