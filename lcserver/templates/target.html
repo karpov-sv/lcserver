@@ -156,7 +156,7 @@
         <span class="text-danger fw-bold">Target is read-only</span>
       {% endif %}
     </div>
-    <div class="mb-4 {% if target.celery_id %}sticky-top bg-white border-bottom pb-2{% endif %}">
+    <div class="mb-4 {% if target.celery_id %}sticky-top bg-body border-bottom pb-2{% endif %}">
       State:
       {% if target.celery_id %}
         <span class="spinner-border spinner-border-sm text-primary" role="status"></span>
