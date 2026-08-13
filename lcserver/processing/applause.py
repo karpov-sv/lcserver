@@ -18,7 +18,35 @@ from stdpipe import plots
 
 from .. import surveys
 from ..surveys import survey_source, get_output_files
-from .utils import cleanup_paths, parse_votable_lenient, cached_votable_query, log_bands, log_conversion
+from .utils import (cleanup_paths, parse_votable_lenient, cached_votable_query,
+                    quality_field, quality_level, log_bands, log_conversion,
+                    QUALITY_STANDARD, QUALITY_RELAXED, QUALITY_PUBLISHED)
+
+
+# What SExtractor found wrong with the image of the star. The deblending bit,
+# 2, is not among these: the plates carrying it measure the star as well as the
+# ones that do not, and on a crowded plate almost everything is deblended.
+APPLAUSE_SEXTRACTOR_BAD = 4 | 8 | 16 | 32   # saturated, truncated, aperture, isophotal
+
+# Beyond this the plate's own estimate of its uncertainty is large enough that
+# the magnitude adds little
+APPLAUSE_MAX_ERROR = 0.3
+
+# What the archive will not vouch for photometrically, from the DR4 schema:
+# phot_range_flags is 0 where the star falls within the range of the plate's
+# calibration stars, and 1 or 2 where it is brighter or fainter than all of
+# them - in which case the magnitude is an extrapolation of the calibration
+# curve rather than a reading from it.
+#
+# phot_calib_flags is deliberately not used. It says whether the star was
+# itself accepted as one of the plate's calibrators, and a star is accepted
+# only where its measured magnitude agrees with the one predicted from Gaia -
+# so keeping the points that carry it would keep exactly the nights the star
+# behaved, and drop the ones it did not. On a variable that is the light curve
+# thrown away and the flat parts kept. Its outlier value is no better: on the
+# eclipsing binary this was checked against, every point it marks is in
+# eclipse.
+APPLAUSE_MAX_NEIGHBOURS = 1
 
 
 @survey_source(
@@ -29,6 +57,13 @@ from .utils import cleanup_paths, parse_votable_lenient, cached_votable_query, l
     log_file='applause.log',
     output_files=['applause.log', 'applause_lc.png', 'applause.vot', 'applause.txt'],
     button_text='Get APPLAUSE lightcurve',
+    form_fields={
+        'applause_quality': quality_field({
+            QUALITY_STANDARD: 'Drop extrapolated, blended and badly imaged plates',
+            QUALITY_RELAXED: 'Drop only what the calibration could not reach',
+            QUALITY_PUBLISHED: 'None - every plate as published',
+        }),
+    },
     help_text='European plate archive (Dec > -30 deg)',
     order=50,
     # Lightcurve metadata
@@ -143,6 +178,54 @@ def target_applause(config, basepath=None, verbose=True, show=False):
 
     if not len(applause):
         return
+
+    quality = quality_level(config, 'applause')
+
+    # Nothing was ever judged here beyond what the query asked for. What the
+    # archive records about each plate falls into two kinds: whether it could
+    # calibrate the star at all, and whether it imaged it cleanly.
+    if quality != QUALITY_PUBLISHED:
+        drop = {}
+
+        # The star lies outside the range of the plate's calibration stars, so
+        # its magnitude is the calibration curve extrapolated rather than read
+        if 'phot_range_flags' in applause.colnames:
+            drop['extrapolated'] = \
+                np.asarray(applause['phot_range_flags'], dtype=float) != 0
+
+        if quality == QUALITY_STANDARD:
+            # Another Gaia source falls in with it: the plate measures both
+            if 'gaiaedr3_neighbors' in applause.colnames:
+                drop['blended'] = (
+                    np.asarray(applause['gaiaedr3_neighbors'], dtype=float)
+                    > APPLAUSE_MAX_NEIGHBOURS)
+
+            # Saturated, truncated, or measured through an incomplete aperture
+            if 'sextractor_flags' in applause.colnames:
+                flags = np.asarray(applause['sextractor_flags'], dtype=float).astype(int)
+                drop['badly imaged'] = (flags & APPLAUSE_SEXTRACTOR_BAD) != 0
+
+            if 'natmag_error' in applause.colnames:
+                drop[f'error > {APPLAUSE_MAX_ERROR:.1f}'] = (
+                    np.asarray(applause['natmag_error'], dtype=float)
+                    > APPLAUSE_MAX_ERROR)
+
+        bad = np.zeros(len(applause), dtype=bool)
+        told = []
+
+        for why, idx in drop.items():
+            if np.any(idx & ~bad):
+                told.append(f"{int(np.sum(idx & ~bad))} {why}")
+            bad |= idx
+
+        if np.any(bad):
+            log(f"Warning: dropping {int(np.sum(bad))} plates: {', '.join(told)}")
+            applause = applause[~bad]
+            log(f"  {len(applause)} plates left")
+
+        if not len(applause):
+            log("Warning: No APPLAUSE plates left at this level of filtering")
+            return
 
     applause['time'] = Time(applause['jd_start'], format='jd')
     applause['mjd'] = applause['time'].mjd
