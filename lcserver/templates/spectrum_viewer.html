@@ -218,11 +218,23 @@
          if (!group.has(spectrum.source_id)) group.set(spectrum.source_id, i);
      });
 
+     const rank = (spectrum) => [
+         // A series the source does not open on is context to whatever it
+         // does open on - the SED's every catalogue under its named few, which
+         // it contains - so it goes underneath rather than over the top of it
+         spectrum.default_visible === false ? 0 : 1,
+         // and measurements go under the curve binned from them
+         spectrum.draw === 'points' ? 0 : 1,
+     ];
+
      return indices.slice().sort((a, b) => {
          const first = group.get(spectra[a].source_id) - group.get(spectra[b].source_id);
 
-         return first || (spectra[a].draw === 'points' ? 0 : 1)
-                       - (spectra[b].draw === 'points' ? 0 : 1);
+         if (first) return first;
+
+         const ra = rank(spectra[a]), rb = rank(spectra[b]);
+
+         return (ra[0] - rb[0]) || (ra[1] - rb[1]);
      });
  }
 
@@ -265,8 +277,15 @@
              type: 'scattergl',
              mode: points ? 'markers' : 'lines',
              name: spectrum.label + (offset ? ` (+${offset})` : ''),
-             hovertemplate: '%{x:.1f} A<br>%{y:.4g}<extra>' + spectrum.label + '</extra>',
+             hovertemplate: '%{x:.1f} A<br>%{y:.4g}'
+                            + (spectrum.comment ? '<br>%{customdata}' : '')
+                            + '<extra>' + spectrum.label + '</extra>',
          };
+
+         // What each point is, for the sources that say. One series can hold
+         // the photometry of forty surveys, and this is how it tells you which
+         // one the cursor is over without a colour and a legend entry apiece.
+         if (spectrum.comment) trace.customdata = spectrum.comment;
 
          // Set, rather than set to undefined: the key existing at all is
          // enough for Plotly to walk into it while working out the defaults,
@@ -406,8 +425,10 @@
              return;
          }
 
-         state = spectra.map(spectrum => ({
-            visible: true,
+         // Shown unless the source says otherwise: everything VizieR has at a
+        // position is worth keeping and not worth opening on
+        state = spectra.map(spectrum => ({
+            visible: spectrum.default_visible !== false,
             weight: (WEIGHT[spectrum.draw] || WEIGHT.line).value,
         }));
 

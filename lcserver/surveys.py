@@ -128,6 +128,11 @@ def survey_source(
     # spectrum, and normalised with the curve they belong to rather than on
     # their own, so that the two sit on top of each other.
     spectrum_points=None,            # glob pattern, drawn as points
+    # Spectra that are there to be reached for rather than read by default.
+    # The SED writes both the catalogues it was told to trust and every
+    # catalogue at the position; the second is the larger and the noisier, and
+    # is worth having without its being the first thing seen.
+    spectrum_hidden=None,            # glob pattern, loaded but unticked
     spectrum_label=None,             # what to call them, if not the short name
     spectrum_color=None,             # a source with one spectrum
     spectrum_palette=None,           # a source with several, told apart by shade
@@ -277,6 +282,7 @@ def survey_source(
             'lc_color_palette': lc_color_palette,
             'spectrum_files': spectrum_files,
             'spectrum_points': spectrum_points,
+            'spectrum_hidden': spectrum_hidden,
             'spectrum_label': spectrum_label,
             'spectrum_color': spectrum_color,
             'spectrum_palette': spectrum_palette,

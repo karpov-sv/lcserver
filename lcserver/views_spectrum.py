@@ -72,7 +72,12 @@ def load_spectrum_data(basepath):
             if not pattern:
                 continue
 
+            unticked = survey_config.get('spectrum_hidden')
+            unticked = set(glob.glob(os.path.join(basepath, unticked))) if unticked else set()
+
             for number, path in enumerate(sorted(glob.glob(os.path.join(basepath, pattern)))):
+                hidden = path in unticked
+
                 try:
                     data = Table.read(path, format='ascii.commented_header')
                 except Exception:
@@ -93,6 +98,13 @@ def load_spectrum_data(basepath):
                          if kind == 'points' and 'flux_error' in data.colnames
                          else None)
 
+                # What each point is, where the source says so. A table of
+                # broadband photometry is a dozen surveys in one series, and
+                # the viewer shows this under the cursor rather than asking
+                # for a colour and a legend entry per survey.
+                comment = (np.asarray(data['comment'], dtype=str)
+                           if 'comment' in data.colnames else None)
+
                 good = np.isfinite(wavelength) & np.isfinite(flux)
 
                 if not np.sum(good):
@@ -100,10 +112,12 @@ def load_spectrum_data(basepath):
 
                 wavelength, flux = wavelength[good], flux[good]
                 error = error[good] if error is not None else None
+                comment = comment[good] if comment is not None else None
 
                 order = np.argsort(wavelength)
                 wavelength, flux = wavelength[order], flux[order]
                 error = error[order] if error is not None else None
+                comment = comment[order] if comment is not None else None
 
                 # Where the spectrum comes in separate pieces - the two arms of a
                 # medium-resolution LAMOST observation are 890 A apart - a null
@@ -128,6 +142,7 @@ def load_spectrum_data(basepath):
 
                 if rest:
                     label += ' ' + rest.strip('_').replace('_', ' ')
+
 
                 # All four sources are now in the one unit, so this is no longer
                 # about units: a spectrum of a fifteenth-magnitude quasar and one
@@ -155,6 +170,10 @@ def load_spectrum_data(basepath):
                     'flux_error': ([float(f'{_:.4g}') if np.isfinite(_) else None
                                     for _ in error]
                                    if error is not None else None),
+                    'comment': ([str(_) for _ in comment]
+                                if comment is not None else None),
+                    # Whether it is shown without being asked for
+                    'default_visible': not hidden,
                     # Indices after which the line should be broken
                     'breaks': [int(_) for _ in breaks],
                     'median': median,
