@@ -15,7 +15,8 @@ from stdpipe import plots
 
 from .. import surveys
 from ..surveys import survey_source, get_output_files
-from .utils import SourceError, cleanup_paths, cached_votable_query, log_bands, log_conversion
+from .utils import (SourceError, cleanup_paths, cached_votable_query,
+                    clip_noisy_points, log_bands, log_conversion)
 
 
 # Largest separation between a V and an Ic measurement still counted as
@@ -174,6 +175,19 @@ def target_kws(config, basepath=None, verbose=True, show=False):
     if not len(kws):
         log("Warning: No valid KWS data points after filtering")
         return
+
+    # The survey quotes a hundredth of a magnitude for most of what it does and
+    # a tenth for the nights it should not have kept, and the difference is
+    # where the points a magnitude and a half off the star sit. Band by band,
+    # as V and Ic are not measured to the same precision, and against what the
+    # band achieved at that brightness rather than against its median, so that
+    # a Mira at minimum is not mistaken for a run of bad nights.
+    clip = clip_noisy_points(kws['mag'], kws['magerr'], kws['filter'],
+                             log=log, group_name='band')
+
+    if np.any(clip):
+        kws = kws[~clip]
+        log(f"{len(kws)} data points left")
 
     # Add time column for plotting
     kws['time_obj'] = Time(kws['mjd'], format='mjd')

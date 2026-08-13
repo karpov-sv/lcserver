@@ -18,7 +18,8 @@ from stdpipe import plots
 
 from .. import surveys
 from ..surveys import survey_source, get_output_files
-from .utils import SourceError, cleanup_paths, cached_votable_query, log_bands, log_conversion
+from .utils import (SourceError, cleanup_paths, cached_votable_query,
+                    clip_noisy_points, log_bands, log_conversion)
 
 
 WASP_SEARCH_URL = 'https://wasp.cerit-sc.cz/search'
@@ -41,15 +42,6 @@ WASP_MJD0 = -2400000.5
 # on either side. A camera holding most of the points cannot exceed the median
 # of a sample it dominates, so this can never empty a light curve.
 WASP_CAMERA_MAX_ERR_RATIO = 5.0
-
-# How far above what its own camera achieved at the same brightness a single
-# point may sit before it is dropped: the bad frame rather than the bad camera
-WASP_POINT_MAX_ERR_RATIO = 5.0
-
-# Brightness bins that comparison is made in, and the fewest points a camera
-# needs before there is anything to bin
-WASP_ERR_BINS = 5
-WASP_ERR_BIN_NMIN = 20
 
 
 def _search(ra, dec, sr, nmin, log):
@@ -100,35 +92,6 @@ def _download_lightcurve(name, log):
 
     # As a list of lines rather than a stream, which the fast reader declines
     return Table.read(res.text.splitlines(), format='ascii.csv')
-
-
-def _typical_error(mag, err):
-    """What one camera's error usually is at each of these brightnesses.
-
-    A point cannot be judged against the camera's median error, as photometry
-    grows less certain the fainter the star is: on a variable that would
-    condemn every measurement of its faint state and leave a light curve that
-    only ever shows the star bright. The comparison is with what the same
-    camera achieved at the same brightness instead, taken as the median error
-    within bins holding equal numbers of points, and held flat beyond the ends.
-    """
-    edges = np.quantile(mag, np.linspace(0, 1, WASP_ERR_BINS + 1))
-    brightness, typical = [], []
-
-    for lo, hi in zip(edges[:-1], edges[1:]):
-        idx = (mag >= lo) & (mag <= hi)
-
-        # A bin of one or two says more about those points than about the
-        # camera, and the bins are quantiles, so a repeated magnitude can
-        # empty one altogether
-        if np.sum(idx) >= 3:
-            brightness.append(np.median(mag[idx]))
-            typical.append(np.median(err[idx]))
-
-    if len(brightness) < 2:
-        return np.full(len(mag), np.median(err))
-
-    return np.interp(mag, brightness, typical)
 
 
 @survey_source(
@@ -301,30 +264,12 @@ def target_wasp(config, basepath=None, verbose=True, show=False):
             wasp = wasp[keep]
             camera = camera[keep]
 
-        # What is left to catch inside a camera is the single bad frame - cloud,
-        # moon, a trail across the star - which the archive reports honestly as
-        # a large error. Judged against what that camera managed at the same
-        # brightness, so that a variable seen in its faint state is not read as
-        # a run of bad measurements.
-        clip = np.zeros(len(wasp), dtype=bool)
-
-        for name in sorted(set(camera)):
-            idx = np.where(camera == name)[0]
-
-            if len(idx) < WASP_ERR_BIN_NMIN:
-                continue
-
-            mag = np.asarray(wasp['mag'])[idx]
-            err = np.asarray(wasp['magerr'])[idx]
-            clip[idx] = err > WASP_POINT_MAX_ERR_RATIO * _typical_error(mag, err)
+        # What is left to catch inside a camera is the single ruined frame,
+        # which the archive reports honestly as a large error
+        clip = clip_noisy_points(wasp['mag'], wasp['magerr'], camera,
+                                 log=log, group_name='camera')
 
         if np.any(clip):
-            counts = ', '.join(
-                f"{name}: {int(np.sum(clip[camera == name]))}"
-                for name in sorted(set(camera)) if np.any(clip[camera == name]))
-            log(f"Warning: dropping {int(np.sum(clip))} points ({counts}) whose "
-                f"errors are more than {WASP_POINT_MAX_ERR_RATIO:.0f} times what "
-                f"their camera managed at the same brightness")
             wasp = wasp[~clip]
             dropped = True
 

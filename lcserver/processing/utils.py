@@ -5,12 +5,114 @@ import glob
 import shutil
 import re
 import requests
+import numpy as np
 import dill as pickle
 from io import BytesIO
 from contextlib import contextmanager
 
 from astropy.io.votable import parse as votable_parse
 from astropy.table import Table
+
+
+# How far above what its own kind achieved at the same brightness a point may
+# sit before it is dropped: a single ruined frame, rather than a survey that
+# is simply less precise than another
+CLIP_MAX_ERR_RATIO = 5.0
+
+# Brightness bins the comparison is made in, and the fewest points a group
+# needs before there is anything to bin
+CLIP_BINS = 5
+CLIP_NMIN = 20
+
+
+def typical_error(mag, err, nbins=CLIP_BINS):
+    """What this photometry's error usually is at each of these brightnesses.
+
+    A point cannot be judged against the median error of the set it belongs
+    to, as photometry grows less certain the fainter the star is: on a
+    variable that would condemn every measurement of its faint state and leave
+    a light curve which only ever shows the star bright. A Mira loses a
+    quarter of its minima that way. The comparison is with what the same
+    camera, or band, or night achieved at the same brightness instead, taken
+    as the median error within bins holding equal numbers of points, and held
+    flat beyond the ends.
+    """
+    edges = np.quantile(mag, np.linspace(0, 1, nbins + 1))
+    brightness, typical = [], []
+
+    for lo, hi in zip(edges[:-1], edges[1:]):
+        idx = (mag >= lo) & (mag <= hi)
+
+        # A bin of one or two says more about those points than about the
+        # instrument, and the bins are quantiles, so a repeated magnitude can
+        # empty one altogether
+        if np.sum(idx) >= 3:
+            brightness.append(np.median(mag[idx]))
+            typical.append(np.median(err[idx]))
+
+    if len(brightness) < 2:
+        return np.full(len(mag), np.median(err))
+
+    return np.interp(mag, brightness, typical)
+
+
+def clip_noisy_points(mag, err, groups=None, log=None, group_name='group',
+                      ratio=CLIP_MAX_ERR_RATIO, nmin=CLIP_NMIN):
+    """Which points are noisier than their own kind manages at that brightness.
+
+    The single ruined frame - cloud, moon, a trail across the star - which a
+    survey reports honestly as a large error. Judged within each group, since
+    what counts as a large error differs between one camera and another, or
+    one band and another, and judged against that group's own error at the
+    same brightness, so that a variable seen faint is not read as a run of bad
+    measurements.
+
+    Parameters
+    ----------
+    mag, err : array
+        The measurements and their quoted uncertainties
+    groups : array, optional
+        What each point was measured with - a camera, a band. Judged as one
+        set when not given.
+    log : callable, optional
+        Told what was dropped, and from where
+    group_name : str
+        What to call a group when saying so
+
+    Returns
+    -------
+    array of bool
+        True where the point should be dropped
+    """
+    mag = np.asarray(mag, dtype=float)
+    err = np.asarray(err, dtype=float)
+    groups = (np.full(len(mag), '') if groups is None
+              else np.asarray(groups).astype(str))
+
+    clip = np.zeros(len(mag), dtype=bool)
+
+    for name in sorted(set(groups)):
+        idx = np.where(groups == name)[0]
+
+        # Too few to say what is usual for them, and dropping any would be
+        # guesswork
+        if len(idx) < nmin:
+            continue
+
+        clip[idx] = err[idx] > ratio * typical_error(mag[idx], err[idx])
+
+    if log is not None and np.any(clip):
+        # Where they fell, unless there was nothing to divide them by
+        named = [f"{name}: {int(np.sum(clip[groups == name]))}"
+                 for name in sorted(set(groups))
+                 if name and np.any(clip[groups == name])]
+
+        log(f"Warning: dropping {int(np.sum(clip))} points"
+            + (f" ({', '.join(named)})" if named else '')
+            + f" whose errors are more than {ratio:.0f} times what their "
+            f"{group_name} managed at the same brightness")
+
+    return clip
 
 
 class SourceError(RuntimeError):
