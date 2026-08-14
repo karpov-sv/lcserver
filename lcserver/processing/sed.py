@@ -349,6 +349,13 @@ def _points(table, entry, ra, dec, sr, log, widths):
     flux = np.asarray(_column(here, 'sed_flux'), dtype=float)
     error = np.asarray(_column(here, 'sed_eflux'), dtype=float)
 
+    # Where each of these was measured, kept alongside what was measured. Two
+    # catalogues agreeing on a flux while disagreeing on where it came from is
+    # the thing worth seeing, and it cannot be seen once the positions are
+    # dropped. Left out of the spectrum files, which are written by column.
+    row_ra = np.asarray(_column(here, '_RAJ2000'), dtype=float)
+    row_dec = np.asarray(_column(here, '_DEJ2000'), dtype=float)
+
     # GHz to Angstrom, and Jansky to a flux per unit wavelength
     wavelength = SED_C / (frequency * 1e9)
 
@@ -380,6 +387,8 @@ def _points(table, entry, ra, dec, sr, log, widths):
         'flux': flambda_from_fnu(flux[good] * SED_JY, wavelength[good]),
         'flux_error': flambda_from_fnu(error[good] * SED_JY, wavelength[good]),
         'filter': filters[good],
+        'ra': row_ra[good],
+        'dec': row_dec[good],
         # Where the point came from, in one column. The viewer shows it when
         # the cursor is over the point, which is how a table of measurements
         # from a dozen surveys says which is which without a dozen colours.
@@ -436,13 +445,238 @@ def _deduplicate(rows, name, log):
     return out
 
 
+def _offsets(row_ra, row_dec, ra, dec):
+    """Where these sit relative to the target, in arcsec east and north."""
+    return (3600.0 * (row_ra - ra) * np.cos(np.deg2rad(dec)),
+            3600.0 * (row_dec - dec))
+
+
+def _position_groups(row_ra, row_dec, dec, tolerance=SED_SAME_SOURCE):
+    """The distinct positions among these rows, as lists of row indices.
+
+    Grouped by the same distance that decides whether two rows of a catalogue
+    are one source, so that what the plot separates and what the photometry
+    separates are the same thing. Greedy and order-dependent, which is enough
+    for telling two objects an arcsecond apart from one object measured twice.
+    """
+    groups, centres = [], []
+
+    for i in range(len(row_ra)):
+        for g, (centre_ra, centre_dec) in enumerate(centres):
+            near = 3600.0 * np.hypot((row_ra[i] - centre_ra)
+                                     * np.cos(np.deg2rad(dec)),
+                                     row_dec[i] - centre_dec)
+            if near <= tolerance:
+                groups[g].append(i)
+                break
+        else:
+            centres.append((row_ra[i], row_dec[i]))
+            groups.append([i])
+
+    return groups, centres
+
+
+def _report_positions(table, found, ra, dec, sr, log):
+    """Say how many distinct objects the reply actually describes.
+
+    The photometry is drawn against wavelength, where a neighbour's flux looks
+    like the target's own with nothing to mark it. Counted here instead: if the
+    rows fall on three positions rather than one, there are three objects here,
+    and what matters then is which of them each catalogue was matched to.
+    """
+    _, row_ra, row_dec = _separations(table, ra, dec)
+
+    groups, centres = _position_groups(row_ra, row_dec, dec)
+
+    tables = np.asarray([str(_) for _ in _column(table, '_tabname')])
+
+    log(f"\n{len(groups)} distinct position(s) among {len(table)} measurements,"
+        f" within {SED_SAME_SOURCE:.1f} arcsec of each other:\n")
+
+    spots = []
+
+    for g, (centre_ra, centre_dec) in enumerate(centres):
+        east, north = _offsets(centre_ra, centre_dec, ra, dec)
+        spots.append((float(np.hypot(east, north)), east, north, groups[g]))
+
+    for distance, east, north, rows in sorted(spots):
+        log(f"  {distance:5.2f} arcsec away"
+            f" ({east:+6.2f}, {north:+6.2f}): {len(rows):4d} measurement(s)"
+            f" from {len(set(tables[np.asarray(rows)]))} catalogue(s)")
+
+    if not found:
+        return
+
+    # Which of those objects the SED was actually built from. Each named
+    # catalogue was matched to its own nearest source, independently of the
+    # others, so nothing has yet required them to agree - and where they do
+    # not, the SED is two objects' photometry drawn as one spectrum.
+    log("\nThe catalogues the SED is built from sit at:\n")
+
+    places = []
+
+    for entry, rows in found:
+        east, north = _offsets(float(np.median(rows['ra'])),
+                               float(np.median(rows['dec'])), ra, dec)
+
+        log(f"  {entry['name']:14s} {np.hypot(east, north):5.2f} arcsec away"
+            f" ({east:+6.2f}, {north:+6.2f})")
+
+        places.append((entry['name'], east, north))
+
+    apart = max((float(np.hypot(a[1] - b[1], a[2] - b[2]))
+                 for a in places for b in places), default=0.0)
+
+    # Judged against the radius searched rather than against SED_SAME_SOURCE.
+    # That half-arcsecond separates two rows of one catalogue, where the same
+    # instrument measured both; between catalogues it means nothing, since they
+    # do not centroid alike - GALEX and AllWISE see with beams several arcsec
+    # across, and will disagree with Gaia by a fraction of one on an object
+    # neither is confused about. Warning at that distance would warn on nearly
+    # every target, which is the same as not warning at all.
+    if apart > sr:
+        log(f"\nWarning: these span {apart:.2f} arcsec, more than the"
+            f" {sr:.1f} arcsec searched - two of them"
+            "\nhave been matched to different objects, and the SED is of both."
+            "\nSee file:sed_positions.png.")
+    elif apart > SED_SAME_SOURCE:
+        log(f"\nThese span {apart:.2f} arcsec. The coarser catalogues do not"
+            " centroid to better than\nthat, so it need not be a second object"
+            " - file:sed_positions.png is where to tell.")
+    else:
+        log(f"\nAll within {apart:.2f} arcsec of each other, so they are one"
+            " object.")
+
+
+def _plot_positions(table, found, ra, dec, sr, basepath, config, log, show=False):
+    """Where every measurement was made, against where the target is.
+
+    The SED itself cannot show this. It is drawn against wavelength, and a
+    point belonging to a neighbour an arcsecond away sits in it looking exactly
+    like one belonging to the target - which is how a blend is read as an
+    infrared excess. Here the same measurements are drawn against the sky
+    instead: everything the service returned in the background, and the points
+    the SED was actually built from over it. One tight knot is one object;
+    several knots are several, and the SED is only as good as which knot the
+    catalogues each landed on.
+    """
+    separation, row_ra, row_dec = _separations(table, ra, dec)
+    east, north = _offsets(row_ra, row_dec, ra, dec)
+
+    # Scaled to the circle, not to the furthest row. The service returns rows
+    # well outside the radius it was asked for, and one of those at eight
+    # arcsec would squeeze everything this plot is about into a thumbprint at
+    # the centre. Rows beyond the circle were never candidates for the SED
+    # anyway; they are simply left off the edge, and counted in the log. Where
+    # the whole field sits well inside the circle there is nothing to see at
+    # that scale either, so then it zooms in instead.
+    inside = separation <= sr
+    spread = (float(np.max(np.abs(np.concatenate([east[inside], north[inside]]))))
+              if np.any(inside) else sr)
+
+    reach = max(spread * 1.6, 0.3) if spread < sr / 3 else sr * 1.15
+
+    with plots.figure_saver(os.path.join(basepath, 'sed_positions.png'),
+                            figsize=(5.5, 5.5), show=show) as fig:
+        ax = fig.add_subplot(1, 1, 1)
+
+        # Everything at the position, including the rows the catalogues were
+        # not matched to - those are the neighbours, and leaving them out would
+        # hide the very thing this plot is for
+        ax.plot(east, north, 'o', ms=7, alpha=0.15, color='#7f8c8d',
+                mew=0, zorder=1,
+                label=f'all measurements ({len(table)})')
+
+        # Drawn large to small, so that catalogues agreeing on a position stay
+        # visible through one another as a bullseye rather than the last one
+        # drawn hiding the rest. Which makes disagreement look like what it is:
+        # the rings come apart.
+        for i, (entry, rows) in enumerate(found):
+            entry_east, entry_north = _offsets(np.asarray(rows['ra'], dtype=float),
+                                               np.asarray(rows['dec'], dtype=float),
+                                               ra, dec)
+
+            ax.plot(entry_east, entry_north, 'o',
+                    ms=12 - 7.0 * i / max(len(found) - 1, 1), alpha=1.0,
+                    color=entry['colour'], mew=0.5, mec='white', zorder=3 + i,
+                    label=entry['name'])
+
+        # The position everything is measured against
+        # ax.plot(0, 0, '+', ms=13, mew=1.5, color='black', zorder=4, label='target')
+
+        # What was asked for. Rows outside it are in the reply because the
+        # service barely honours the radius, and are dropped by the cut made
+        # here - so the circle says which of these points could be taken at all.
+        # Named in the legend only where the view reaches it, a legend entry
+        # for something off the edge of the plot being a puzzle rather than a
+        # help.
+        turn = np.linspace(0, 2 * np.pi, 200)
+        ax.plot(sr * np.cos(turn), sr * np.sin(turn), '--', lw=1,
+                color='#7f8c8d', alpha=0.6, zorder=2,
+                label=f'search radius, {sr:.1f}"' if reach >= sr else None)
+
+        ax.set_xlim(reach, -reach)  # east to the left, as the sky is drawn
+        ax.set_ylim(-reach, reach)
+        ax.set_aspect('equal')
+        ax.grid(alpha=0.2)
+        # Below the field rather than in it: the points are about the centre,
+        # where every corner a legend could take is somewhere a neighbour might
+        # be, and a neighbour hidden by the legend is the one thing this plot
+        # must not do
+        ax.legend(fontsize=8, ncol=3, loc='upper center',
+                  bbox_to_anchor=(0.5, -0.12), frameon=False)
+        ax.set_xlabel(r'$\Delta$RA $\cos\delta$, arcsec  (east left)')
+        ax.set_ylabel(r'$\Delta$Dec, arcsec')
+        ax.set_title(f"{config['target_name']} - where the photometry is")
+
+    log("Positions plotted in file:sed_positions.png")
+
+
+def _gaia_xp(basepath, log):
+    """The Gaia XP spectrum, where the info step left one.
+
+    Drawn under the SED as a reference: it is a measured spectrum over the
+    optical, in the same units, and the broadband points ought to lie along it.
+    Where they do not, either the photometry belongs to something else or the
+    object varies between the epochs the two were taken at.
+    """
+    path = os.path.join(basepath, 'gaia_xp.vot')
+
+    if not os.path.exists(path):
+        return None
+
+    try:
+        xp = Table.read(path)
+    except Exception as e:
+        # Never fatal: the SED is the point of this step, and the reference
+        # curve is worth none of it
+        log(f"Cannot read the Gaia XP spectrum ({type(e).__name__}),"
+            " leaving it off the plot")
+        return None
+
+    if 'wavelength' not in xp.colnames or 'flux' not in xp.colnames:
+        return None
+
+    wavelength = np.asarray(xp['wavelength'], dtype=float)
+    flux = np.asarray(xp['flux'], dtype=float)
+
+    # Both axes are logarithmic, where a flux that came out negative at the
+    # noisy end of the spectrum has nowhere to be drawn
+    good = np.isfinite(wavelength) & np.isfinite(flux) & (wavelength > 0) & (flux > 0)
+
+    if not np.any(good):
+        return None
+
+    return wavelength[good], flux[good]
+
+
 @survey_source(
     name='Catalogue SED',
     short_name='SED',
     state_acquiring='acquiring catalogue photometry',
     state_acquired='catalogue SED acquired',
     log_file='sed.log',
-    output_files=['sed.log', 'sed.png', 'sed*.vot', 'sed*.txt'],
+    output_files=['sed.log', 'sed*.png', 'sed*.vot', 'sed*.txt'],
     button_text='Get catalogue SED',
     form_fields={
         'sed_sr': {
@@ -462,6 +696,8 @@ def _deduplicate(rows, name, log):
     spectrum_palette=['#16a085', '#7f8c8d'],
     template_layout='complex',
     main_plot='sed.png',
+    # Where the photometry came from on the sky, which the SED cannot show
+    additional_plots=['sed_positions.png'],
 )
 def target_sed(config, basepath=None, verbose=True, show=False):
     """
@@ -583,6 +819,10 @@ def target_sed(config, basepath=None, verbose=True, show=False):
     log("\nfluxes per unit wavelength, in erg/s/cm2/A")
     log("widths are the effective width of the band, VizieR's own")
 
+    log("\n---- Where the photometry is ----")
+
+    _report_positions(table, found, ra, dec, sr, log)
+
     # Two tables of the same shape: the named catalogues, and every catalogue
     # at the position. One row per measurement, and a column saying which
     # survey and which band it came from - which is what lets the second file
@@ -606,6 +846,17 @@ def target_sed(config, basepath=None, verbose=True, show=False):
                             figsize=(9, 5), show=show) as fig:
         ax = fig.add_subplot(1, 1, 1)
 
+        # Underneath, where it is something to read the points against rather
+        # than another series among them. In the blue Gaia's synthetic
+        # photometry is drawn in, those points being this same spectrum
+        # summarised into bands.
+        xp = _gaia_xp(basepath, log)
+
+        if xp is not None:
+            xp_wavelength, xp_flux = xp
+            ax.plot(xp_wavelength / 1e4, xp_flux, '-', lw=1, alpha=0.4,
+                    color='#2980b9', zorder=1, label='Gaia XP')
+
         for entry, rows in found:
             error = np.asarray(rows['flux_error'], dtype=float)
             band = np.asarray(rows['bandwidth'], dtype=float)
@@ -628,3 +879,5 @@ def target_sed(config, basepath=None, verbose=True, show=False):
         ax.set_title(f"{config['target_name']} - catalogue SED")
 
     log("Plotted in file:sed.png")
+
+    _plot_positions(table, found, ra, dec, sr, basepath, config, log, show=show)
