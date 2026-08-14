@@ -204,7 +204,7 @@
  // points are subordinate to anything - what puts a curve over its own
  // measurements is the order they are drawn in, not their weight.
  const WEIGHT = {
-     points: {value: 4, step: 0.5, min: 0.5, max: 20, label: 'Size'},
+     points: {value: 6, step: 0.5, min: 0.5, max: 20, label: 'Size'},
      line:   {value: 1, step: 0.5, min: 0.5, max: 10, label: 'Width'},
  };
 
@@ -350,7 +350,7 @@
              if (bars) {
                  trace.error_y = {
                      type: 'data', array: bars, visible: true,
-                     color: colour, thickness: 1, width: 0,
+                     color: colour, thickness: 0.5, width: 0,
                  };
              }
 
@@ -359,7 +359,7 @@
              if (spread) {
                  trace.error_x = {
                      type: 'data', array: spread, visible: true,
-                     color: colour, thickness: 1, width: 0,
+                     color: colour, thickness: 0.5, width: 0,
                  };
              }
          } else {
@@ -386,6 +386,17 @@
 
      const within = (from, to) => from <= high && to >= low;
 
+     const logx = document.getElementById('logx-check').checked;
+
+     // A shape and an annotation do not read a log axis the same way. Plotly
+     // places a shape from the wavelength itself and works the logarithm out,
+     // but expects an annotation to have been given the logarithm already - so
+     // a label handed 6562.8 is placed at ten to the 6562.8, off past any
+     // range there could be, and is silently not drawn. Which is why the lines
+     // kept their dotted markers and lost their names when this viewer began
+     // opening on a log wavelength axis.
+     const annx = wavelength => logx ? Math.log10(wavelength) : wavelength;
+
      if (document.getElementById('telluric-check').checked) {
          telluric.filter(band => within(band.from, band.to)).forEach(band => {
              shapes.push({
@@ -404,7 +415,7 @@
                  line: {color: '#999', width: 1, dash: 'dot'}, layer: 'below',
              });
              annotations.push({
-                 x: line.wavelength, y: 1, xref: 'x', yref: 'paper',
+                 x: annx(line.wavelength), y: 1, xref: 'x', yref: 'paper',
                  text: line.label, showarrow: false, textangle: -90,
                  xanchor: 'left', yanchor: 'top',
                  font: {size: 9, color: '#999'},
@@ -429,7 +440,7 @@
              // also accept, which Plotly 3 dropped along with the rest of what
              // it had been deprecating - given the string, it labels nothing
              title: {text: 'Wavelength, A'},
-             type: document.getElementById('logx-check').checked ? 'log' : 'linear',
+             type: logx ? 'log' : 'linear',
              showgrid: true, gridcolor: 'rgba(128,128,128,0.2)',
          },
          yaxis: {
