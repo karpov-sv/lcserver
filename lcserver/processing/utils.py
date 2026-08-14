@@ -416,6 +416,22 @@ def parse_votable_lenient(xml_content):
     return votable.get_first_table().to_table()
 
 
+def shared_cache_dir(basepath):
+    """Where something the same for every target is kept.
+
+    Beside the per-target caches rather than inside one of them: a table that
+    describes the surveys rather than the position - VizieR's list of filters
+    is the only one so far - does not belong to whichever target happened to
+    be the first to want it, and copying it into each would be a few hundred
+    kilobytes per target of the identical thing.
+
+    Derived from the target's own path so that nothing here has to know the
+    Django settings: targets/{id}/ has targets/ above it, and the shared cache
+    sits there. It therefore follows TARGETS_PATH wherever it points.
+    """
+    return os.path.join(os.path.dirname(os.path.abspath(basepath)), 'cache')
+
+
 @contextmanager
 def cached_votable_query(cache_name, basepath, log, description, refresh=False):
     """Context manager for cached VOTable queries.

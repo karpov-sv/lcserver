@@ -13,7 +13,9 @@ effective wavelength. That conversion is the whole reason for using it. Done
 here it would mean a table of zero points and effective wavelengths for every
 filter of every catalogue, maintained by hand and wrong in the places nobody
 looked; VizieR keeps that table for the whole of its holdings, and the filters
-are named in the reply.
+are named in the reply. The same table, fetched separately, says how wide each
+band is, which is the difference between drawing these as points and drawing
+them as what they are - a flux averaged across a range of wavelength.
 
 What it does not do is choose. The reply is everything at the position - two
 hundred rows over sixty catalogues for an ordinary star, several of them the
@@ -30,13 +32,14 @@ import numpy as np
 import requests
 
 from astropy.table import Table, vstack
+from astroquery.vizier import Vizier
 
 # STDPipe
 from stdpipe import plots
 
 from ..surveys import survey_source, get_output_files
 from .utils import (SourceError, cleanup_paths, cached_votable_query,
-                    flambda_from_fnu, write_spectrum)
+                    flambda_from_fnu, shared_cache_dir, write_spectrum)
 
 
 # VizieR's SED service, which its photometry viewer is a page around
@@ -89,6 +92,139 @@ SED_JY = 1e6
 
 # Speed of light in Angstrom/s, the service quoting frequencies in GHz
 SED_C = 2.99792458e18
+
+# VizieR's own two tables of the filters it quotes: METAfltr is one row per
+# filter, with the effective wavelength and the effective width; METAphot names
+# the photometric systems those filters belong to. The pair is what the SED
+# service itself works from, and joining them gives back exactly the
+# designations it puts in sed_filter - 'photoSystem:filterName', which is
+# METAphot's name and METAfltr's filter with a colon between.
+#
+# The alternative was the SVO filter profile service, which has these widths
+# and more besides. It was not taken: its identifiers are not VizieR's, so half
+# the bands would need an alias table maintained here by hand, and every band
+# would rest on a second service being up. This way the widths come from the
+# same place as the wavelengths they belong to, in one query, and agree with
+# them by construction - lambda0 here and the wavelength derived from sed_freq
+# differ by under 1.5 per cent across every band of every target tried, which
+# is why the width can simply be hung on the wavelength the reply gave.
+SED_FILTER_TABLES = ('METAphot', 'METAfltr')
+
+# The join of those two, kept as the one small table it reduces to. Cached
+# whole and shared between targets, being the same table for all of them; the
+# name carries what is in it, so that changing what is kept means a new file
+# rather than a stale one read as the new thing.
+SED_FILTER_CACHE = 'vizier_filter_widths.vot'
+
+# And held in the process as well, since every target wants the same four
+# thousand rows and reading them off disk for each is work for nothing
+_filter_widths_cache = None
+
+
+def _filled(column):
+    """A column as plain floats, whatever it left unset becoming a nan."""
+    return np.asarray(column.filled(np.nan) if hasattr(column, 'filled')
+                      else column, dtype=float)
+
+
+def _fetch_filter_widths(log):
+    """VizieR's filter table, as designation and width in Angstrom."""
+    log("Querying VizieR for its filter table (METAphot and METAfltr)...")
+
+    vizier = Vizier(columns=['**'], row_limit=-1)
+
+    systems = vizier.get_catalogs(SED_FILTER_TABLES[0])[0]
+    filters = vizier.get_catalogs(SED_FILTER_TABLES[1])[0]
+
+    names = dict(zip(np.asarray(systems['photid'], dtype=int),
+                     [str(_).strip() for _ in systems['name']]))
+
+    # Filled rather than read row by row: a few hundred filters have no width
+    # given, and converting a masked element one at a time is a warning apiece
+    # for something this expects and drops
+    band_width = _filled(filters['dlambda'])
+
+    designation, width = [], []
+
+    for photid, band, this in zip(np.asarray(filters['photid'], dtype=int),
+                                  [str(_).strip() for _ in filters['filter']],
+                                  band_width * 1e4):  # microns to Angstrom
+        system = names.get(photid, '')
+
+        if not system or not band or not np.isfinite(this) or this <= 0:
+            continue
+
+        designation.append(f'{system}:{band}')
+        width.append(this)
+
+    if not designation:
+        raise SourceError("VizieR's filter table came back with nothing usable")
+
+    return Table({'filter': np.array(designation), 'width': np.array(width)})
+
+
+def _filter_widths(basepath, log, refresh=False):
+    """How wide each band is, keyed as the SED service names it.
+
+    Never fatal: a target whose photometry is in hand is not worth failing
+    over the width of the bands it was measured in, so anything going wrong
+    here leaves the SED to be drawn without them.
+    """
+    global _filter_widths_cache
+
+    if _filter_widths_cache is not None and not refresh:
+        return _filter_widths_cache
+
+    path = os.path.join(shared_cache_dir(basepath), SED_FILTER_CACHE)
+
+    table = None
+
+    if os.path.exists(path) and not refresh:
+        try:
+            table = Table.read(path)
+            log(f"Loading VizieR's filter table from cache ({SED_FILTER_CACHE})")
+        except Exception as e:
+            # The class of it and not the message: astropy answers an
+            # unreadable table with its whole list of supported formats
+            log(f"Cannot read the cached filter table ({type(e).__name__}),"
+                " asking VizieR again")
+
+    if table is None:
+        try:
+            table = _fetch_filter_widths(log)
+        except Exception as e:
+            log(f"\nWarning: cannot get VizieR's filter table ({e})"
+                " - the SED will be drawn without band widths")
+            _filter_widths_cache = {}
+            return _filter_widths_cache
+
+        # Written where it lands rather than in place: several targets are
+        # acquired at once, and two of them finding the cache missing at the
+        # same moment would otherwise leave each other half a file to read
+        try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            temporary = f'{path}.{os.getpid()}.tmp'
+            table.write(temporary, format='votable', overwrite=True)
+            os.replace(temporary, path)
+            log(f"Cached VizieR's filter table to {SED_FILTER_CACHE}")
+        except Exception as e:
+            log(f"Cannot cache the filter table ({e}), which is not fatal")
+
+    # First of a designation wins. Thirty-seven of four thousand are given
+    # twice - narrow-band HST and Gemini filters, mostly the same number twice
+    # over, and none of them a band any catalogue here reports in.
+    widths = {}
+
+    for name, this in zip(np.asarray(table['filter'], dtype=str),
+                          np.asarray(table['width'], dtype=float)):
+        if np.isfinite(this) and this > 0:
+            widths.setdefault(str(name), float(this))
+
+    log(f"{len(widths)} filters have a width")
+
+    _filter_widths_cache = widths
+
+    return widths
 
 
 def _column(table, *names):
@@ -179,7 +315,7 @@ def _one_source(table, rows, ra, dec, sr, log, name):
     return rows[together], float(separation[nearest])
 
 
-def _points(table, entry, ra, dec, sr, log):
+def _points(table, entry, ra, dec, sr, log, widths):
     """One catalogue's photometry at the target, as wavelength and flux."""
     tables = np.asarray([str(_) for _ in _column(table, '_tabname')])
     rows = np.where(tables == entry['table'])[0]
@@ -226,8 +362,21 @@ def _points(table, entry, ra, dec, sr, log):
     # carried as absent so that nothing draws it as a point beyond doubt
     error = np.where(np.isfinite(error) & (error > 0), error, np.nan)
 
+    # How wide the band is, where VizieR's filter table names it. A broadband
+    # point is not a measurement at a wavelength but one across a range of
+    # them, and the ranges are not small next to the spacing - W3 is five and a
+    # half microns wide, half the wavelength it sits at, and drawn as a dot it
+    # claims a precision in wavelength that nothing about it has. Carried as
+    # the full effective width, the same as SPHEREx carries its own, and halved
+    # by whatever draws the bar.
+    #
+    # A band the table does not have gets no width rather than a guessed one,
+    # and is drawn as a plain point.
+    bandwidth = np.array([widths.get(str(_), np.nan) for _ in filters])
+
     rows = Table({
         'wavelength': wavelength[good],
+        'bandwidth': bandwidth[good],
         'flux': flambda_from_fnu(flux[good] * SED_JY, wavelength[good]),
         'flux_error': flambda_from_fnu(error[good] * SED_JY, wavelength[good]),
         'filter': filters[good],
@@ -358,13 +507,17 @@ def target_sed(config, basepath=None, verbose=True, show=False):
     log(f"\n{len(table)} measurements at this position, from"
         f" {len(everything)} catalogues")
 
+    log("\n---- Band widths ----\n")
+
+    widths = _filter_widths(basepath, log, refresh_cache)
+
     # The named few, which is what the SED normally means here
     log("\n---- The catalogues taken ----\n")
 
     found = []
 
     for entry in SED_CATALOGUES:
-        got = _points(table, entry, ra, dec, sr, log)
+        got = _points(table, entry, ra, dec, sr, log, widths)
 
         if got is None:
             log(f"  {entry['name']:12s} nothing")
@@ -391,7 +544,7 @@ def target_sed(config, basepath=None, verbose=True, show=False):
             continue
 
         got = _points(table, {'table': name, 'name': name}, ra, dec, sr,
-                      lambda *args, **kwargs: None)
+                      lambda *args, **kwargs: None, widths)
 
         if got is not None:
             rest.append(got[0])
@@ -411,7 +564,8 @@ def target_sed(config, basepath=None, verbose=True, show=False):
         complete.sort('wavelength')
 
     log("\n---- Photometry ----\n")
-    log(f"{'catalogue and band':32s} {'lambda, um':>11s} {'flux':>12s} {'error':>11s}")
+    log(f"{'catalogue and band':32s} {'lambda, um':>11s} {'width, um':>10s}"
+        f" {'flux':>12s} {'error':>11s}")
 
     for row in (curated if curated is not None else complete):
         error = float(row['flux_error'])
@@ -420,16 +574,20 @@ def target_sed(config, basepath=None, verbose=True, show=False):
         # rather than as a number that is not there
         shown = f"{error:11.4g}" if np.isfinite(error) else f"{'-':>11s}"
 
+        band = float(row['bandwidth'])
+        wide = f"{band / 1e4:10.4f}" if np.isfinite(band) else f"{'-':>10s}"
+
         log(f"{str(row['comment']):32s} {float(row['wavelength']) / 1e4:11.4f}"
-            f" {float(row['flux']):12.5g} {shown}")
+            f" {wide} {float(row['flux']):12.5g} {shown}")
 
     log("\nfluxes per unit wavelength, in erg/s/cm2/A")
+    log("widths are the effective width of the band, VizieR's own")
 
     # Two tables of the same shape: the named catalogues, and every catalogue
     # at the position. One row per measurement, and a column saying which
     # survey and which band it came from - which is what lets the second file
     # hold a hundred points from forty surveys and still be read.
-    columns = ['wavelength', 'flux', 'flux_error', 'comment']
+    columns = ['wavelength', 'bandwidth', 'flux', 'flux_error', 'comment']
 
     if curated is not None:
         write_spectrum(curated[columns], basepath, 'sed')
@@ -450,10 +608,14 @@ def target_sed(config, basepath=None, verbose=True, show=False):
 
         for entry, rows in found:
             error = np.asarray(rows['flux_error'], dtype=float)
+            band = np.asarray(rows['bandwidth'], dtype=float)
 
             ax.errorbar(np.asarray(rows['wavelength']) / 1e4,
                         np.asarray(rows['flux']),
                         np.where(np.isfinite(error), error, 0.0),
+                        # Half the width to either side, so that the bar spans
+                        # the band. In microns, as the axis is.
+                        xerr=np.where(np.isfinite(band), band, 0.0) / 2e4,
                         fmt='o', ms=5, lw=1, capsize=0, color=entry['colour'],
                         label=entry['name'])
 

@@ -114,6 +114,15 @@ def load_spectrum_data(basepath):
                          if kind == 'points' and 'flux_error' in data.colnames
                          else None)
 
+                # How wide the band is, for the sources whose points are bands
+                # rather than samples: the catalogue SED, whose W3 point covers
+                # five and a half microns, and SPHEREx, whose every exposure is
+                # a channel of finite width. Carried as the full width, and
+                # halved by the viewer into a bar reaching that far either way.
+                band = (np.asarray(data['bandwidth'], dtype=float)
+                        if kind == 'points' and 'bandwidth' in data.colnames
+                        else None)
+
                 # What each point is, where the source says so. A table of
                 # broadband photometry is a dozen surveys in one series, and
                 # the viewer shows this under the cursor rather than asking
@@ -128,11 +137,13 @@ def load_spectrum_data(basepath):
 
                 wavelength, flux = wavelength[good], flux[good]
                 error = error[good] if error is not None else None
+                band = band[good] if band is not None else None
                 comment = comment[good] if comment is not None else None
 
                 order = np.argsort(wavelength)
                 wavelength, flux = wavelength[order], flux[order]
                 error = error[order] if error is not None else None
+                band = band[order] if band is not None else None
                 comment = comment[order] if comment is not None else None
 
                 # Where the spectrum comes in separate pieces - the two arms of a
@@ -186,6 +197,9 @@ def load_spectrum_data(basepath):
                     'flux_error': ([float(f'{_:.4g}') if np.isfinite(_) else None
                                     for _ in error]
                                    if error is not None else None),
+                    'bandwidth': ([round(float(_), 3) if np.isfinite(_) else None
+                                   for _ in band]
+                                  if band is not None else None),
                     'comment': ([str(_) for _ in comment]
                                 if comment is not None else None),
                     # Whether it is shown without being asked for

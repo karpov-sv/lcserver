@@ -8,7 +8,7 @@
 
 {% block head %}
 <!-- Plotly.js -->
-<script src="https://cdn.plot.ly/plotly-2.27.0.min.js" charset="utf-8"></script>
+<script src="https://cdn.plot.ly/plotly-3.7.0.min.js" charset="utf-8"></script>
 
 <style>
 .control-panel {
@@ -680,17 +680,17 @@ function updatePlot() {
                 font: { size: 18 }
             },
             xaxis: isPhaseFolded ? {
-                title: `Phase (P = ${phasePeriod.toFixed(6)} days, T₀ = ${phaseEpoch.toFixed(2)} MJD)`,
+                title: {text: `Phase (P = ${phasePeriod.toFixed(6)} days, T₀ = ${phaseEpoch.toFixed(2)} MJD)`},
                 gridcolor: '#e0e0e0',
                 range: [-0.6, 1.6],
                 zeroline: false,
             } : {
-                title: useMJDMode ? 'Modified Julian Date (MJD)' : 'Universal Time (UT)',
+                title: {text: useMJDMode ? 'Modified Julian Date (MJD)' : 'Universal Time (UT)'},
                 gridcolor: '#e0e0e0',
                 zeroline: false,
             },
             yaxis: {
-                title: yAxisTitle,
+                title: {text: yAxisTitle},
                 autorange: isMagnitudeMode ? 'reversed' : true,  // Inverted for magnitudes, normal for flux
                 gridcolor: '#e0e0e0',
                 zeroline: false,
@@ -771,12 +771,12 @@ function updatePlot() {
                 font: { size: 18 }
             },
             xaxis: isPhaseFolded ? {
-                title: `Phase (P = ${phasePeriod.toFixed(6)} days, T₀ = ${phaseEpoch.toFixed(2)} MJD)`,
+                title: {text: `Phase (P = ${phasePeriod.toFixed(6)} days, T₀ = ${phaseEpoch.toFixed(2)} MJD)`},
                 gridcolor: '#e0e0e0',
                 range: [-0.6, 1.6],
                 zeroline: false,
             } : {
-                title: useMJDMode ? 'Modified Julian Date (MJD)' : 'Universal Time (UT)',
+                title: {text: useMJDMode ? 'Modified Julian Date (MJD)' : 'Universal Time (UT)'},
                 gridcolor: '#e0e0e0',
                 // Preserve current range if it exists (only in time mode)
                 range: currentLayout.xaxis.range,
@@ -784,7 +784,7 @@ function updatePlot() {
                 zeroline: false,
             },
             yaxis: {
-                title: yAxisTitle,
+                title: {text: yAxisTitle},
                 gridcolor: '#e0e0e0',
                 // Preserve current range if it exists
                 range: currentLayout.yaxis.range,

@@ -5,7 +5,7 @@
 {% block title %}Spectra{% endblock %}
 
 {% block head %}
-<script src="https://cdn.plot.ly/plotly-2.27.0.min.js" charset="utf-8"></script>
+<script src="https://cdn.plot.ly/plotly-3.7.0.min.js" charset="utf-8"></script>
 
 <style>
 .control-panel {
@@ -36,6 +36,20 @@
     margin-right: 0.5rem;
     border: 1px solid var(--bs-border-color);
     flex: 0 0 auto;
+    cursor: pointer;
+    position: relative;
+    overflow: hidden;
+}
+
+/* The picker itself, laid over the swatch and invisible: what is clicked is
+   the colour the series is drawn in, which is the swatch, and the browser's
+   own dialogue is what opens on it. As the light curve viewer does it. */
+.spectrum-swatch input[type="color"] {
+    position: absolute;
+    width: 100%;
+    height: 100%;
+    opacity: 0;
+    cursor: pointer;
 }
 
 .spectrum-label {
@@ -140,6 +154,19 @@
   </div>
 
   <div id="spectrum-controls"></div>
+
+  <div class="mt-3">
+    <button class="btn btn-sm btn-outline-primary me-2" onclick="resetControls()"
+            title="Back to the colours and weights each source came with, and to the series it opens on">
+      <i class="fa fa-refresh"></i> Reset Controls
+    </button>
+    <button class="btn btn-sm btn-outline-primary me-2" onclick="enableAll()">
+      <i class="fa fa-check-square-o"></i> Enable All
+    </button>
+    <button class="btn btn-sm btn-outline-primary" onclick="disableAll()">
+      <i class="fa fa-square-o"></i> Disable All
+    </button>
+  </div>
 </div>
 
 <div id="plotly-container" style="width: 100%; height: 620px; display: none;"></div>
@@ -212,6 +239,15 @@
      const scale = normalised ? Math.abs(spectrum.median) : 1;
 
      return spectrum.flux_error.map(e => (e === null ? 0 : e / scale));
+ }
+
+ // How far each point reaches along the wavelength axis. Nothing scales this:
+ // a band is as wide as it is whatever the fluxes were divided by, and the
+ // axis it is drawn against is the one the file was written in.
+ function widths(spectrum) {
+     if (!spectrum.bandwidth) return null;
+
+     return spectrum.bandwidth.map(w => (w === null ? 0 : w / 2));
  }
 
  // The order the legend and the list both show, and the order the traces are
@@ -303,19 +339,31 @@
          // enough for Plotly to walk into it while working out the defaults,
          // and it reads an undefined container as an error rather than as an
          // absent one
+         // The colour the reader chose, or the one the source came with
+         const colour = state[i].color;
+
          if (points) {
-             trace.marker = {color: spectrum.color, size: state[i].weight};
+             trace.marker = {color: colour, size: state[i].weight};
 
              const bars = errors(spectrum);
 
              if (bars) {
                  trace.error_y = {
                      type: 'data', array: bars, visible: true,
-                     color: spectrum.color, thickness: 1, width: 0,
+                     color: colour, thickness: 1, width: 0,
+                 };
+             }
+
+             const spread = widths(spectrum);
+
+             if (spread) {
+                 trace.error_x = {
+                     type: 'data', array: spread, visible: true,
+                     color: colour, thickness: 1, width: 0,
                  };
              }
          } else {
-             trace.line = {color: spectrum.color, width: state[i].weight};
+             trace.line = {color: colour, width: state[i].weight};
          }
 
          traces.push(trace);
@@ -377,13 +425,16 @@
      Plotly.react('plotly-container', traces, {
          margin: {l: 60, r: 20, t: 30, b: 50},
          xaxis: {
-             title: 'Wavelength, A',
+             // An axis title is {text: ...} and not the bare string it used to
+             // also accept, which Plotly 3 dropped along with the rest of what
+             // it had been deprecating - given the string, it labels nothing
+             title: {text: 'Wavelength, A'},
              type: document.getElementById('logx-check').checked ? 'log' : 'linear',
              showgrid: true, gridcolor: 'rgba(128,128,128,0.2)',
          },
          yaxis: {
-             title: scaling === 'normalised'
-                    ? 'Flux / median' : 'Flux, erg s\u207b\u00b9 cm\u207b\u00b2 \u00c5\u207b\u00b9',
+             title: {text: scaling === 'normalised'
+                     ? 'Flux / median' : 'Flux, erg s\u207b\u00b9 cm\u207b\u00b2 \u00c5\u207b\u00b9'},
              type: document.getElementById('log-check').checked ? 'log' : 'linear',
              showgrid: true, gridcolor: 'rgba(128,128,128,0.2)',
          },
@@ -410,7 +461,10 @@
          const weight = WEIGHT[spectrum.draw] || WEIGHT.line;
 
          row.innerHTML = `
-           <div class="spectrum-swatch" style="background:${spectrum.color}"></div>
+           <div class="spectrum-swatch" id="swatch-${i}" style="background:${state[i].color}"
+                title="The colour this series is drawn in">
+             <input type="color" id="color-${i}" value="${state[i].color}">
+           </div>
            <label class="spectrum-label" for="vis-${i}">${spectrum.label}</label>
            <span class="spectrum-info">${spectrum.n_points} points</span>
            <span class="spectrum-info">${spectrum.wavelength_min.toFixed(0)} - ${spectrum.wavelength_max.toFixed(0)} A</span>
@@ -434,7 +488,54 @@
              state[i].weight = parseFloat(e.target.value) || weight.value;
              redraw();
          });
+
+         // On change and not on input: a colour dialogue reports every shade
+         // the pointer crosses on its way to the one being chosen, and each
+         // would rebuild every trace on the plot.
+         row.querySelector(`#color-${i}`).addEventListener('change', e => {
+             state[i].color = e.target.value;
+             row.querySelector(`#swatch-${i}`).style.background = e.target.value;
+             redraw();
+         });
      });
+ }
+
+ // Everything back to what the sources themselves said: the colour each was
+ // given, the weight its kind of series is drawn at, and which of them the
+ // page opens on - so a source that is loaded but not opened on, the SED's
+ // every catalogue under its named few, goes back to being unticked rather
+ // than being left on because it once was.
+ //
+ // The rows are rebuilt rather than each control set back one by one, there
+ // being no state in them beyond what has just been restored.
+ function resetControls() {
+     spectra.forEach((spectrum, i) => {
+         state[i].visible = spectrum.default_visible !== false;
+         state[i].weight = (WEIGHT[spectrum.draw] || WEIGHT.line).value;
+         state[i].color = spectrum.color;
+     });
+
+     buildControls();
+     redraw();
+ }
+
+ // Where the two beside it only say what to show, and leave the colours and
+ // the weights as the reader set them
+ function showAll(visible) {
+     spectra.forEach((spectrum, i) => {
+         state[i].visible = visible;
+         document.getElementById(`vis-${i}`).checked = visible;
+     });
+
+     redraw();
+ }
+
+ function enableAll() {
+     showAll(true);
+ }
+
+ function disableAll() {
+     showAll(false);
  }
 
  fetch(`/targets/{{ target_id }}/spectrum_data/`)
@@ -456,6 +557,7 @@
         state = spectra.map(spectrum => ({
             visible: spectrum.default_visible !== false,
             weight: (WEIGHT[spectrum.draw] || WEIGHT.line).value,
+            color: spectrum.color,
         }));
 
          document.getElementById('control-panel').style.display = 'block';
