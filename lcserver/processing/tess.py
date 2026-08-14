@@ -11,13 +11,12 @@ from astropy.coordinates import SkyCoord
 from astropy import units as u
 from astropy.time import Time
 
-import lightkurve as lk
-
 # STDPipe
 from stdpipe import plots
 
 from ..surveys import survey_source, get_output_files
-from .utils import (cleanup_paths, drop_mast_downloads, mast_download_dir,
+from .utils import (cleanup_paths, cached_lightkurve_search,
+                    drop_mast_downloads, mast_download_dir,
                     mission_quality_mask, log_quality, quality_field,
                     quality_level,
                     QUALITY_STANDARD, QUALITY_RELAXED, QUALITY_PUBLISHED)
@@ -90,9 +89,12 @@ def target_tess(config, basepath=None, verbose=True, show=False):
     # Simple wrapper around print for logging in verbose mode only
     log = (verbose if callable(verbose) else print) if verbose else lambda *args,**kwargs: None
 
-    # TESS caches through lightkurve, which skips whatever it has already
-    # downloaded. The flag is read rather than consumed - see the other sources.
-    if config.get('refresh_cache', False):
+    # Two caches here: the search below, kept as a VOTable like every other
+    # source's query, and the files themselves, which lightkurve skips if it
+    # has them already. The flag is read rather than consumed - see the other
+    # sources - and drops both.
+    refresh_cache = bool(config.get('refresh_cache', False))
+    if refresh_cache:
         drop_mast_downloads(basepath, 'tess', log)
 
     # Cleanup stale plots
@@ -109,10 +111,18 @@ def target_tess(config, basepath=None, verbose=True, show=False):
     author = str(config.get('tess_author', 'auto'))
     authors = TESS_AUTHORS if author == 'auto' else [author]
 
+    ra, dec = config.get('target_ra'), config.get('target_dec')
+
     log(f"Requesting TESS data for {config['target_name']} within {tess_sr:.1f} arcsec"
         + ("" if author == 'auto' else f", from {author} only"))
 
-    res = lk.search_lightcurve(SkyCoord(config.get('target_ra'), config.get('target_dec'), unit='deg'), radius=tess_sr*u.arcsec, mission='TESS')
+    # The pipeline is chosen below, among what was found, so it is no part of
+    # the search and every choice of it shares the one cache
+    cache_name = f"tess_search_{ra:.4f}_{dec:.4f}_{tess_sr}.vot"
+    res = cached_lightkurve_search(cache_name, basepath, log, 'TESS',
+                                   refresh=refresh_cache,
+                                   target=SkyCoord(ra, dec, unit='deg'),
+                                   radius=tess_sr*u.arcsec, mission='TESS')
 
     if len(res):
         # Filter out CDIPS products

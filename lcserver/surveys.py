@@ -600,7 +600,10 @@ CACHE_PREFIXES = {
     'dustext_': 'info',
     'gaiaxp_': 'info',
     'skymapper_': 'info',
-    # lightkurve downloads, one directory per source
+    # What MAST was asked for, and what it sent back: the product search of
+    # each, and the downloads themselves in a directory per source
+    'tess_search_': 'tess',
+    'kepler_search_': 'kepler',
     'mast_tess': 'tess',
     'mast_kepler': 'kepler',
 }

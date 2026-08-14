@@ -663,6 +663,69 @@ def log_conversion(verbose, source, formula, params=None, npoints=None, note=Non
         log(f"  note: {note}")
 
 
+def cached_lightkurve_search(cache_name, basepath, log, description,
+                             refresh=False, **kwargs):
+    """A MAST product search, kept on disk like every other source's query.
+
+    lightkurve caches its searches too, but in the process and nowhere else,
+    with no expiry and no way in from outside. A worker that lives for weeks
+    would answer from that memo forever - a sector released after it started
+    would never be seen, and dropping the downloads could not force a fresh
+    look - while a worker that restarts loses it entirely and pays the several
+    seconds again. So the query goes to the undecorated function and what it
+    returns is cached here instead, where refresh reaches it.
+
+    Parameters
+    ----------
+    cache_name : str
+        Cache filename, as for `cached_votable_query`
+    basepath : str
+        Base directory containing the cache/ subdirectory
+    log : callable
+        Logging function
+    description : str
+        Human-readable name of what is being searched for, for the log
+    refresh : bool, optional
+        Drop what is cached and ask MAST again
+    kwargs : dict
+        Passed on to `lightkurve.search_lightcurve`
+
+    Returns
+    -------
+    res : `lightkurve.SearchResult`
+        The products found, ready to download from
+    """
+    import lightkurve as lk
+
+    cache_path = os.path.join(basepath, 'cache', cache_name)
+
+    if refresh and os.path.exists(cache_path):
+        log(f"Dropping cached {description} search ({cache_name}) as requested")
+        os.unlink(cache_path)
+
+    if os.path.exists(cache_path):
+        log(f"Loading {description} search from cache ({cache_name})")
+        return lk.SearchResult(Table.read(cache_path))
+
+    log(f"Querying {description}...")
+
+    # Undecorated, so that the in-process memo is neither consulted nor
+    # filled: the file below is the only cache, and it can be dropped
+    search = getattr(lk.search_lightcurve, '__wrapped__', lk.search_lightcurve)
+    res = search(**kwargs)
+
+    table = res.table.copy()
+    # Row numbers for display, which a SearchResult makes for itself
+    if '#' in table.colnames:
+        table.remove_column('#')
+
+    os.makedirs(os.path.join(basepath, 'cache'), exist_ok=True)
+    table.write(cache_path, format='votable', overwrite=True)
+    log(f"Cached {description} search to {cache_name}")
+
+    return res
+
+
 def mast_download_dir(basepath, source_id):
     """Where lightkurve should put a source's downloads.
 

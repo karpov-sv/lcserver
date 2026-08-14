@@ -21,13 +21,12 @@ from astropy.coordinates import SkyCoord
 from astropy import units as u
 from astropy.time import Time
 
-import lightkurve as lk
-
 # STDPipe
 from stdpipe import plots
 
 from ..surveys import survey_source, get_output_files
-from .utils import (cleanup_paths, drop_mast_downloads, mast_download_dir,
+from .utils import (cleanup_paths, cached_lightkurve_search,
+                    drop_mast_downloads, mast_download_dir,
                     mission_quality_mask, log_quality, quality_field,
                     quality_level,
                     log_bands, log_conversion,
@@ -63,6 +62,45 @@ KEPLER_PHASES = [
 ]
 
 
+# Where the telescope pointed in its first phase, and how far the field
+# reaches from there. It stared at one place between Cygnus and Lyra for four
+# years; the outermost modules sit some 8 degrees off the boresight, and this
+# is deliberately wider than that - the point is to exclude the sky at large,
+# and a few degrees of slack cost only a query that finds nothing.
+KEPLER_FIELD = SkyCoord(290.667, 44.5, unit='deg')
+KEPLER_FIELD_RADIUS = 12.0
+
+# K2 flew along the ecliptic - with two reaction wheels gone, only pointing
+# near the plane balanced the sunlight pushing on the spacecraft - so the
+# campaign fields are centred on it, the furthest (C13, in Taurus) by 6
+# degrees. That plus the same 8 degrees of field, and the same slack again.
+K2_MAX_ECLIPTIC_LAT = 20.0
+
+
+def _outside_field(mission, coord):
+    """Why a phase cannot have seen this target, or None if it might have.
+
+    Neither phase looked everywhere: Kepler at one field, K2 at a string of
+    them along the ecliptic. Most targets are near neither, and asking MAST
+    about them costs several seconds per phase - once per target now that the
+    answer is cached, but an empty answer is still worth not storing.
+    """
+    if mission == 'Kepler':
+        sep = coord.separation(KEPLER_FIELD).deg
+
+        if sep > KEPLER_FIELD_RADIUS:
+            return (f"{sep:.1f} deg away from the centre of the Kepler field,"
+                    f" which reaches out to ~{KEPLER_FIELD_RADIUS:.0f} deg")
+    elif mission == 'K2':
+        lat = abs(coord.barycentrictrueecliptic.lat.deg)
+
+        if lat > K2_MAX_ECLIPTIC_LAT:
+            return (f"{lat:.1f} deg from the ecliptic, and K2 never pointed"
+                    f" further than ~{K2_MAX_ECLIPTIC_LAT:.0f} deg from it")
+
+    return None
+
+
 def _segments(res):
     """Which observing segment each product belongs to.
 
@@ -79,7 +117,8 @@ def _segments(res):
     return np.array(out)
 
 
-def _acquire_phase(config, basepath, log, show, phase, sr, cadence, wanted_author):
+def _acquire_phase(config, basepath, log, show, phase, coord, sr, cadence,
+                   wanted_author, refresh_cache):
     """Fetch one phase of the mission, a file per observing segment.
 
     Returns the number of segments written and of points in them.
@@ -88,7 +127,7 @@ def _acquire_phase(config, basepath, log, show, phase, sr, cadence, wanted_autho
     segment_name = phase['segment_name']
     authors = phase['authors']
 
-    log(f"\n==== {mission} ====\n")
+    log(f"\n---- {mission} ----\n")
 
     # A pipeline asked for by name belongs to one phase or the other, so the
     # phase that does not have it has nothing to do
@@ -99,9 +138,17 @@ def _acquire_phase(config, basepath, log, show, phase, sr, cadence, wanted_autho
 
         authors = [wanted_author]
 
-    res = lk.search_lightcurve(
-        SkyCoord(config.get('target_ra'), config.get('target_dec'), unit='deg'),
-        radius=sr*u.arcsec, mission=mission)
+    outside = _outside_field(mission, coord)
+    if outside:
+        log(f"The target is {outside}, so {mission} cannot have seen it")
+        return 0, 0
+
+    # The pipeline is chosen below, among what was found, so it is no part of
+    # the search and every choice of it shares the one cache
+    cache_name = f"kepler_search_{mission.lower()}_{coord.ra.deg:.4f}_{coord.dec.deg:.4f}_{sr}.vot"
+    res = cached_lightkurve_search(cache_name, basepath, log, mission,
+                                   refresh=refresh_cache, target=coord,
+                                   radius=sr*u.arcsec, mission=mission)
 
     if not len(res):
         log(f"Warning: No {mission} data found")
@@ -302,10 +349,13 @@ def target_kepler(config, basepath=None, verbose=True, show=False):
     # Simple wrapper around print for logging in verbose mode only
     log = (verbose if callable(verbose) else print) if verbose else lambda *args,**kwargs: None
 
-    # lightkurve skips whatever it has already downloaded, for both phases at
-    # once as they share this source's directory. The flag is read rather than
-    # consumed - see the other sources.
-    if config.get('refresh_cache', False):
+    # Two caches here: the search each phase makes, kept as a VOTable like
+    # every other source's query, and the files themselves, which lightkurve
+    # skips if it has them already - for both phases at once, as they share
+    # this source's directory. The flag is read rather than consumed - see the
+    # other sources - and drops both.
+    refresh_cache = bool(config.get('refresh_cache', False))
+    if refresh_cache:
         drop_mast_downloads(basepath, 'kepler', log)
 
     # Cleanup stale plots
@@ -322,6 +372,8 @@ def target_kepler(config, basepath=None, verbose=True, show=False):
     # in, which the others remove.
     wanted_author = str(config.get('kepler_author', 'auto'))
 
+    coord = SkyCoord(config.get('target_ra'), config.get('target_dec'), unit='deg')
+
     log(f"Requesting Kepler data for {config['target_name']} within {sr:.1f} arcsec")
 
     nwritten = 0
@@ -329,8 +381,8 @@ def target_kepler(config, basepath=None, verbose=True, show=False):
     covered = []
 
     for phase in KEPLER_PHASES:
-        n, points = _acquire_phase(config, basepath, log, show, phase, sr,
-                                   cadence, wanted_author)
+        n, points = _acquire_phase(config, basepath, log, show, phase, coord,
+                                   sr, cadence, wanted_author, refresh_cache)
 
         nwritten += n
         npoints += points
