@@ -5,6 +5,7 @@ Gaia DR3, Pan-STARRS DR2, and other catalogs.
 """
 
 import os
+import threading
 import numpy as np
 import requests
 from io import BytesIO
@@ -79,6 +80,16 @@ PM_TO_KMS = 4.740470446
 # accuracy of any of this.
 DUST_ANCHOR = 'CTIO V'
 
+# The three-dimensional map of Edenhofer et al. (2023) reports extinction in the
+# unit E of Zhang, Green & Rix (2023), whose curve gives A(V) = 2.8 E; dividing
+# that by the usual R(V) puts it back on the E(B-V) the two-dimensional maps
+# above are quoted in.
+EDENHOFER_TO_AV = 2.8
+EDENHOFER_RV = 3.1
+
+# How many distances the profile through the map is drawn at
+EDENHOFER_POINTS = 256
+
 # Per band: name, and the columns holding its time, magnitude, flux, flux error
 # and the flag raised when the variability analysis rejected the measurement
 GAIA_EPPHOT_BANDS = [
@@ -151,15 +162,44 @@ def _vsx_magnitude(row, key):
     return f"{text} {band}" if band else text
 
 
+# The loaded three-dimensional map, and the lock that keeps two steps from
+# building it at once
+_edenhofer = None
+_edenhofer_lock = threading.Lock()
+
+
+def edenhofer_map():
+    """The three-dimensional dust map of Edenhofer et al. (2023).
+
+    Reading it takes some ten seconds and leaves 1.6 GB resident, so it is
+    built once and kept: the worker runs its steps in threads, and two targets
+    asking for it at the same time would otherwise each load their own copy.
+
+    Raises ImportError where dustmaps is not installed, and FileNotFoundError
+    where it is but its data have not been fetched.
+    """
+    global _edenhofer
+
+    with _edenhofer_lock:
+        if _edenhofer is None:
+            from dustmaps.edenhofer2023 import Edenhofer2023Query
+
+            # Integrated: the extinction accumulated out to a distance, which
+            # is what a star behind it suffers, rather than the local density
+            _edenhofer = Edenhofer2023Query(integrated=True)
+
+    return _edenhofer
+
+
 @survey_source(
     name='Target Info',
     short_name='Info',
     state_acquiring='acquiring info',
     state_acquired='info acquired',
     log_file='info.log',
-    output_files=['info.log', 'galaxy_map.png', 'ps1.vot', 'ps1.txt',
-                  'gaia.vot', 'gaia.txt', 'gaia_xp.png', 'gaia_xp.vot',
-                  'gaia_xp.txt'],
+    output_files=['info.log', 'galaxy_map.png', 'dust_3d.png', 'ps1.vot',
+                  'ps1.txt', 'gaia.vot', 'gaia.txt', 'gaia_xp.png',
+                  'gaia_xp.vot', 'gaia_xp.txt'],
     button_text='Get Target Info',
     button_class='btn-info',
     # Coordinates every source queries by, and the colours they convert with
@@ -583,123 +623,6 @@ def target_info(config, basepath=None, verbose=True, show=False):
             log("XP spectrum written to file:gaia_xp.vot")
             log("XP spectrum written to file:gaia_xp.txt")
 
-    # Interstellar reddening from the two-dimensional maps
-    ra = config.get('target_ra')
-    dec = config.get('target_dec')
-    cache_name = f"dust_{ra:.4f}_{dec:.4f}.vot"
-
-    log("\n---- Interstellar reddening ----\n")
-
-    with cached_votable_query(cache_name, basepath, log, 'IRSA dust maps',
-                              refresh=refresh_cache) as cache:
-        if not cache.hit:
-            try:
-                res = IrsaDust.get_query_table(
-                    SkyCoord(ra, dec, unit='deg'), section='ebv')
-
-                # IRSA names its columns with spaces in them, which a VOTable
-                # turns into underscores on the way back out, so the few
-                # numbers worth keeping are copied into a table of our own
-                cat = Table({
-                    'ebv_sfd': [float(res['ext SFD ref'][0])],
-                    'ebv_sfd_std': [float(res['ext SFD std'][0])],
-                    'ebv_sf11': [float(res['ext SandF ref'][0])],
-                    'ebv_sf11_std': [float(res['ext SandF std'][0])],
-                })
-                cache.save(cat)
-            except Exception as e:
-                log(f"Error: could not reach the IRSA dust service: {e}")
-                cat = None
-        else:
-            cat = cache.data
-
-    if cat is not None and len(cat):
-        row = cat[0]
-
-        # The whole column through the Galaxy, so an upper limit for anything
-        # inside it - which is most things. Schlafly & Finkbeiner recalibrated
-        # Schlegel, Finkbeiner & Davis downwards by some 14 per cent.
-        log(f"E(B-V) = {row['ebv_sf11']:.4f} +/- {row['ebv_sf11_std']:.4f} "
-            f"(Schlafly & Finkbeiner 2011)")
-        log(f"E(B-V) = {row['ebv_sfd']:.4f} +/- {row['ebv_sfd_std']:.4f} "
-            f"(Schlegel, Finkbeiner & Davis 1998)")
-        log("  integrated through the whole Galaxy, so an upper limit for a "
-            "star inside it")
-
-        config['ebv_sf11'] = float(row['ebv_sf11'])
-        config['ebv_sfd'] = float(row['ebv_sfd'])
-
-        # A0 is very nearly A(V), so the two are worth comparing: a star well
-        # in front of the dust shows much less than the full column
-        if config.get('gaia_A0') is not None:
-            full = 3.1 * row['ebv_sf11']
-            log(f"  Gaia sees A0 = {config['gaia_A0']:.3f} mag towards the star "
-                f"itself, against {full:.3f} mag for the full column at R(V) = 3.1")
-
-            # Nothing interstellar can redden a star by more than the whole
-            # column in front of it. Gaia's figure is fitted from the spectrum
-            # assuming an ordinary stellar atmosphere, and comes out too large
-            # for anything that is not one - a star with a disc around it, a
-            # blend, an unresolved binary - where it is also degenerate with
-            # temperature.
-            if config['gaia_A0'] > full + 0.1:
-                log("  which is more than the Galaxy holds in that direction, so "
-                    "the fit is not measuring interstellar dust alone - expected "
-                    "for a star with circumstellar material, a blend or a binary")
-
-    # Extinction band by band
-    cache_name = f"dustext_{ra:.4f}_{dec:.4f}.vot"
-
-    with cached_votable_query(cache_name, basepath, log, 'IRSA extinction table',
-                              refresh=refresh_cache) as cache:
-        if not cache.hit:
-            try:
-                ext = IrsaDust.get_extinction_table(SkyCoord(ra, dec, unit='deg'))
-                # A byte string in a VOTable comes back as bytes, so the names
-                # are settled here rather than at every use
-                ext['Filter_name'] = [str(_) for _ in ext['Filter_name']]
-                cache.save(ext)
-            except Exception as e:
-                log(f"Error: could not fetch the extinction table: {e}")
-                ext = None
-        else:
-            ext = cache.data
-
-    if ext is not None and len(ext):
-        rows = {str(r['Filter_name']).strip(): r for r in ext}
-        anchor = rows.get(DUST_ANCHOR)
-
-        # Gaia measures how much extinction there is towards the star; the map
-        # measures how it is distributed across the bands. Scaling the second
-        # by the first gives the star's own extinction band by band, on the
-        # assumption that the law has the usual shape and only the amount
-        # differs - which is the assumption behind any such table.
-        scale = None
-        if anchor is not None and config.get('gaia_A0') is not None:
-            coeff = float(anchor['A_over_E_B_V_SandF'])
-            if coeff > 0:
-                scale = config['gaia_A0'] / coeff
-
-        log("")
-        log(f"  {'band':10s} {'A(Gaia)':>9s} {'A(SF11)':>9s} {'A(SFD)':>9s}")
-
-        for name in DUST_FILTERS:
-            row = rows.get(name)
-
-            if row is None:
-                continue
-
-            gaia = (f"{float(row['A_over_E_B_V_SandF']) * scale:9.3f}"
-                    if scale is not None else f"{'-':>9s}")
-
-            log(f"  {name:10s} {gaia} {float(row['A_SandF']):9.3f} "
-                f"{float(row['A_SFD']):9.3f}")
-
-        log("")
-        log("  A(Gaia) is the star's own extinction, from its A0 spread over the")
-        log("  bands by the same law; the other two are the whole column through")
-        log("  the Galaxy, on the two calibrations of the same map.")
-
     # Gaia DR3 distances by Bailer-Jones
     ra = config.get('target_ra')
     dec = config.get('target_dec')
@@ -728,6 +651,12 @@ def target_info(config, basepath=None, verbose=True, show=False):
             # geometric distance Bailer-Jones et al. infer from it with a prior
             log(f"Gaia DR3 distance is {star['rgeo']:.1f} [{star['b_rgeo']:.1f} ... {star['B_rgeo']:.1f}] pc"
                 f" (geometric, Bailer-Jones et al. 2021)")
+
+            # Kept for the three-dimensional dust below, which needs to know
+            # how far into the column the star sits
+            config['gaia_distance'] = float(star['rgeo'])
+            config['gaia_distance_lo'] = float(star['b_rgeo'])
+            config['gaia_distance_hi'] = float(star['B_rgeo'])
 
             log(f"Height above Galactic plane is {star['rgeo']*np.abs(np.sin(np.deg2rad(config.get('target_b')))):.1f} pc")
 
@@ -798,6 +727,260 @@ def target_info(config, basepath=None, verbose=True, show=False):
                 ax.legend()
 
             log("Galaxy map with object position saved to file:galaxy_map.png")
+
+    # Interstellar reddening from the two-dimensional maps
+    ra = config.get('target_ra')
+    dec = config.get('target_dec')
+    cache_name = f"dust_{ra:.4f}_{dec:.4f}.vot"
+
+    log("\n---- Interstellar reddening ----\n")
+
+    with cached_votable_query(cache_name, basepath, log, 'IRSA dust maps',
+                              refresh=refresh_cache) as cache:
+        if not cache.hit:
+            try:
+                res = IrsaDust.get_query_table(
+                    SkyCoord(ra, dec, unit='deg'), section='ebv')
+
+                # IRSA names its columns with spaces in them, which a VOTable
+                # turns into underscores on the way back out, so the few
+                # numbers worth keeping are copied into a table of our own
+                cat = Table({
+                    'ebv_sfd': [float(res['ext SFD ref'][0])],
+                    'ebv_sfd_std': [float(res['ext SFD std'][0])],
+                    'ebv_sf11': [float(res['ext SandF ref'][0])],
+                    'ebv_sf11_std': [float(res['ext SandF std'][0])],
+                })
+                cache.save(cat)
+            except Exception as e:
+                log(f"Error: could not reach the IRSA dust service: {e}")
+                cat = None
+        else:
+            cat = cache.data
+
+    if cat is not None and len(cat):
+        row = cat[0]
+
+        # The whole column through the Galaxy, so an upper limit for anything
+        # inside it - which is most things. Schlafly & Finkbeiner recalibrated
+        # Schlegel, Finkbeiner & Davis downwards by some 14 per cent.
+        log(f"E(B-V) = {row['ebv_sf11']:.4f} +/- {row['ebv_sf11_std']:.4f} "
+            f"(Schlafly & Finkbeiner 2011)")
+        log(f"E(B-V) = {row['ebv_sfd']:.4f} +/- {row['ebv_sfd_std']:.4f} "
+            f"(Schlegel, Finkbeiner & Davis 1998)")
+        log("  integrated through the whole Galaxy, so an upper limit if inside")
+
+        config['ebv_sf11'] = float(row['ebv_sf11'])
+        config['ebv_sfd'] = float(row['ebv_sfd'])
+
+        # A0 is very nearly A(V), so the two are worth comparing: a star well
+        # in front of the dust shows much less than the full column
+        if config.get('gaia_A0') is not None:
+            full = 3.1 * row['ebv_sf11']
+            log(f"  Gaia sees A0 = {config['gaia_A0']:.3f} mag towards the star "
+                f"itself, against {full:.3f} mag for the full column at R(V) = 3.1")
+
+            # Nothing interstellar can redden a star by more than the whole
+            # column in front of it. Gaia's figure is fitted from the spectrum
+            # assuming an ordinary stellar atmosphere, and comes out too large
+            # for anything that is not one - a star with a disc around it, a
+            # blend, an unresolved binary - where it is also degenerate with
+            # temperature.
+            if config['gaia_A0'] > full + 0.1:
+                log("  which is more than the Galaxy holds in that direction, so "
+                    "the fit is not measuring interstellar dust alone - expected "
+                    "for a star with circumstellar material, a blend or a binary")
+
+    # The same thing in three dimensions
+    #
+    # The maps above integrate the whole column through the Galaxy; this one is
+    # resolved in distance, so it can say how much of that column lies in front
+    # of the star. It is optional - several gigabytes of data behind an optional
+    # dependency - and where it is not installed nothing is said of it at all,
+    # rather than a missing dependency being reported at every run.
+    # Filled in below and read by the band table after it: the extinction to
+    # the star, and the sign it is only a limit in where it is one
+    av_3d, av_3d_limit = None, ''
+
+    try:
+        import dustmaps.edenhofer2023  # noqa: F401
+        has_dustmaps = True
+    except ImportError:
+        has_dustmaps = False
+
+    if has_dustmaps:
+        try:
+            dust3d = edenhofer_map()
+        except Exception as e:
+            log(f"Warning: the Edenhofer et al. (2023) map could not be loaded "
+                f"({e}) - dustmaps.edenhofer2023.fetch() downloads its data")
+            dust3d = None
+
+        if dust3d is not None:
+            # The map is a set of shells, and the interpolation needs a point
+            # between two of their centres, so its own bounds are just inside
+            inner = float(dust3d.distances[0].value) * 1.001
+            outer = float(dust3d.distances[-1].value) * 0.999
+
+            def extinction_at(distance):
+                """A(V) accumulated out to a distance, in parsecs."""
+                coords = SkyCoord(l=config['target_l']*u.deg,
+                                  b=config['target_b']*u.deg,
+                                  distance=np.clip(distance, inner, outer)*u.pc,
+                                  frame='galactic')
+
+                return EDENHOFER_TO_AV * dust3d.query(coords)
+
+            dist = np.geomspace(inner, outer, EDENHOFER_POINTS)
+            av = extinction_at(dist)
+
+            distance = config.get('gaia_distance')
+            av_star = (float(extinction_at(distance))
+                       if distance is not None else None)
+
+            if av_star is not None and not np.isfinite(av_star):
+                av_star = None
+
+            # Whether the star is somewhere the map can actually be read at,
+            # rather than in front of its innermost shell or behind it all
+            inside = av_star is not None and inner <= distance <= outer
+
+            log("")
+
+            if av_star is not None:
+                config['av_3d'] = av_star
+                config['ebv_3d'] = av_star / EDENHOFER_RV
+
+                av_3d = av_star
+                av_3d_limit = '' if inside else ('<' if distance < inner else '>')
+
+                log(f"Target distance is {distance:.0f} pc")
+                log(f"Edenhofer et al. 2023 3D map valid between {inner:.0f} pc to {outer/1000:.2f} kpc")
+
+                if inside:
+                    log(f"E(B-V) = {av_star/EDENHOFER_RV:.4f}, A(V) = {av_star:.3f}")
+                elif distance < inner:
+                    log(f"E(B-V) < {av_star/EDENHOFER_RV:.4f}, A(V) < {av_star:.3f}")
+                else:
+                    log(f"E(B-V) > {av_star/EDENHOFER_RV:.4f}, A(V) > {av_star:.3f}")
+
+            if inside:
+                lo = float(extinction_at(config['gaia_distance_lo']))
+                hi = float(extinction_at(config['gaia_distance_hi']))
+                log(f"  A(V) spans [{lo:.3f} ... {hi:.3f}] mag over the distance interval")
+
+            if np.isfinite(av[-1]):
+                log(f"  Total map A(V) = {av[-1]:.3f} mag in this direction")
+                log(f"  the star sits in front of "
+                    f"{100*(1 - av_star/av[-1]):.0f}% of it"
+                    if inside and av[-1] > 0 else "")
+
+            with plots.figure_saver(os.path.join(basepath, 'dust_3d.png'),
+                                    figsize=(8, 5), show=show) as fig:
+                ax = fig.add_subplot(1, 1, 1)
+
+                ax.plot(dist, av, '-', color='#8e44ad',
+                        label='Edenhofer et al. (2023)')
+
+                # Where the star stands, marked on the profile where the map
+                # covers it and left as a bare line where it does not
+                if distance is not None:
+                    ax.axvspan(config['gaia_distance_lo'],
+                               config['gaia_distance_hi'],
+                               color='0.5', alpha=0.2)
+                    ax.axvline(distance, ls='--', color='0.4', lw=1)
+
+                if inside:
+                    ax.plot(distance, av_star, '*', color='yellow',
+                            markeredgecolor='black', markersize=16, zorder=10,
+                            label=config.get('target_name'))
+
+                # The whole column, which the profile should approach from
+                # below and never cross
+                if config.get('ebv_sf11') is not None:
+                    ax.axhline(EDENHOFER_RV * config['ebv_sf11'], ls=':',
+                               color='#c0392b',
+                               label='Schlafly & Finkbeiner, whole Galaxy')
+
+                # And what Gaia fits for the star itself, which should agree
+                # with the profile where it is read
+                if config.get('gaia_A0') is not None:
+                    ax.axhline(config['gaia_A0'], ls='-.', color='#16a085',
+                               label='Gaia A0')
+
+                ax.set_xscale('log')
+                ax.set_xlabel('Distance, pc')
+                ax.set_ylabel('A(V), mag')
+                ax.set_title('Extinction along the line of sight')
+                ax.grid(alpha=0.2)
+                ax.legend(loc='best', fontsize='small')
+
+            log("Extinction profile saved to file:dust_3d.png")
+            log("")
+
+    # Extinction band by band
+    cache_name = f"dustext_{ra:.4f}_{dec:.4f}.vot"
+
+    with cached_votable_query(cache_name, basepath, log, 'IRSA extinction table',
+                              refresh=refresh_cache) as cache:
+        if not cache.hit:
+            try:
+                ext = IrsaDust.get_extinction_table(SkyCoord(ra, dec, unit='deg'))
+                # A byte string in a VOTable comes back as bytes, so the names
+                # are settled here rather than at every use
+                ext['Filter_name'] = [str(_) for _ in ext['Filter_name']]
+                cache.save(ext)
+            except Exception as e:
+                log(f"Error: could not fetch the extinction table: {e}")
+                ext = None
+        else:
+            ext = cache.data
+
+    if ext is not None and len(ext):
+        rows = {str(r['Filter_name']).strip(): r for r in ext}
+        anchor = rows.get(DUST_ANCHOR)
+
+        # Gaia and the three-dimensional map each measure how much extinction
+        # there is towards the star; this table measures how it is distributed
+        # across the bands. Scaling the second by either of the first gives the
+        # star's own extinction band by band, on the assumption that the law
+        # has the usual shape and only the amount differs - which is the
+        # assumption behind any such table.
+        coeff = float(anchor['A_over_E_B_V_SandF']) if anchor is not None else 0
+
+        scale = (config['gaia_A0'] / coeff
+                 if coeff > 0 and config.get('gaia_A0') is not None else None)
+        scale_3d = av_3d / coeff if coeff > 0 and av_3d is not None else None
+
+        log("")
+        log(f"  {'band':10s} {'A(Gaia)':>9s} {'A(3D)':>9s} {'A(SF11)':>9s} "
+            f"{'A(SFD)':>9s}")
+
+        for name in DUST_FILTERS:
+            row = rows.get(name)
+
+            if row is None:
+                continue
+
+            law = float(row['A_over_E_B_V_SandF'])
+
+            gaia = f"{law * scale:9.3f}" if scale is not None else f"{'-':>9s}"
+            three = (f"{av_3d_limit + f'{law * scale_3d:.3f}':>9s}"
+                     if scale_3d is not None else f"{'-':>9s}")
+
+            log(f"  {name:10s} {gaia} {three} {float(row['A_SandF']):9.3f} "
+                f"{float(row['A_SFD']):9.3f}")
+
+        log("")
+        log("  A(Gaia) is the star's own extinction, from its A0 spread over the")
+        log("  bands by the same law; A(3D) is the dust in front of it, spread")
+        log("  the same way; the other two are the whole column through the")
+        log("  Galaxy, on the two calibrations of the same map.")
+
+        if scale_3d is not None:
+            log("  A(3D) is written on this law rather than the one its own map")
+            log("  is defined by, and < or > marks a star outside the distances")
+            log("  that map covers.")
 
     # Pan-STARRS DR2 warp photometry
     log("\n---- Pan-STARRS DR2 warp photometry ----\n")
