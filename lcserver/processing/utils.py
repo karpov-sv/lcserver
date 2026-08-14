@@ -590,6 +590,107 @@ def pickle_from_file(filename):
         return pickle.load(f)
 
 
+# ---------------------------------------------------------------------------
+# Photometric conversions onto the common g scale.
+#
+# The combined light curve draws every survey on one axis, so everything on it
+# has to be in one band, and the surveys measured in a dozen. These are the
+# relations that bring them together, kept in one place rather than repeated in
+# each module, so that the combined curve is built from one set of numbers and
+# a correction to any of them reaches every source at once.
+#
+# Each is paired with the formula it prints, so that what the log says and what
+# the code does cannot drift apart.
+#
+# All of them but one assume a single fixed colour for the star, taken from the
+# config. That is a model rather than a measurement, and it costs most exactly
+# where the light curve is most interesting: when a variable changes colour as
+# it changes brightness, a constant colour mis-scales the amplitude by roughly
+# the colour coefficient times how far the colour actually moved. ZTF is the
+# exception, reconstructing its own colour per epoch.
+# ---------------------------------------------------------------------------
+
+V_TO_G_FORMULA = 'g = V + 0.02 + 0.498*(g - r) + 0.008*(g - r)^2'
+
+
+def v_to_g(mag, g_minus_r):
+    """Johnson V onto the Pan-STARRS g scale, through an assumed (g - r)."""
+    return mag + 0.02 + 0.498*g_minus_r + 0.008*g_minus_r**2
+
+
+B_TO_G_FORMULA = 'g = B - 0.3130*(g - r) - 0.2271'
+
+
+def b_to_g(mag, g_minus_r):
+    """Johnson B onto g - Lupton (2005), inverted.
+
+    Published as B = g + 0.3130*(g - r) + 0.2271, with a scatter of 0.011 for
+    the stars it was fitted to. The photographic plates it is used on here are
+    a good deal further from Johnson B than that, so the number to expect is
+    the plates' own colour term, not this one.
+    """
+    return mag - 0.3130*g_minus_r - 0.2271
+
+
+R_TO_G_FORMULA = 'g = r + (g - r)'
+
+
+def r_to_g(mag, g_minus_r):
+    """An r-band magnitude onto g, by the colour itself."""
+    return mag + g_minus_r
+
+
+ROTSE_TO_V_FORMULA = 'V = m_ROTSE + (B - V)/1.875'
+
+
+def rotse_to_v(mag, b_minus_v):
+    """Unfiltered ROTSE-I onto Johnson V.
+
+    The NSVS magnitudes are defined against V with a colour term already in
+    them - m_ROTSE = V - (B - V)/1.875 (Wozniak et al. 2004) - so the band is
+    on the V scale for a star of zero colour and drifts from it for any other.
+    Inverted here to put it back on V.
+    """
+    return mag + b_minus_v/1.875
+
+
+GAIA_G_TO_G_FORMULA = ('g = G - (0.2199 - 0.6365*x - 0.1548*x^2 + 0.0064*x^3),'
+                       '  x = BP - RP')
+
+# Where the relation above was fitted, and so where it means anything
+GAIA_G_TO_G_RANGE = (0.3, 3.0)
+GAIA_G_TO_G_SIGMA = 0.0745
+
+
+def gaia_g_to_g(mag, bp_minus_rp):
+    """Gaia G onto SDSS g - Gaia EDR3 documentation, Table 5.6.
+
+    G is used rather than BP, which sits closer to g and would need a smaller
+    correction: G is the more precisely measured of the two, and the relation
+    for it is the better determined. Valid over GAIA_G_TO_G_RANGE in BP - RP.
+    """
+    x = bp_minus_rp
+    return mag - (0.2199 - 0.6365*x - 0.1548*x**2 + 0.0064*x**3)
+
+
+def assumed_color(config, key, default=0.0):
+    """The colour a conversion is to use, and where it came from.
+
+    Returns a (value, origin) pair, the origin being what log_conversion
+    prints beside the number. A key that is present but empty counts as
+    absent: the info step writes the colours it could not determine as None.
+    """
+    try:
+        value = float(config.get(key))
+    except (TypeError, ValueError):
+        return default, 'default, no colour known'
+
+    if not np.isfinite(value):
+        return default, 'default, no colour known'
+
+    return value, 'from config'
+
+
 def log_bands(verbose, source, bands, heading=True):
     """Report which bands a source is publishing, and where each comes from.
 

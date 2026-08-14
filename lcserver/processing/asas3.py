@@ -18,7 +18,8 @@ from stdpipe import plots
 
 from .. import surveys
 from ..surveys import survey_source, get_output_files
-from .utils import SourceError, cleanup_paths, cached_votable_query, log_bands, log_conversion
+from .utils import (SourceError, cleanup_paths, cached_votable_query, log_bands,
+                    log_conversion, assumed_color, v_to_g, V_TO_G_FORMULA)
 
 
 ASAS_CATALOG_URL = 'https://www.astrouw.edu.pl/cgi-asas/asas_cat_input'
@@ -208,13 +209,14 @@ def _parse_lightcurve(text, log):
                      color='#2ca02c', note='as reported by ASAS-3'),
         surveys.band('g (conv.)', 'mag_g', 'magerr', surveys.BAND_DERIVED,
                      color='#98df8a',
-                     note='V put on the common g scale using an assumed g - r'),
+                     note='V put on the common g scale using an assumed g - r',
+                     combined=True),
     ],
     lc_mag_column='mag_g',
     lc_err_column='magerr',
     lc_color='#2ca02c',
     lc_mode='magnitude',
-    lc_short=False,
+    lc_short=True,
     # Template metadata
     template_layout='simple',
     declination_max=28.0,
@@ -326,14 +328,13 @@ def target_asas3(config, basepath=None, verbose=True, show=False):
             "magnitudes may differ slightly, and are kept apart in the dataset column")
 
     # The common g scale, the same way ASAS-SN gets there from its own V
-    g_minus_r = config.get('g_minus_r', 0.0)
-    g_minus_r_origin = 'from config' if 'g_minus_r' in config else 'default, no colour known'
+    g_minus_r, g_minus_r_origin = assumed_color(config, 'g_minus_r')
 
-    asas3['mag_g'] = asas3['mag'] + 0.02 + 0.498*g_minus_r + 0.008*g_minus_r**2
+    asas3['mag_g'] = v_to_g(asas3['mag'], g_minus_r)
 
     log_conversion(
         log, 'ASAS-3',
-        'g = V + 0.02 + 0.498*(g-r) + 0.008*(g-r)^2',
+        V_TO_G_FORMULA,
         {'(g - r)': (g_minus_r, g_minus_r_origin),
          'aperture': (f'MAG_{aperture}', origin)},
         npoints=len(asas3),

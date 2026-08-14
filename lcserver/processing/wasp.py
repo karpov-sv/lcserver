@@ -20,7 +20,8 @@ from .. import surveys
 from ..surveys import survey_source, get_output_files
 from .utils import (SourceError, cleanup_paths, cached_votable_query,
                     clip_noisy_points, quality_field, quality_level,
-                    log_bands, log_conversion, CLIP_RATIO_BY_LEVEL,
+                    log_bands, log_conversion, assumed_color, v_to_g,
+                    V_TO_G_FORMULA, CLIP_RATIO_BY_LEVEL,
                     QUALITY_STANDARD, QUALITY_RELAXED, QUALITY_PUBLISHED)
 
 
@@ -132,13 +133,14 @@ def _download_lightcurve(name, log):
                      note='broad WASP band, calibrated against Tycho-2 V'),
         surveys.band('g (conv.)', 'mag_g', 'magerr', surveys.BAND_DERIVED,
                      color='#ffbb78',
-                     note='V put on the common g scale using an assumed g - r'),
+                     note='V put on the common g scale using an assumed g - r',
+                     combined=True),
     ],
     lc_mag_column='mag_g',
     lc_err_column='magerr',
     lc_color='#ff7f0e',
     lc_mode='magnitude',
-    lc_short=False,
+    lc_short=True,
     # Template metadata
     template_layout='simple',
 )
@@ -305,14 +307,13 @@ def target_wasp(config, basepath=None, verbose=True, show=False):
             log(f"{len(wasp)} data points left")
 
     # The common g scale, as for the other V-band surveys
-    g_minus_r = config.get('g_minus_r', 0.0)
-    g_minus_r_origin = 'from config' if 'g_minus_r' in config else 'default, no colour known'
+    g_minus_r, g_minus_r_origin = assumed_color(config, 'g_minus_r')
 
-    wasp['mag_g'] = wasp['mag'] + 0.02 + 0.498*g_minus_r + 0.008*g_minus_r**2
+    wasp['mag_g'] = v_to_g(wasp['mag'], g_minus_r)
 
     log_conversion(
         log, 'SuperWASP',
-        'g = V + 0.02 + 0.498*(g-r) + 0.008*(g-r)^2',
+        V_TO_G_FORMULA,
         {'(g - r)': (g_minus_r, g_minus_r_origin)},
         npoints=len(wasp),
         note='the WASP band is broad and only approximately V, so this is a '

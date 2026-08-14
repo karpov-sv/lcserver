@@ -24,7 +24,10 @@ from stdpipe import catalogs, resolve, plots
 
 from ..surveys import survey_source, get_all_output_files
 from .utils import (cleanup_paths, cached_votable_query, write_spectrum,
-                    log_bands, log_conversion)
+                    log_bands, log_conversion, assumed_color,
+                    r_to_g, R_TO_G_FORMULA,
+                    gaia_g_to_g, GAIA_G_TO_G_FORMULA, GAIA_G_TO_G_RANGE,
+                    GAIA_G_TO_G_SIGMA)
 
 
 # Gaia timestamps are barycentric JD in TCB, counted from 2010-01-01
@@ -1048,13 +1051,6 @@ def target_info(config, basepath=None, verbose=True, show=False):
             heading=False,
         )
 
-        log_bands(log, 'Pan-STARRS', [
-            {'label': fn, 'kind': 'native',
-             'npoints': int(np.sum(ps1['filterID'] == fid)),
-             'note': 'warp photometry, as reported'}
-            for fid, fn in ps1_filters
-        ], heading=False)
-
         # Color?..
         ig,ir = np.where(ps1['filterID'] == 1)[0], np.where(ps1['filterID'] == 2)[0]
         mg,mr = [],[]
@@ -1065,11 +1061,50 @@ def target_info(config, basepath=None, verbose=True, show=False):
                 mg.append(ps1['mag'][i])
                 mr.append(ps1['mag'][ir[dist == np.min(dist)]][0])
 
+        # The colour to convert r with: what Pan-STARRS itself saw, where it
+        # saw the star in both bands close enough together to mean anything,
+        # and the run-wide assumption otherwise
+        g_minus_r, g_minus_r_origin = assumed_color(config, 'g_minus_r')
+
         if len(mg):
             mg,mr = [np.array(_) for _ in (mg,mr)]
 
             log(f"{len(mg)} quasi-simultaneous measurements")
             log(f"(g - r) = {np.nanmean(mg-mr):.3f} +/- {np.nanstd(mg-mr):.3f}")
+
+            if np.isfinite(np.nanmean(mg - mr)):
+                g_minus_r = float(np.nanmean(mg - mr))
+                g_minus_r_origin = 'measured here, from quasi-simultaneous pairs'
+
+        # Pan-STARRS observes r about as often as g, and the two together are
+        # nearly twice the coverage of either
+        ps1['mag_g_from_r'] = np.nan
+        idx_r = ps1['filterID'] == 2
+        ps1['mag_g_from_r'][idx_r] = r_to_g(ps1['mag'][idx_r], g_minus_r)
+
+        if np.sum(idx_r):
+            log_conversion(
+                log, 'Pan-STARRS',
+                R_TO_G_FORMULA,
+                {'(g - r)': (g_minus_r, g_minus_r_origin)},
+                npoints=int(np.sum(idx_r)),
+                note='the g measurements are untouched; this is only for the '
+                     'r points, so that they reach the combined light curve',
+                heading=False,
+            )
+
+        # Reported here rather than beside the conversion above, so that the
+        # converted band can be counted along with the measured ones
+        log_bands(log, 'Pan-STARRS', [
+            {'label': fn, 'kind': 'native',
+             'npoints': int(np.sum(ps1['filterID'] == fid)),
+             'note': 'warp photometry, as reported'}
+            for fid, fn in ps1_filters
+        ] + [
+            {'label': 'g (from r)', 'kind': 'derived',
+             'npoints': int(np.sum(idx_r)),
+             'note': 'r on the common g scale'},
+        ], heading=False)
 
         # Time cannot be serialized to VOTable
         ps1[[_ for _ in ps1.columns if _ != 'time']].write(os.path.join(basepath, 'ps1.vot'), format='votable', overwrite=True)
@@ -1165,11 +1200,44 @@ def target_info(config, basepath=None, verbose=True, show=False):
                 heading=False,
             )
 
+            # G onto g for the combined light curve. G rather than BP, which
+            # sits nearer g and would need the smaller correction: G is the
+            # better measured of the two and its relation the better determined.
+            bp_minus_rp, bp_minus_rp_origin = assumed_color(config, 'BP_minus_RP')
+
+            gaia['mag_g'] = np.nan
+            idx_G = gaia['filter'] == 'G'
+            gaia['mag_g'][idx_G] = gaia_g_to_g(gaia['mag'][idx_G], bp_minus_rp)
+
+            n_G = int(np.sum(idx_G))
+
+            if n_G:
+                lo, hi = GAIA_G_TO_G_RANGE
+                if not lo <= bp_minus_rp <= hi:
+                    log(f"Warning: (BP - RP) = {bp_minus_rp:.3f} is outside "
+                        f"{lo} to {hi}, where the relation was fitted - the "
+                        f"converted g is an extrapolation")
+
+                log_conversion(
+                    log, 'Gaia DR3',
+                    GAIA_G_TO_G_FORMULA,
+                    {'(BP - RP)': (bp_minus_rp, bp_minus_rp_origin),
+                     'scatter of the relation': GAIA_G_TO_G_SIGMA,
+                     'valid for': f"{lo} < BP - RP < {hi}"},
+                    npoints=n_G,
+                    note='Gaia EDR3 documentation, Table 5.6; the colour is '
+                         'assumed constant and the native bands are kept',
+                    heading=False,
+                )
+
             log_bands(log, 'Gaia DR3', [
                 {'label': band, 'kind': 'native',
                  'npoints': int(np.sum(gaia['filter'] == band)),
                  'note': 'per-transit photometry, as reported'}
                 for band, *_ in GAIA_EPPHOT_BANDS
+            ] + [
+                {'label': 'g (conv.)', 'kind': 'derived', 'npoints': n_G,
+                 'note': 'G on the common g scale'},
             ], heading=False)
 
             gaia.write(os.path.join(basepath, 'gaia.vot'), format='votable', overwrite=True)
@@ -1196,9 +1264,18 @@ surveys.register_lightcurve_source(
     lc_bands=[
         surveys.band(fn, 'mag_' + fn, 'magerr', surveys.BAND_NATIVE,
                      filter_column='filter', filter_value=fn, color=color,
-                     note='Pan-STARRS DR2 warp photometry, as reported')
+                     note='Pan-STARRS DR2 warp photometry, as reported',
+                     # g is the scale the combined curve is drawn on, so it
+                     # goes there as measured
+                     combined=(fn == 'g'))
         for fn, color in [('g', '#2ca02c'), ('r', '#d62728'), ('i', '#9467bd'),
                           ('z', '#8c564b'), ('y', '#7f7f7f')]
+    ] + [
+        surveys.band('g (from r)', 'mag_g_from_r', 'magerr', surveys.BAND_DERIVED,
+                     filter_column='filter', filter_value='r', color='#98df8a',
+                     note='r moved onto g by the colour Pan-STARRS measured '
+                          'for this star',
+                     combined=True),
     ],
     lc_mag_column='mag_g',
     lc_err_column='magerr',
@@ -1218,6 +1295,12 @@ surveys.register_lightcurve_source(
                      filter_column='filter', filter_value=band, color=color,
                      note='Gaia DR3 per-transit photometry, as reported')
         for band, color in [('G', '#333333'), ('BP', '#1f77b4'), ('RP', '#d62728')]
+    ] + [
+        surveys.band('g (conv.)', 'mag_g', 'magerr', surveys.BAND_DERIVED,
+                     filter_column='filter', filter_value='G', color='#7f7f7f',
+                     note='G onto g through an assumed BP - RP '
+                          '(Gaia EDR3 documentation, Table 5.6)',
+                     combined=True),
     ],
     lc_mag_column='mag',
     lc_err_column='magerr',

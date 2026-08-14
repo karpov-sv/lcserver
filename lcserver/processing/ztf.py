@@ -104,11 +104,19 @@ def gaussian_smoothing(x, y, dy, scale=100, nsteps=1000):
         surveys.band('g', 'mag_g', 'magerr', surveys.BAND_CALIBRATED,
                      filter_column='filtercode', filter_value='zg',
                      color='#2ca02c',
-                     note='zg corrected to Pan-STARRS g using the per-epoch clrcoeff'),
+                     note='zg corrected to Pan-STARRS g using the per-epoch clrcoeff',
+                     combined=True),
         surveys.band('r', 'mag_r', 'magerr', surveys.BAND_CALIBRATED,
                      filter_column='filtercode', filter_value='zr',
                      color='#d62728',
                      note='zr corrected to Pan-STARRS r using the per-epoch clrcoeff'),
+        # ZTF observes r far more often than g, so without this the combined
+        # curve would be missing most of what ZTF knows about the star
+        surveys.band('g (from r)', 'mag_g_from_r', 'magerr', surveys.BAND_DERIVED,
+                     filter_column='filtercode', filter_value='zr',
+                     color='#98df8a',
+                     note='r moved onto g by the colour ZTF measured for this star',
+                     combined=True),
         # No colour model is reconstructed for i, so these stay as measured
         surveys.band('i', 'mag_i', 'magerr', surveys.BAND_NATIVE,
                      filter_column='filtercode', filter_value='zi',
@@ -318,6 +326,18 @@ def target_ztf(config, basepath=None, verbose=True, show=False):
     idx_i = (ztf['filtercode'] == 'zi') & (ztf['magerr'] < 0.15) & (ztf['catflags'] == 0)
     ztf['mag_i'][idx_i] = ztf['mag'][idx_i]
 
+    # Most of ZTF's points are in r, and for a good many targets they are the
+    # only ones there are, so the combined light curve takes them too rather
+    # than showing an empty stretch where ZTF has the best coverage of all.
+    # Converted with the colour model reconstructed just above - measured, per
+    # epoch, from this star - which makes this the one conversion in the whole
+    # combined curve that does not rest on an assumed constant colour.
+    ztf['mag_g_from_r'] = np.nan
+    idx_from_r = np.isfinite(ztf['mag_r'])
+    if np.any(idx_from_r):
+        ztf['mag_g_from_r'][idx_from_r] = (ztf['mag_r'][idx_from_r]
+                                           + gr(ztf['time'][idx_from_r].mjd))
+
     color_model = config.get('ztf_color_model', 'constant')
     n_g = int(np.sum(np.isfinite(ztf['mag_g'])))
     n_r = int(np.sum(np.isfinite(ztf['mag_r'])))
@@ -346,6 +366,17 @@ def target_ztf(config, basepath=None, verbose=True, show=False):
             note='published as measured, so the points are not lost',
         )
 
+    if n_r:
+        log_conversion(
+            log, 'ZTF',
+            'g = r + (g - r)',
+            {'(g - r)': (f"{color_model} model reconstructed above",
+                         'measured per epoch, not assumed')},
+            npoints=n_r,
+            note='so that the r points, usually the most numerous, reach the '
+                 'combined light curve as well',
+        )
+
     log_bands(log, 'ZTF', [
         {'label': 'g', 'kind': 'calibrated', 'npoints': n_g,
          'note': 'zg on the Pan-STARRS g scale'},
@@ -353,6 +384,8 @@ def target_ztf(config, basepath=None, verbose=True, show=False):
          'note': 'zr on the Pan-STARRS r scale'},
         {'label': 'i', 'kind': 'native', 'npoints': n_i,
          'note': 'zi as measured, no colour correction'},
+        {'label': 'g (from r)', 'kind': 'derived', 'npoints': n_r,
+         'note': 'zr moved onto g by the measured colour'},
     ])
 
     # Time cannot be serialized to VOTable

@@ -37,7 +37,7 @@ BAND_KINDS_SHOWN = (BAND_NATIVE, BAND_CALIBRATED)
 
 
 def band(label, mag, err, kind=BAND_NATIVE, filter_column=None, filter_value=None,
-         color=None, note=None):
+         color=None, note=None, combined=False):
     """One displayable band of a source.
 
     Parameters
@@ -56,6 +56,13 @@ def band(label, mag, err, kind=BAND_NATIVE, filter_column=None, filter_value=Non
     note : str, optional
         Short description of where a calibrated or derived band comes from,
         shown to the user next to the series.
+    combined : bool, optional
+        Whether this band belongs on the combined multi-survey light curve,
+        which is drawn on one common g scale. Only bands that are in g - as
+        measured, or converted there - set it; a source's own V, or W1, or an
+        Ic does not, however good a measurement it is. A source may set it on
+        more than one band, where it reaches g by more than one route: ZTF
+        contributes both the g it measured and the r it converted.
     """
     return {
         'label': label,
@@ -66,6 +73,7 @@ def band(label, mag, err, kind=BAND_NATIVE, filter_column=None, filter_value=Non
         'filter_value': filter_value,
         'color': color,
         'note': note,
+        'combined': combined,
     }
 
 
@@ -89,8 +97,10 @@ def survey_source(
     data_files=None,
     # Lightcurve metadata
     votable_file=None,
-    lc_bands=None,        # List of band() entries - what the viewer displays
-    lc_mag_column=None,   # Column the combined g-band light curve is built from
+    lc_bands=None,        # List of band() entries - what the viewer displays,
+                          # and which of them the combined g-band curve is
+                          # built from, through band(combined=True)
+    lc_mag_column=None,   # Fallback single column, for a source with no bands
     lc_err_column=None,
     lc_filter_column=None,
     lc_flux_column=None,
@@ -223,11 +233,12 @@ def survey_source(
         Bands the light curve viewer offers for this source, as band() entries.
         A source keeps every band it measures, so that the original photometry
         stays reachable; conversions between bands are additional entries of
-        kind BAND_DERIVED rather than replacements.
+        kind BAND_DERIVED rather than replacements. The entries carrying
+        combined=True are what the combined multi-survey curve draws.
     lc_mag_column : str, optional
-        Column the combined multi-survey light curve is built from - the one
-        converted to the common g scale where a conversion exists. Display goes
-        through lc_bands instead. (default: None)
+        Single magnitude column, for a source that declares no bands at all -
+        get_source_bands() makes one band of it. Both display and the combined
+        curve go through lc_bands otherwise. (default: None)
     lc_err_column : str, optional
         Column name for error (default: None)
     lc_filter_column : str, optional
@@ -429,20 +440,74 @@ def get_survey_ids_for_everything():
     return ['info'] + sorted(surveys, key=lambda k: SURVEY_SOURCES[k]['order']) + ['combined']
 
 
-def get_combined_lc_rules():
-    """Get rules for combined lightcurve plotting (magnitude sources only)."""
-    rules = {}
-    for source_id, config in SURVEY_SOURCES.items():
-        if config.get('lc_mode') == 'magnitude' and config.get('votable_file'):
-            rules[source_id] = {
+# Colours for the combined light curve, as (darker, lighter) pairs - one pair
+# per source, the darker for the band it reaches g by first and the lighter for
+# a second route to the same place, so that ZTF's measured g and its converted
+# r read as one survey seen twice rather than as two.
+#
+# The combined figure cannot use the colours the bands declare for themselves.
+# Those are picked per source, to tell one source's bands apart in the viewer,
+# and shades of one hue serve that well; here every source appears at once and
+# only its g band does, so the shades collide across sources instead. Assigned
+# by position in the registry, so that a source keeps its colour between the
+# short figure and the long one, and between one target and the next.
+COMBINED_COLOR_PAIRS = [
+    ('#1f77b4', '#aec7e8'), ('#ff7f0e', '#ffbb78'), ('#2ca02c', '#98df8a'),
+    ('#d62728', '#ff9896'), ('#9467bd', '#c5b0d5'), ('#8c564b', '#c49c94'),
+    ('#e377c2', '#f7b6d2'), ('#7f7f7f', '#c7c7c7'), ('#bcbd22', '#dbdb8d'),
+    ('#17becf', '#9edae5'), ('#393b79', '#6b6ecf'), ('#637939', '#b5cf6b'),
+    ('#8c6d31', '#e7ba52'), ('#843c39', '#d6616b'), ('#7b4173', '#ce6dbd'),
+]
+
+
+def get_combined_series(short=False):
+    """The series the combined light curve draws, in registry order.
+
+    One entry per band a source has marked as belonging on the common g scale,
+    rather than one per source. That distinction is the whole point: a source
+    reaching g by two routes contributes both - ZTF its measured g and its r
+    converted through the colour it measured itself - and a source with
+    nothing in g contributes none, which is how WISE's W1 and KWS's Ic stay
+    off an axis they would only mislead on.
+
+    Each entry says which rows to take as well as which column, so that a
+    table holding several bands at once gives up only the rows the band was
+    measured in.
+    """
+    series = []
+    nsources = 0
+
+    for source_id, config in get_all_survey_sources().items():
+        if not config.get('votable_file'):
+            continue
+
+        bands = [b for b in (config.get('lc_bands') or []) if b.get('combined')]
+        if not bands:
+            continue
+
+        # Counted whether or not this source is drawn, so that dropping to the
+        # short figure does not recolour the sources that remain
+        pair = COMBINED_COLOR_PAIRS[nsources % len(COMBINED_COLOR_PAIRS)]
+        nsources += 1
+
+        if short and not config.get('lc_short'):
+            continue
+
+        for i, b in enumerate(bands):
+            series.append({
+                'source_id': source_id,
                 'name': config['short_name'],
-                'filename': config.get('votable_file'),
-                'mag': config.get('lc_mag_column'),
-                'err': config.get('lc_err_column'),
-                'filter': config.get('lc_filter_column'),
-                'short': config.get('lc_short', False),
-            }
-    return rules
+                'filename': config['votable_file'],
+                'label': f"{config['short_name']} {b['label']}".strip(),
+                'mag': b['mag'],
+                'err': b['err'],
+                'filter_column': b.get('filter_column'),
+                'filter_value': b.get('filter_value'),
+                'color': pair[min(i, len(pair) - 1)],
+                'kind': b['kind'],
+            })
+
+    return series
 
 
 def get_output_files(source_id):

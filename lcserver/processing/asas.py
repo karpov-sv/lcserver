@@ -18,6 +18,7 @@ from .. import surveys
 from ..surveys import survey_source, get_output_files
 from .utils import (SourceError, cleanup_paths, cached_votable_query,
                     quality_field, quality_level, log_bands, log_conversion,
+                    assumed_color, v_to_g, V_TO_G_FORMULA,
                     QUALITY_STANDARD, QUALITY_RELAXED, QUALITY_PUBLISHED)
 
 
@@ -76,7 +77,8 @@ ASAS_SATURATION = 11.5
                      color='#17becf', note='as reported by ASAS-SN'),
         surveys.band('g (conv.)', 'mag_g', 'mag_err', surveys.BAND_DERIVED,
                      color='#9edae5',
-                     note='V and g put on a common g scale using an assumed g - r'),
+                     note='V and g put on a common g scale using an assumed g - r',
+                     combined=True),
     ],
     # The combined light curve wants everything on one scale
     lc_mag_column='mag_g',
@@ -251,8 +253,7 @@ def target_asas(config, basepath=None, verbose=True, show=False):
     asas['mag_g_nat'] = np.nan
     asas['mag_g'] = np.nan
 
-    g_minus_r = config.get('g_minus_r', 0.0)
-    g_minus_r_origin = 'from config' if 'g_minus_r' in config else 'default, no colour known'
+    g_minus_r, g_minus_r_origin = assumed_color(config, 'g_minus_r')
 
     # Plot lightcurve
     with plots.figure_saver(os.path.join(basepath, 'asas_lc.png'), figsize=(12, 4), show=show) as fig:
@@ -268,12 +269,12 @@ def target_asas(config, basepath=None, verbose=True, show=False):
         asas['mag_g_nat'][idx_g] = asas['mag'][idx_g]
 
         # ... and the same points carried onto a common g scale
-        asas['mag_g'][idx_V] = asas['mag'][idx_V] + 0.02 + 0.498*g_minus_r + 0.008*g_minus_r**2
+        asas['mag_g'][idx_V] = v_to_g(asas['mag'][idx_V], g_minus_r)
         asas['mag_g'][idx_g] = asas['mag'][idx_g] - 0.013 - 0.145*g_minus_r - 0.019*g_minus_r**2
 
         log_conversion(
             log, 'ASAS-SN',
-            'g = V + 0.02 + 0.498*(g-r) + 0.008*(g-r)^2',
+            V_TO_G_FORMULA,
             {'(g - r)': (g_minus_r, g_minus_r_origin)},
             npoints=int(np.sum(idx_V)),
             note='the colour is assumed constant over the whole light curve',

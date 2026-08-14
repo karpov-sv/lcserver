@@ -28,6 +28,8 @@ from .. import surveys
 from ..surveys import survey_source, get_output_files
 from .utils import (SourceError, cleanup_paths, cached_votable_query,
                     quality_field, quality_level, log_bands, log_conversion,
+                    assumed_color, rotse_to_v, v_to_g,
+                    ROTSE_TO_V_FORMULA, V_TO_G_FORMULA,
                     QUALITY_STANDARD, QUALITY_RELAXED, QUALITY_PUBLISHED)
 
 
@@ -253,6 +255,15 @@ def _frame_times(log):
         surveys.band('R', 'mag', 'magerr', surveys.BAND_NATIVE,
                      filter_column='filter', filter_value='R', color='#e377c2',
                      note='unfiltered ROTSE-I, closest to R'),
+        surveys.band('V (conv.)', 'mag_V', 'magerr', surveys.BAND_DERIVED,
+                     filter_column='filter', filter_value='R', color='#f7b6d2',
+                     note="the survey's own colour term undone using an "
+                          'assumed B - V, which puts it on Johnson V'),
+        surveys.band('g (conv.)', 'mag_g', 'magerr', surveys.BAND_DERIVED,
+                     filter_column='filter', filter_value='R', color='#fbd4e4',
+                     note='and on from V to the common g scale using an '
+                          'assumed g - r',
+                     combined=True),
     ],
     lc_mag_column='mag',
     lc_err_column='magerr',
@@ -414,9 +425,34 @@ def target_nsvs(config, basepath=None, verbose=True, show=False):
         npoints=len(nsvs),
     )
 
+    # Onto the common g scale, in two steps. The band is unfiltered and wide,
+    # but its zero point is not: NSVS magnitudes are defined against V with a
+    # colour term already built into them, so undoing that term is what puts
+    # them on V, and the usual V to g conversion follows.
+    B_minus_V, B_minus_V_origin = assumed_color(config, 'B_minus_V')
+    g_minus_r, g_minus_r_origin = assumed_color(config, 'g_minus_r')
+
+    nsvs['mag_V'] = rotse_to_v(np.asarray(nsvs['mag'], dtype=float), B_minus_V)
+    nsvs['mag_g'] = v_to_g(nsvs['mag_V'], g_minus_r)
+
+    log_conversion(
+        log, 'NSVS',
+        ROTSE_TO_V_FORMULA + ',  then  ' + V_TO_G_FORMULA,
+        {'(B - V)': (B_minus_V, B_minus_V_origin),
+         '(g - r)': (g_minus_r, g_minus_r_origin),
+         'definition': ('m_ROTSE = V - (B - V)/1.875',
+                        'Wozniak et al. 2004, how the survey set its zero point')},
+        npoints=len(nsvs),
+        note='both colours are assumed constant; the native magnitudes are kept',
+    )
+
     log_bands(log, 'NSVS', [
         {'label': 'R', 'kind': 'native', 'npoints': len(nsvs),
          'note': 'unfiltered, as reported'},
+        {'label': 'V (conv.)', 'kind': 'derived', 'npoints': len(nsvs),
+         'note': "the survey's own colour term undone, putting it on V"},
+        {'label': 'g (conv.)', 'kind': 'derived', 'npoints': len(nsvs),
+         'note': 'on the common g scale, through V'},
     ])
 
     # Plot lightcurve

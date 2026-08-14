@@ -15,7 +15,8 @@ from stdpipe import plots
 
 from .. import surveys
 from ..surveys import survey_source, get_output_files
-from .utils import SourceError, cleanup_paths, cached_votable_query, log_bands, log_conversion
+from .utils import (SourceError, cleanup_paths, cached_votable_query, log_bands,
+                    log_conversion, assumed_color, v_to_g, V_TO_G_FORMULA)
 
 
 @survey_source(
@@ -43,13 +44,18 @@ from .utils import SourceError, cleanup_paths, cached_votable_query, log_bands, 
                      filter_column='filter', filter_value='V',
                      color='#8c564b',
                      note='as reported by Mini-MegaTORTORA'),
+        surveys.band('g (conv.)', 'mag_g', 'magerr', surveys.BAND_DERIVED,
+                     filter_column='filter', filter_value='V',
+                     color='#c49c94',
+                     note='V put on the common g scale using an assumed g - r',
+                     combined=True),
     ],
     lc_mag_column='mag',
     lc_err_column='magerr',
     lc_filter_column='filter',
     lc_color='#8c564b',
     lc_mode='magnitude',
-    lc_short=False,
+    lc_short=True,
     # Template metadata
     template_layout='with_cutout',
     # The survey's own all-sky mosaic, which is the useful thing to look at
@@ -176,9 +182,25 @@ def target_mmt9(config, basepath=None, verbose=True, show=False):
         npoints=len(mmt9),
     )
 
+    # The common g scale, as for the other V-band surveys. The white-light
+    # channel is only calibrated against V rather than measured in it, so the
+    # residual colour term of the band itself sits on top of the assumed colour.
+    g_minus_r, g_minus_r_origin = assumed_color(config, 'g_minus_r')
+    mmt9['mag_g'] = v_to_g(mmt9['mag'], g_minus_r)
+
+    log_conversion(
+        log, 'MMT9',
+        V_TO_G_FORMULA,
+        {'(g - r)': (g_minus_r, g_minus_r_origin)},
+        npoints=len(mmt9),
+        note='the colour is assumed constant over the whole light curve',
+    )
+
     log_bands(log, 'MMT9', [
         {'label': 'V', 'kind': 'native', 'npoints': len(mmt9),
          'note': 'as reported by Mini-MegaTORTORA'},
+        {'label': 'g (conv.)', 'kind': 'derived', 'npoints': len(mmt9),
+         'note': 'on the common g scale'},
     ])
 
     log(f"{len(mmt9)} data points after filtering")

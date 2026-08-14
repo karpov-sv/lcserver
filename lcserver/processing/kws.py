@@ -17,7 +17,8 @@ from .. import surveys
 from ..surveys import survey_source, get_output_files
 from .utils import (SourceError, cleanup_paths, cached_votable_query,
                     clip_noisy_points, quality_field, quality_level,
-                    log_bands, log_conversion, CLIP_RATIO_BY_LEVEL,
+                    log_bands, log_conversion, assumed_color, v_to_g, b_to_g,
+                    V_TO_G_FORMULA, B_TO_G_FORMULA, CLIP_RATIO_BY_LEVEL,
                     QUALITY_STANDARD, QUALITY_RELAXED, QUALITY_PUBLISHED)
 
 
@@ -52,13 +53,23 @@ KWS_COLOR_DT = 0.01
                      filter_column='filter', filter_value=fn, color=color,
                      note='as reported by KWS')
         for fn, color in [('V', '#e377c2'), ('Ic', '#8c564b'), ('B', '#1f77b4')]
+    ] + [
+        surveys.band('g (conv.)', 'mag_g', 'magerr', surveys.BAND_DERIVED,
+                     filter_column='filter', filter_value='V', color='#f7b6d2',
+                     note='V put on the common g scale using an assumed g - r',
+                     combined=True),
+        # Not on the combined curve: where B was measured V almost always was
+        # too, and drawing both would show one star twice from one survey
+        surveys.band('g (from B)', 'mag_g_from_B', 'magerr', surveys.BAND_DERIVED,
+                     filter_column='filter', filter_value='B', color='#aec7e8',
+                     note='B put on the common g scale using an assumed g - r'),
     ],
     lc_mag_column='mag',
     lc_err_column='magerr',
     lc_filter_column='filter',
     lc_color='#e377c2',
     lc_mode='magnitude',
-    lc_short=False,
+    lc_short=True,
     # Template metadata
     template_layout='with_cutout',
     requires_coordinates=False,
@@ -224,11 +235,49 @@ def target_kws(config, basepath=None, verbose=True, show=False):
         npoints=len(kws),
     )
 
+    # The common g scale, from V and from B. Ic is left where it is: it is a
+    # good measurement, and no assumed colour would make it a g one.
+    g_minus_r, g_minus_r_origin = assumed_color(config, 'g_minus_r')
+
+    kws['mag_g'] = np.nan
+    kws['mag_g'][idx_V] = v_to_g(kws['mag'][idx_V], g_minus_r)
+
+    idx_B = kws['filter'] == 'B'
+    kws['mag_g_from_B'] = np.nan
+    kws['mag_g_from_B'][idx_B] = b_to_g(kws['mag'][idx_B], g_minus_r)
+
+    n_V, n_B = int(np.sum(idx_V)), int(np.sum(idx_B))
+
+    if n_V:
+        log_conversion(
+            log, 'KWS',
+            V_TO_G_FORMULA,
+            {'(g - r)': (g_minus_r, g_minus_r_origin)},
+            npoints=n_V,
+            note='the colour is assumed constant over the whole light curve',
+        )
+
+    if n_B:
+        log_conversion(
+            log, 'KWS',
+            B_TO_G_FORMULA,
+            {'(g - r)': (g_minus_r, g_minus_r_origin)},
+            npoints=n_B,
+            note='offered for inspection only - the combined light curve takes '
+                 'the V route, which is the better determined of the two, and '
+                 'would otherwise draw this star twice from one survey',
+        )
+
     log_bands(log, 'KWS', [
         {'label': fn, 'kind': 'native',
          'npoints': int(np.sum(kws['filter'] == fn)),
          'note': 'as reported by KWS'}
         for fn in kws_filters
+    ] + [
+        {'label': 'g (conv.)', 'kind': 'derived', 'npoints': n_V,
+         'note': 'V on the common g scale'},
+        {'label': 'g (from B)', 'kind': 'derived', 'npoints': n_B,
+         'note': 'B on the common g scale'},
     ])
 
     # Plot lightcurve

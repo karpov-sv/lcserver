@@ -19,7 +19,8 @@ from stdpipe import plots
 
 from .. import surveys
 from ..surveys import survey_source, get_output_files
-from .utils import SourceError, cleanup_paths, cached_votable_query, log_bands, log_conversion
+from .utils import (SourceError, cleanup_paths, cached_votable_query, log_bands,
+                    log_conversion, assumed_color, v_to_g, V_TO_G_FORMULA)
 
 
 OMC_FORM_URL = 'https://sdc.cab.inta-csic.es/omc/secure/form_busqueda.jsp'
@@ -174,13 +175,14 @@ def _download_lightcurve(session, obj_id, lct_id):
                      color='#17becf', note='as reported by OMC'),
         surveys.band('g (conv.)', 'mag_g', 'magerr', surveys.BAND_DERIVED,
                      color='#9edae5',
-                     note='V put on the common g scale using an assumed g - r'),
+                     note='V put on the common g scale using an assumed g - r',
+                     combined=True),
     ],
     lc_mag_column='mag_g',
     lc_err_column='magerr',
     lc_color='#17becf',
     lc_mode='magnitude',
-    lc_short=False,
+    lc_short=True,
     # Template metadata. No cutout: OMC publishes no HiPS of its own, and a
     # sky survey's image would say nothing about what OMC itself saw.
     template_layout='simple',
@@ -308,14 +310,13 @@ def target_omc(config, basepath=None, verbose=True, show=False):
         return
 
     # The common g scale, as for the other V-band surveys
-    g_minus_r = config.get('g_minus_r', 0.0)
-    g_minus_r_origin = 'from config' if 'g_minus_r' in config else 'default, no colour known'
+    g_minus_r, g_minus_r_origin = assumed_color(config, 'g_minus_r')
 
-    omc['mag_g'] = omc['mag'] + 0.02 + 0.498*g_minus_r + 0.008*g_minus_r**2
+    omc['mag_g'] = v_to_g(omc['mag'], g_minus_r)
 
     log_conversion(
         log, 'OMC',
-        'g = V + 0.02 + 0.498*(g-r) + 0.008*(g-r)^2',
+        V_TO_G_FORMULA,
         {'(g - r)': (g_minus_r, g_minus_r_origin),
          'aperture': magcol},
         npoints=len(omc),

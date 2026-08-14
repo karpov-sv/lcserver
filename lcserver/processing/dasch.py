@@ -20,6 +20,7 @@ from .. import surveys
 from ..surveys import survey_source, get_output_files
 from .utils import (SourceError, cleanup_paths, cached_votable_query,
                     quality_field, quality_level, log_bands, log_conversion,
+                    assumed_color, b_to_g, B_TO_G_FORMULA,
                     QUALITY_STANDARD, QUALITY_RELAXED, QUALITY_PUBLISHED)
 
 
@@ -97,6 +98,11 @@ DASCH_MAX_LOCAL_RMS = 0.4
         surveys.band('phot', 'magcal_magdep', 'magerr', surveys.BAND_NATIVE,
                      color='#d62728',
                      note='DASCH calibrated photographic magnitudes, as reported'),
+        surveys.band('g (conv.)', 'mag_g', 'magerr', surveys.BAND_DERIVED,
+                     color='#ff9896',
+                     note='the plates taken as Johnson B and put on the common '
+                          'g scale using an assumed g - r',
+                     combined=True),
     ],
     lc_mag_column='mag_g',
     lc_err_column='magerr',
@@ -348,23 +354,32 @@ def target_dasch(config, basepath=None, verbose=True, show=False):
     else:
         dasch['magerr'] = dasch['magcal_local_rms']
 
-    # No conversion is available for the photographic plates, so the common
-    # g column is the native magnitude under another name. Said plainly here,
-    # because the name would otherwise suggest a conversion that never happened.
-    dasch['mag_g'] = dasch['magcal_magdep']
+    # The plates are blue-sensitive and DASCH calibrates them against B, so the
+    # way onto the common g scale is the B to g relation - not the identity
+    # this column used to hold, which put a B magnitude on a g axis and called
+    # it converted. What remains uncorrected is the colour term of the emulsion
+    # itself, which varies from plate to plate and is larger than the relation's
+    # own scatter, so this is the roughest of the conversions by some way.
+    g_minus_r, g_minus_r_origin = assumed_color(config, 'g_minus_r')
+    dasch['mag_g'] = b_to_g(np.asarray(dasch['magcal_magdep'], dtype=float),
+                            g_minus_r)
 
     log_conversion(
         log, 'DASCH',
-        'g = magcal_magdep   (no conversion applied)',
-        {'colour term': ('none available', 'photographic plates, blue-sensitive')},
+        B_TO_G_FORMULA,
+        {'(g - r)': (g_minus_r, g_minus_r_origin),
+         'emulsion colour term': ('not corrected for',
+                                  'varies plate to plate, and is not published')},
         npoints=len(dasch),
-        note='the photographic band is closer to B than to g; the combined light '
-             'curve uses these magnitudes unchanged',
+        note='the photographic band is treated as Johnson B, which it resembles '
+             'but is not; the native magnitudes are kept as the phot band',
     )
 
     log_bands(log, 'DASCH', [
         {'label': 'phot', 'kind': 'native', 'npoints': len(dasch),
          'note': 'calibrated photographic magnitudes'},
+        {'label': 'g (conv.)', 'kind': 'derived', 'npoints': len(dasch),
+         'note': 'the plates taken as B and put on the common g scale'},
     ])
 
     log(f"{len(dasch)} data points after filtering")

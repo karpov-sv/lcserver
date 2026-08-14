@@ -17,7 +17,8 @@ from stdpipe import plots
 
 from .. import surveys
 from ..surveys import survey_source, get_output_files
-from .utils import SourceError, cleanup_paths, cached_votable_query, log_bands, log_conversion
+from .utils import (SourceError, cleanup_paths, cached_votable_query, log_bands,
+                    log_conversion, assumed_color, v_to_g, V_TO_G_FORMULA)
 
 
 @survey_source(
@@ -47,13 +48,18 @@ from .utils import SourceError, cleanup_paths, cached_votable_query, log_bands, 
         surveys.band('V (corr.)', 'mag_V', 'magerr', surveys.BAND_DERIVED,
                      color='#9edae5',
                      note='colour-corrected onto standard V using an assumed B - V'),
+        surveys.band('g (conv.)', 'mag_g', 'magerr', surveys.BAND_DERIVED,
+                     color='#c5e8ed',
+                     note='the corrected V put on the common g scale using an '
+                          'assumed g - r',
+                     combined=True),
     ],
     lc_mag_column='mag_V',
     lc_err_column='magerr',
     lc_filter_column='filter',
     lc_color='#17becf',
     lc_mode='magnitude',
-    lc_short=False,
+    lc_short=True,
     # Template metadata
     template_layout='simple',
 )
@@ -176,20 +182,32 @@ def target_css(config, basepath=None, verbose=True, show=False):
     css['filter'] = 'V'  # CSS uses variant of V band
 
     # V = V_CSS + 0.31*(B-V) + 0.04 (sigma=0.059)
-    B_minus_V = config.get('B_minus_V', 0)
+    B_minus_V, B_minus_V_origin = assumed_color(config, 'B_minus_V')
     css['mag_V'] = css['mag'] + 0.31*B_minus_V + 0.04
-    # TODO: g mag?..
 
     log_conversion(
         log, 'CSS',
         'V = V_CSS + 0.31*(B-V) + 0.04',
         {
-            '(B - V)': (B_minus_V,
-                        'from config' if 'B_minus_V' in config else 'default, no colour known'),
+            '(B - V)': (B_minus_V, B_minus_V_origin),
             'scatter of the relation': 0.059,
         },
         npoints=len(css),
         note='the colour is assumed constant; the native CSS magnitudes are kept as well',
+    )
+
+    # ... and on from there to the common g scale, the same second step the
+    # other V-band surveys take. Two assumed colours deep, so the standing of
+    # this band is that of the weaker of them.
+    g_minus_r, g_minus_r_origin = assumed_color(config, 'g_minus_r')
+    css['mag_g'] = v_to_g(css['mag_V'], g_minus_r)
+
+    log_conversion(
+        log, 'CSS',
+        V_TO_G_FORMULA,
+        {'(g - r)': (g_minus_r, g_minus_r_origin)},
+        npoints=len(css),
+        note='applied to the corrected V above, so both assumed colours enter',
     )
 
     log_bands(log, 'CSS', [
@@ -197,6 +215,8 @@ def target_css(config, basepath=None, verbose=True, show=False):
          'note': 'unfiltered CSS magnitudes, as reported'},
         {'label': 'V (corr.)', 'kind': 'derived', 'npoints': len(css),
          'note': 'on the standard V scale'},
+        {'label': 'g (conv.)', 'kind': 'derived', 'npoints': len(css),
+         'note': 'on the common g scale, through V'},
     ])
 
     # Add time column

@@ -18,7 +18,8 @@ from stdpipe import plots
 from .. import surveys
 from ..surveys import survey_source, get_output_files
 from .utils import (SourceError, cleanup_paths, cached_votable_query, irsa_client,
-                    log_bands, log_conversion)
+                    log_bands, log_conversion, assumed_color, r_to_g,
+                    R_TO_G_FORMULA)
 
 
 @survey_source(
@@ -36,13 +37,20 @@ from .utils import (SourceError, cleanup_paths, cached_votable_query, irsa_clien
     lc_bands=[
         surveys.band('g', 'mag', 'magerr', surveys.BAND_NATIVE,
                      filter_column='filter', filter_value='g',
-                     color='#17becf', note='as reported by PTF'),
+                     color='#17becf', note='as reported by PTF',
+                     combined=True),
         surveys.band('R', 'mag', 'magerr', surveys.BAND_NATIVE,
                      filter_column='filter', filter_value='R',
                      color='#bcbd22', note='as reported by PTF'),
         surveys.band('Ha', 'mag', 'magerr', surveys.BAND_NATIVE,
                      filter_column='filter', filter_value='Ha',
                      color='#e377c2', note='as reported by PTF'),
+        surveys.band('g (from R)', 'mag_g_from_R', 'magerr', surveys.BAND_DERIVED,
+                     filter_column='filter', filter_value='R',
+                     color='#dbdb8d',
+                     note='R taken as SDSS r and moved onto g using an '
+                          'assumed g - r',
+                     combined=True),
     ],
     lc_mag_column='mag',
     lc_err_column='magerr',
@@ -158,11 +166,37 @@ def target_ptf(config, basepath=None, verbose=True, show=False):
         npoints=len(ptf),
     )
 
+    # PTF's g needs nothing to join the combined light curve; its R does, and
+    # is where the bulk of the points are. The Mould R it observes in sits
+    # close enough to SDSS r to be converted as one, which is an approximation
+    # on top of the assumed colour, though a small one beside it.
+    g_minus_r, g_minus_r_origin = assumed_color(config, 'g_minus_r')
+
+    idx_R = ptf['filter'] == 'R'
+    ptf['mag_g_from_R'] = np.nan
+    ptf['mag_g_from_R'][idx_R] = r_to_g(ptf['mag'][idx_R], g_minus_r)
+
+    n_R = int(np.sum(idx_R))
+
+    if n_R:
+        log_conversion(
+            log, 'PTF',
+            R_TO_G_FORMULA,
+            {'(g - r)': (g_minus_r, g_minus_r_origin),
+             'R': ('taken as SDSS r', 'PTF observes in Mould R, which is close')},
+            npoints=n_R,
+            note='only so that the R points reach the combined light curve; '
+                 'the native bands are untouched',
+        )
+
     log_bands(log, 'PTF', [
         {'label': str(fn), 'kind': 'native',
          'npoints': int(np.sum(ptf['filter'] == fn)),
          'note': 'as reported by PTF'}
         for fn in np.unique(ptf['filter'])
+    ] + [
+        {'label': 'g (from R)', 'kind': 'derived', 'npoints': n_R,
+         'note': 'R on the common g scale'},
     ])
 
     if not len(ptf):

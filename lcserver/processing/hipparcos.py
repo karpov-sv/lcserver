@@ -25,7 +25,8 @@ from stdpipe import plots
 
 from .. import surveys
 from ..surveys import survey_source, get_output_files
-from .utils import SourceError, cleanup_paths, cached_votable_query, log_bands, log_conversion
+from .utils import (SourceError, cleanup_paths, cached_votable_query, log_bands,
+                    log_conversion, assumed_color, v_to_g, V_TO_G_FORMULA)
 
 
 HIP_ANNEXE_URL = 'https://cdsarc.cds.unistra.fr/ftp/I/239/epophot/hep.gz'
@@ -176,6 +177,11 @@ def _fetch_record(hip, offsets, log):
         surveys.band('Hp', 'mag', 'magerr', surveys.BAND_NATIVE,
                      filter_column='filter', filter_value='Hp', color='#7f7f7f',
                      note='Hipparcos broad band, wider than V'),
+        surveys.band('g (conv.)', 'mag_g', 'magerr', surveys.BAND_DERIVED,
+                     filter_column='filter', filter_value='Hp', color='#c7c7c7',
+                     note='Hp taken as V - no Hp - V term is applied - and put '
+                          'on the common g scale using an assumed g - r',
+                     combined=True),
     ],
     lc_mag_column='mag',
     lc_err_column='magerr',
@@ -314,9 +320,32 @@ def target_hipparcos(config, basepath=None, verbose=True, show=False):
         npoints=len(hipp),
     )
 
+    # Onto the common g scale, by treating Hp as V and converting from there.
+    # The Hipparcos zero point was set so that Hp = V at B - V = 0, which is
+    # what makes this defensible at all; away from that colour Hp and V part
+    # company, and the published relation between them is a table interpolated
+    # in colours we do not have (Bessell 2000), not something to apply here.
+    # So the Hp - V term is simply not taken out, and this band is the roughest
+    # on the combined curve.
+    g_minus_r, g_minus_r_origin = assumed_color(config, 'g_minus_r')
+    hipp['mag_g'] = v_to_g(np.asarray(hipp['mag'], dtype=float), g_minus_r)
+
+    log_conversion(
+        log, 'Hipparcos',
+        'V = Hp   (no colour term),  then  ' + V_TO_G_FORMULA,
+        {'(g - r)': (g_minus_r, g_minus_r_origin),
+         'Hp - V': ('not corrected for',
+                    'zero point set so that Hp = V at B - V = 0')},
+        npoints=len(hipp),
+        note='the Hp - V term is left in, so a red star lands further off the '
+             'common scale than the other converted bands do',
+    )
+
     log_bands(log, 'Hipparcos', [
         {'label': 'Hp', 'kind': 'native', 'npoints': len(hipp),
          'note': 'individual transits, as reported'},
+        {'label': 'g (conv.)', 'kind': 'derived', 'npoints': len(hipp),
+         'note': 'Hp taken as V and converted, without an Hp - V term'},
     ])
 
     # Plot lightcurve
