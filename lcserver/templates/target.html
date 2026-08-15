@@ -295,7 +295,7 @@
         </div>
       {% endif %}
 
-      <div class="col-md">
+      <div class="col-md-auto" style="max-width: 520px">
         {% if 'target_ra' in target.config and 'target_dec' in target.config %}
           <!-- include Aladin Lite CSS file in the head section of your page -->
           <link rel="stylesheet" href="https://aladin.u-strasbg.fr/AladinLite/api/v3/latest/aladin.min.css" />
@@ -329,7 +329,7 @@
           {% make_list 'galaxy_map.png' 'dust_3d.png' 'gaia_xp.png' as list %}
           {% for name in list %}
             {% if name in files %}
-              <div class="col" style="max-width: 256px">
+              <div class="col" style="min-width: 256px; max-width: 256px">
                 {% include "target_block_image.html" with image=name target=target only %}
               </div>
             {% endif %}

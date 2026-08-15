@@ -7,7 +7,13 @@
     {% include "target_block_text.html" with file=source_config.log_file %}
   </div>
 
-  <div class="col-md">
+  {% comment %}
+     Wide enough for two thumbnails, and no wider: a col-md-auto asks for the
+     width its content wants, which for a source with forty sector plots is
+     forty of them side by side - more than the row can give, so the whole
+     column would wrap below the log. Capped, the plots turn over instead.
+  {% endcomment %}
+  <div class="col-md-auto" style="max-width: 520px">
     <div class="row">
       {% if source_config.show_cutout %}
         <!-- Multiple cutouts -->
@@ -28,7 +34,7 @@
         {% for pattern in source_config.additional_plots %}
           {% for name in files|fnmatch_filter:pattern|sort %}
             {% if name in files %}
-              <div class="col" style="max-width: 256px">
+              <div class="col" style="min-width: 256px; max-width: 256px">
                 {% include "target_block_image.html" with image=name target=target only %}
               </div>
             {% endif %}
