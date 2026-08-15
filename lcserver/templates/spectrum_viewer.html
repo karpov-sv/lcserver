@@ -7,6 +7,9 @@
 {% block head %}
 <script src="https://cdn.plot.ly/plotly-3.7.0.min.js" charset="utf-8"></script>
 
+{% load static %}
+<script src="{% static 'plot_theme.js' %}"></script>
+
 <style>
 .control-panel {
     background-color: var(--bs-light);
@@ -423,15 +426,12 @@
          });
      }
 
-     // Plotly works out the modebar's background, and the shading it dims the
-     // page with while a zoom box is being dragged, from these two colours -
-     // and reads a transparent one as black, alpha and all. Asking for no
-     // background at all therefore bought a modebar on a dark grey slab, and a
-     // selection shaded in white against a white page, which is to say no
-     // visible selection. The page's own colour is what is behind the plot
-     // anyway, so handing it over changes nothing on screen and lets both be
-     // worked out correctly, in either theme.
-     const background = getComputedStyle(document.body).backgroundColor;
+     // The colours of the page the plot is drawn on - the backgrounds among
+     // them, which Plotly needs given rather than left unset: it works out the
+     // modebar's background, and the shading it dims the page with while a
+     // zoom box is being dragged, from those two, and reads a transparent one
+     // as black, alpha and all.
+     const theme = plotlyTheme();
 
      Plotly.react('plotly-container', traces, {
          margin: {l: 60, r: 20, t: 30, b: 50},
@@ -441,21 +441,22 @@
              // it had been deprecating - given the string, it labels nothing
              title: {text: 'Wavelength, A'},
              type: logx ? 'log' : 'linear',
-             showgrid: true, gridcolor: 'rgba(128,128,128,0.2)',
+             showgrid: true, gridcolor: theme.gridcolor,
          },
          yaxis: {
              title: {text: scaling === 'normalised'
                      ? 'Flux / median' : 'Flux, erg s\u207b\u00b9 cm\u207b\u00b2 \u00c5\u207b\u00b9'},
              type: document.getElementById('log-check').checked ? 'log' : 'linear',
-             showgrid: true, gridcolor: 'rgba(128,128,128,0.2)',
+             showgrid: true, gridcolor: theme.gridcolor,
          },
          shapes: shapes,
          annotations: annotations,
          hovermode: 'closest',
          showlegend: true,
          legend: {orientation: 'h', y: -0.15},
-         paper_bgcolor: background,
-         plot_bgcolor: background,
+         font: theme.font,
+         paper_bgcolor: theme.paper_bgcolor,
+         plot_bgcolor: theme.plot_bgcolor,
      }, {responsive: true, displaylogo: false});
  }
 
@@ -576,6 +577,10 @@
 
          buildControls();
          redraw();
+
+         // The plot keeps to the reader's theme if it changes with the page
+         // open, without losing the zoom or anything else set since
+         onThemeChange(() => plotlyRetheme('plotly-container'));
      })
      .catch(err => {
          document.getElementById('loading-indicator').style.display = 'none';

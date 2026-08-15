@@ -10,6 +10,9 @@
 <!-- Plotly.js -->
 <script src="https://cdn.plot.ly/plotly-3.7.0.min.js" charset="utf-8"></script>
 
+{% load static %}
+<script src="{% static 'plot_theme.js' %}"></script>
+
 <style>
 .control-panel {
     background-color: var(--bs-light);
@@ -517,6 +520,8 @@ function preparePhaseData(series, seriesIndex, period, epoch) {
 function updatePlot() {
     const traces = [];
     const isPhaseFolded = phasePeriod > 0;
+    // The colours of the page the plot is drawn on, light or dark
+    const theme = plotlyTheme();
 
     // Determine value label and data keys based on mode
     const valueLabel = isMagnitudeMode ? 'Magnitude' : 'Normalized Flux';
@@ -681,18 +686,18 @@ function updatePlot() {
             },
             xaxis: isPhaseFolded ? {
                 title: {text: `Phase (P = ${phasePeriod.toFixed(6)} days, T₀ = ${phaseEpoch.toFixed(2)} MJD)`},
-                gridcolor: '#e0e0e0',
+                gridcolor: theme.gridcolor,
                 range: [-0.6, 1.6],
                 zeroline: false,
             } : {
                 title: {text: useMJDMode ? 'Modified Julian Date (MJD)' : 'Universal Time (UT)'},
-                gridcolor: '#e0e0e0',
+                gridcolor: theme.gridcolor,
                 zeroline: false,
             },
             yaxis: {
                 title: {text: yAxisTitle},
                 autorange: isMagnitudeMode ? 'reversed' : true,  // Inverted for magnitudes, normal for flux
-                gridcolor: '#e0e0e0',
+                gridcolor: theme.gridcolor,
                 zeroline: false,
             },
             hovermode: 'closest',
@@ -712,8 +717,9 @@ function updatePlot() {
                 t: 60,
                 b: 60
             },
-            plot_bgcolor: 'white',
-            paper_bgcolor: 'white',
+            font: theme.font,
+            plot_bgcolor: theme.plot_bgcolor,
+            paper_bgcolor: theme.paper_bgcolor,
             shapes: isPhaseFolded ? [
                 {
                     type: 'line',
@@ -772,12 +778,12 @@ function updatePlot() {
             },
             xaxis: isPhaseFolded ? {
                 title: {text: `Phase (P = ${phasePeriod.toFixed(6)} days, T₀ = ${phaseEpoch.toFixed(2)} MJD)`},
-                gridcolor: '#e0e0e0',
+                gridcolor: theme.gridcolor,
                 range: [-0.6, 1.6],
                 zeroline: false,
             } : {
                 title: {text: useMJDMode ? 'Modified Julian Date (MJD)' : 'Universal Time (UT)'},
-                gridcolor: '#e0e0e0',
+                gridcolor: theme.gridcolor,
                 // Preserve current range if it exists (only in time mode)
                 range: currentLayout.xaxis.range,
                 autorange: currentLayout.xaxis.autorange,
@@ -785,7 +791,7 @@ function updatePlot() {
             },
             yaxis: {
                 title: {text: yAxisTitle},
-                gridcolor: '#e0e0e0',
+                gridcolor: theme.gridcolor,
                 // Preserve current range if it exists
                 range: currentLayout.yaxis.range,
                 autorange: currentLayout.yaxis.autorange,
@@ -808,8 +814,9 @@ function updatePlot() {
                 t: 60,
                 b: 60
             },
-            plot_bgcolor: 'white',
-            paper_bgcolor: 'white',
+            font: theme.font,
+            plot_bgcolor: theme.plot_bgcolor,
+            paper_bgcolor: theme.paper_bgcolor,
             shapes: isPhaseFolded ? [
                 {
                     type: 'line',
@@ -1127,16 +1134,20 @@ function plotPeriodogram(data) {
     if (data.truncated)
         title += ' (grid truncated)';
 
+    const theme = plotlyTheme();
+
     Plotly.newPlot('periodogram-container', traces, {
         title: {text: title, font: {size: 12}},
         xaxis: {title: {text: 'Period, days'}, type: 'log', automargin: true,
-                showline: true, zeroline: false},
+                showline: true, linecolor: theme.linecolor, zeroline: false},
         yaxis: {title: {text: 'Power'}, automargin: true, showline: true,
-                zeroline: false, rangemode: 'tozero'},
+                linecolor: theme.linecolor, zeroline: false, rangemode: 'tozero'},
         hovermode: 'closest',
         autosize: true,
         margin: {t: 30, r: 30},
-        font: {size: 10},
+        font: {size: 10, color: theme.font.color},
+        paper_bgcolor: theme.paper_bgcolor,
+        plot_bgcolor: theme.plot_bgcolor,
         showlegend: true
     }, {responsive: true, displaylogo: false});
 
@@ -1648,6 +1659,14 @@ window.addEventListener('popstate', function(event) {
 // Initialize on page load
 document.addEventListener('DOMContentLoaded', function() {
     loadLightcurveData();
+
+    // Both plots follow the reader's theme if it changes with the page open,
+    // and only their colours are touched - a zoom, a fold, or a fitted period
+    // all survive it
+    onThemeChange(function() {
+        plotlyRetheme('plotly-container');
+        plotlyRetheme('periodogram-container');
+    });
 });
 </script>
 

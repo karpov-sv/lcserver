@@ -7,6 +7,9 @@
 {% block head %}
   <script src="https://cdn.plot.ly/plotly-3.7.0.min.js" charset="utf-8"></script>
 
+  {% load static %}
+  <script src="{% static 'plot_theme.js' %}"></script>
+
   <style>
    /* A formula wraps between its terms and never inside one - hence a span
       per term, as hard spaces alone would still let a browser break after the
@@ -330,6 +333,9 @@
      };
 
      var layout_of = function(stacked){
+       // The page's own colours, so that the plot is in the reader's theme
+       var theme = plotlyTheme();
+
        var yaxis = {
          title: {text: stacked ? 'Transmission, one family per step'
                                : 'Transmission, normalised'},
@@ -337,7 +343,7 @@
          // Stacked, the numbers on the axis would say nothing - each family
          // has a zero of its own - so a gridline per family marks them instead
          showticklabels: !stacked,
-         showgrid: true, gridcolor: '#e0e0e0', zeroline: false,
+         showgrid: true, gridcolor: theme.gridcolor, zeroline: false,
        };
 
        if(stacked)
@@ -348,13 +354,14 @@
          xaxis: {
            type: 'log',
            title: {text: 'Wavelength, µm'},
-           showgrid: true, gridcolor: '#e0e0e0', zeroline: false,
+           showgrid: true, gridcolor: theme.gridcolor, zeroline: false,
          },
          yaxis: yaxis,
          hovermode: 'closest',
          legend: {orientation: 'h', y: -0.18},
-         plot_bgcolor: 'white',
-         paper_bgcolor: 'white',
+         font: theme.font,
+         plot_bgcolor: theme.plot_bgcolor,
+         paper_bgcolor: theme.paper_bgcolor,
        };
      };
 
@@ -380,6 +387,7 @@
      };
 
      $('#passband-stack').on('change', redraw);
+     onThemeChange(function(){ plotlyRetheme('passband-plot'); });
 
      $.getJSON("{% url 'passbands_data' %}")
       .done(function(data){
