@@ -29,6 +29,13 @@ SDSS_SERVICE = 'https://skyserver.sdss.org/dr18/SkyserverWS/ImgCutout/getjpeg'
 PS1_FILENAMES_SERVICE = 'https://ps1images.stsci.edu/cgi-bin/ps1filenames.py'
 PS1_CUTOUT_SERVICE = 'https://ps1images.stsci.edu/cgi-bin/fitscut.cgi'
 
+# Where the name on a cutout leads - the same position, at whoever made the
+# image. Anything on a HiPS goes to Aladin Lite, which will show any of them
+# without our having to know where the tiles are actually kept
+ALADIN_SERVICE = 'https://aladin.cds.unistra.fr/AladinLite/'
+SDSS_NAVIGATE_SERVICE = 'https://skyserver.sdss.org/dr18/VisualTools/navi'
+PS1_PAGE_SERVICE = 'https://ps1images.stsci.edu/cgi-bin/ps1cutouts'
+
 # Size of the images requested from the services, in pixels - the first is what
 # the page displays, the second what the click-to-enlarge popup loads
 CUTOUT_SIZE = 256
@@ -78,29 +85,38 @@ CUTOUT_SURVEYS = OrderedDict([
 
     ('dss2', {'name': 'DSS2', 'group': 'optical', 'hips': 'CDS/P/DSS2/color', 'default': True}),
 
-    ('sdss', {'name': 'SDSS DR18', 'group': 'optical', 'default': True}),
+    ('sdss', {'name': 'SDSS DR18', 'group': 'optical', 'default': False}),
 
-    ('panstarrs', {'name': 'PanSTARRS', 'group': 'optical', 'hips': 'CDS/P/PanSTARRS/DR1/color', 'default': True}),
+    ('panstarrs', {'name': 'PanSTARRS', 'group': 'optical', 'hips': 'CDS/P/PanSTARRS/DR1/color-i-r-g', 'default': True}),
     ('ps1', {'name': 'PanSTARRS (STScI)', 'group': 'optical'}),
 
-    ('ztf', {'name': 'ZTF DR7', 'group': 'optical', 'hips': 'CDS/P/ZTF/DR7/color', 'default': True}),
+    ('ztf', {'name': 'ZTF DR7', 'group': 'optical', 'hips': 'CDS/P/ZTF/DR7/color', 'default': False}),
 
-    ('skymapper', {'name': 'SkyMapper', 'group': 'optical', 'hips': 'CDS/P/skymapper-color', 'default': True}),
+    ('skymapper', {'name': 'SkyMapper DR4', 'group': 'optical', 'hips': 'CDS/P/Skymapper/DR4/color', 'default': True}),
 
     ('mmt9', {'name': 'Mini-MegaTORTORA', 'group': 'optical', 'hips': 'http://survey.favor2.info/favor2/hips/', 'mono': True}),
 
     ('iphas_halpha', {'name': 'IPHAS Halpha', 'group': 'halpha', 'hips': 'CDS/P/IPHAS/DR2/halpha', 'mono': True}),
+    ('vphas_halpha', {'name': 'VPHAS Halpha', 'group': 'halpha', 'hips': 'CDS/P/VPHAS/DR4/Halpha', 'mono': True}),
+
     ('vtss_halpha', {'name': 'VTSS Halpha', 'group': 'halpha', 'hips': 'CDS/P/VTSS/Ha', 'mono': True}),
     ('shassa_halpha', {'name': 'SHASSA Halpha', 'group': 'halpha', 'hips': 'CDS/P/SHASSA/H', 'mono': True}),
     ('shs_halpha', {'name': 'SHS Halpha', 'group': 'halpha', 'hips': 'CDS/P/SHS', 'mono': True}),
 
-    ('wise', {'name': 'allWISE', 'group': 'ir', 'hips': 'CDS/P/allWISE/color', 'default': True}),
+    ('nsns_halpha', {'name': 'NSNS Halpha', 'group': 'halpha', 'hips': 'simg.de/P/NSNS/DR0_2/halpha', 'mono': True, 'default': True}),
+    ('nsns_color', {'name': 'NSNS [OIII] + H-alpha + [SII]', 'group': 'halpha', 'hips': 'simg.de/P/NSNS/DR0_2/ohs8'}),
+
+    ('wise', {'name': 'allWISE Color', 'group': 'ir', 'hips': 'CDS/P/allWISE/color', 'default': True}),
     ('wise_w1', {'name': 'WISE 3.4um', 'group': 'ir', 'hips': 'CDS/P/allWISE/W1', 'mono': True}),
     ('wise_w2', {'name': 'WISE 4.6um', 'group': 'ir', 'hips': 'CDS/P/allWISE/W2', 'mono': True}),
     ('wise_w3', {'name': 'WISE 12um', 'group': 'ir', 'hips': 'CDS/P/allWISE/W3', 'mono': True}),
     ('wise_w4', {'name': 'WISE 22um', 'group': 'ir', 'hips': 'CDS/P/allWISE/W4', 'mono': True}),
 
     ('glimpse360', {'name': 'GLIMPSE360', 'group': 'ir', 'hips': 'IPAC/P/GLIMPSE360'}),
+
+    ('herschel_pacs', {'name': 'HERSCHEL PACS Color', 'group': 'ir', 'hips': 'ESAVO/P/HERSCHEL/PACS-color'}),
+
+    ('herschel_spire', {'name': 'HERSCHEL SPIRE Color', 'group': 'ir', 'hips': 'ESAVO/P/HERSCHEL/SPIRE-color'}),
 ])
 
 
@@ -154,14 +170,17 @@ def hips_url(survey, ra, dec, fov, size, format='jpg'):
 
 
 def skyview_url(survey, ra, dec, fov, size, format='GIF'):
-    """URL of a SkyView cutout, as an image or as the FITS behind it."""
+    """URL of a SkyView cutout - as an image, as the FITS behind it, or, asked
+    for no format at all, as SkyView's own page for the very same query."""
     params = {
         'Position': '%s,%s' % (ra, dec),
         'Size': fov,
         'Pixels': size,
         'Survey': survey['skyview'],
-        'Return': format,
     }
+
+    if format:
+        params['Return'] = format
 
     if format != 'FITS':
         params['LUT'] = 'colortables/blue-white.bin'
@@ -182,10 +201,44 @@ def sdss_url(ra, dec, fov, size):
     })
 
 
+def aladin_url(hips, ra, dec, fov):
+    """The position in Aladin Lite, showing the same HiPS.
+
+    These are the parameters Aladin Lite writes into its own address bar when
+    it shares a view, and they take a HiPS by id or by URL alike - so nothing
+    here needs to know where any of the tiles are actually served from.
+    """
+    return ALADIN_SERVICE + '?' + urlencode({
+        'target': '%.6f %+.6f' % (ra, dec),
+        'fov': fov,
+        'survey': hips,
+    })
+
+
+def sdss_navigate_url(ra, dec, fov, size):
+    """The position in the SkyServer Navigate tool, at the scale shown here."""
+    return SDSS_NAVIGATE_SERVICE + '?' + urlencode({
+        'ra': ra,
+        'dec': dec,
+        'scale': fov * 3600 / size,
+    })
+
+
+def ps1_page_url(ra, dec, fov):
+    """The position on the Pan-STARRS cutout page the image itself comes from."""
+    return PS1_PAGE_SERVICE + '?' + urlencode({
+        'pos': '%.6f %+.6f' % (ra, dec),
+        'filter': 'color',
+        'filetypes': 'stack',
+        'size': min(int(fov * 3600 / 0.25), 6000),
+        'autoscale': 99.5,
+    })
+
+
 def get_cutout(sid, ra, dec, fov):
     """Everything the page needs in order to show one survey at one position:
-    the thumbnail, the larger version the popup loads, and the FITS if the
-    service has one."""
+    the thumbnail, the larger version the popup loads, the FITS if the service
+    has one, and where the name of the survey leads."""
     survey = CUTOUT_SURVEYS.get(sid)
 
     if survey is None:
@@ -197,6 +250,8 @@ def get_cutout(sid, ra, dec, fov):
         cutout['url'] = hips_url(survey, ra, dec, fov, CUTOUT_SIZE)
         cutout['url_large'] = hips_url(survey, ra, dec, fov, CUTOUT_SIZE_LARGE)
         cutout['fits'] = hips_url(survey, ra, dec, fov, CUTOUT_SIZE_LARGE, format='fits')
+        cutout['link'] = aladin_url(survey['hips'], ra, dec, fov)
+        cutout['link_name'] = 'Aladin Lite'
         # Sky the survey never saw comes back as a perfectly uniform tile, and
         # hips2fits sends the CORS headers that let the page notice as much
         cutout['cors'] = True
@@ -205,10 +260,16 @@ def get_cutout(sid, ra, dec, fov):
         cutout['url'] = skyview_url(survey, ra, dec, fov, CUTOUT_SIZE)
         cutout['url_large'] = skyview_url(survey, ra, dec, fov, CUTOUT_SIZE_LARGE)
         cutout['fits'] = skyview_url(survey, ra, dec, fov, CUTOUT_SIZE_LARGE, format='FITS')
+        # The same query on SkyView's own pages, which is what it answers with
+        # when it is asked for no particular format
+        cutout['link'] = skyview_url(survey, ra, dec, fov, CUTOUT_SIZE_LARGE, format=None)
+        cutout['link_name'] = 'SkyView'
 
     elif sid == 'sdss':
         cutout['url'] = sdss_url(ra, dec, fov, CUTOUT_SIZE)
         cutout['url_large'] = sdss_url(ra, dec, fov, CUTOUT_SIZE_LARGE)
+        cutout['link'] = sdss_navigate_url(ra, dec, fov, CUTOUT_SIZE)
+        cutout['link_name'] = 'SkyServer Navigate'
 
     elif sid == 'ps1':
         # The image URL cannot be built without asking the archive which plates
@@ -216,6 +277,8 @@ def get_cutout(sid, ra, dec, fov):
         params = {'ra': ra, 'dec': dec, 'fov': fov}
         cutout['url'] = reverse('cutouts_ps1') + '?' + urlencode(dict(params, size=CUTOUT_SIZE))
         cutout['url_large'] = reverse('cutouts_ps1') + '?' + urlencode(dict(params, size=CUTOUT_SIZE_LARGE))
+        cutout['link'] = ps1_page_url(ra, dec, fov)
+        cutout['link_name'] = 'the Pan-STARRS cutout service'
 
     else:
         return None

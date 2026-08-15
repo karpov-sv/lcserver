@@ -64,6 +64,16 @@
      overflow: hidden;
      text-overflow: ellipsis;
    }
+
+   /* The name reads as a heading, and behaves as the link it is on hover */
+   .cutout-grid .card-header .cutout-link {
+     color: inherit;
+     text-decoration: none;
+   }
+
+   .cutout-grid .card-header .cutout-link:hover {
+     text-decoration: underline;
+   }
   </style>
 {% endblock %}
 
@@ -244,7 +254,14 @@
         {% for cutout in target.cutouts %}
           <div class="card">
             <div class="card-header py-1 d-flex justify-content-between">
-              <span title="{{ cutout.name }}">{{ cutout.name }}</span>
+              <span>
+                {% if cutout.link %}
+                  <a href="{{ cutout.link }}" class="cutout-link" target="_blank" rel="noopener"
+                     title="Show this position in {{ cutout.link_name }}">{{ cutout.name }}</a>
+                {% else %}
+                  {{ cutout.name }}
+                {% endif %}
+              </span>
               {% if cutout.fits %}
                 <a href="{{ cutout.fits }}" title="Download the cutout as a FITS file">FITS</a>
               {% endif %}
