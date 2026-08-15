@@ -1,0 +1,245 @@
+{% extends "template.html" %}
+
+{% block ptitle %}Photometric conversions{% endblock %}
+
+{% block title %}Photometric conversions{% endblock %}
+
+{% block head %}
+  <style>
+   /* A formula wraps between its terms and never inside one - hence a span
+      per term, as hard spaces alone would still let a browser break after the
+      closing parenthesis of (g - r)^2. Continuation lines are indented past
+      the band the relation starts with. */
+   .conversion-formula {
+     font-family: var(--bs-font-monospace);
+     font-size: 0.875em;
+     white-space: normal;
+     text-indent: -2.5em !important;
+     padding-left: 3.0em !important;
+   }
+
+   .conversion-term {
+     white-space: nowrap;
+   }
+
+   .conversion-result {
+     font-size: 1.5rem;
+     font-family: var(--bs-font-monospace);
+   }
+
+   .table-conversions td, .table-conversions th {
+     vertical-align: top;
+   }
+
+   /* The formula is the column that gives way when the table is too wide for
+      the page, the rest being short enough to keep on one line */
+   .table-conversions td.conversion-formula {
+     white-space: normal;
+     max-width: 32rem;
+   }
+
+   .table-conversions td:first-child a {
+     white-space: nowrap;
+   }
+
+   .table-conversions .conversion-note {
+     max-width: 32rem;
+   }
+  </style>
+{% endblock %}
+
+{% block content %}
+
+  <p class="text-body-secondary">
+    Every survey measures in its own band, and a light curve drawn from several of them has to be
+    put on one scale first. These are the relations that do it - the ones the light curves here are
+    built from, and the ones <a href="https://github.com/karpov-sv/stdpipe">stdpipe</a> uses when it
+    augments a catalogue - each written out as the code applies it, with where it comes from.
+  </p>
+
+  <!-- Calculator -->
+  <div class="card mb-4">
+    <div class="card-header">Convert a magnitude</div>
+    <div class="card-body">
+
+      <div class="row g-3 align-items-end">
+        <div class="col-md-6">
+          <label class="form-label" for="conversion-select">Conversion</label>
+          <select class="form-select" id="conversion-select">
+            {% for group in groups %}
+              <optgroup label="{{ group.name }}">
+                {% for conv in group.conversions %}
+                  <option value="{{ conv.id }}">{{ conv.title }}</option>
+                {% endfor %}
+              </optgroup>
+            {% endfor %}
+          </select>
+        </div>
+
+        <div class="col-md-6">
+          <div class="conversion-formula text-body-secondary" id="conversion-formula"></div>
+        </div>
+      </div>
+
+      <div class="row g-3 mt-1 align-items-end" id="conversion-inputs"></div>
+
+      <div class="mt-3">
+        <span class="conversion-result" id="conversion-result">&mdash;</span>
+        <span class="text-body-secondary ms-2" id="conversion-sigma"></span>
+      </div>
+
+      <div class="text-warning-emphasis mt-2" id="conversion-warning"></div>
+      <div class="text-body-secondary small mt-2" id="conversion-note"></div>
+
+    </div>
+  </div>
+
+  <!-- Documentation -->
+  {% for group in groups %}
+    <h3 class="mt-4">{{ group.name }}</h3>
+    <p class="text-body-secondary">{{ group.note }}</p>
+
+    <div class="table-responsive">
+      <table class="table table-sm table-hover table-conversions">
+        <thead>
+          <tr>
+            <th>Conversion</th>
+            <th>Formula</th>
+            <th>Reference</th>
+            <th>Used by</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for conv in group.conversions %}
+            <tr>
+              <td>
+                <a href="#" class="conversion-pick" data-conversion="{{ conv.id }}"
+                   title="Load this relation into the calculator">{{ conv.title }}</a>
+                {% if conv.sigma %}
+                  <div class="text-body-secondary small">scatter {{ conv.sigma }} mag</div>
+                {% endif %}
+                {% for valid in conv.valid %}
+                  <div class="text-body-secondary small">
+                    fitted for {{ valid.min }} &lt; {{ valid.color }} &lt; {{ valid.max }}
+                  </div>
+                {% endfor %}
+              </td>
+              <td class="conversion-formula">{% for part in conv.formula %}<span class="conversion-term">{{ part }}</span> {% endfor %}</td>
+              <td>
+                {% if conv.url %}
+                  <a href="{{ conv.url }}" target="_blank" rel="noopener">{{ conv.reference }}</a>
+                {% else %}
+                  {{ conv.reference }}
+                {% endif %}
+              </td>
+              <td class="conversion-note text-body-secondary">
+                {{ conv.used_by|default:'' }}
+                {% if conv.note %}<div class="small mt-1">{{ conv.note }}</div>{% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% endfor %}
+
+  {{ conversions|json_script:"conversions-data" }}
+
+  <script language="javascript">
+   // The relations are evaluated here exactly as the code that uses them does:
+   // the magnitude that goes in, plus a polynomial in each colour
+   $(function(){
+     var conversions = {};
+     JSON.parse($('#conversions-data').text()).forEach(function(conv){
+       conversions[conv.id] = conv;
+     });
+
+     var current = null;
+
+     var polyval = function(coeffs, x){
+       // Horner's, the same as numpy.polyval - coefficients highest power first
+       return coeffs.reduce(function(acc, coeff){ return acc*x + coeff; }, 0);
+     };
+
+     var value_of = function(selector){
+       var value = parseFloat($(selector).val());
+       return isNaN(value) ? null : value;
+     };
+
+     var compute = function(){
+       if(!current)
+         return;
+
+       var mag = value_of('#input-mag');
+       var result = mag === null ? null : mag + current.offset;
+       var warnings = [];
+
+       current.terms.forEach(function(term, i){
+         var color = value_of('#input-color-' + i);
+
+         if(color === null)
+           result = null;
+         else if(result !== null)
+           result += polyval(term.coeffs, color);
+
+         current.valid.forEach(function(valid){
+           if(valid.color == term.color && color !== null &&
+              (color < valid.min || color > valid.max))
+             warnings.push('(' + valid.color + ') = ' + color + ' is outside ' +
+                           valid.min + ' … ' + valid.max + ', where the relation was fitted');
+         });
+       });
+
+       $('#conversion-result').text(result === null ? '—' :
+                                    current.output + ' = ' + result.toFixed(3));
+       $('#conversion-warning').text(warnings.join('; '));
+     };
+
+     var select = function(id){
+       current = conversions[id];
+
+       $('#conversion-select').val(id);
+
+       // A span per term, as in the table below, so that a formula too long
+       // for its column breaks between terms and never inside one
+       var formula = $('#conversion-formula').empty();
+       current.formula.forEach(function(part){
+         $('<span class="conversion-term"/>').text(part).appendTo(formula);
+         formula.append(' ');
+       });
+
+       $('#conversion-note').text(current.note || '');
+       $('#conversion-sigma').text(current.sigma ? '± ' + current.sigma + ' mag (scatter of the fit)' : '');
+
+       // One field for the magnitude, and one for every colour it needs
+       var inputs = $('#conversion-inputs').empty();
+       var field = function(label, id, value){
+         $('<div class="col-6 col-md-3">' +
+           '<label class="form-label" for="' + id + '">' + label + '</label>' +
+           '<input type="number" step="any" class="form-control conversion-input"' +
+           ' id="' + id + '" value="' + value + '">' +
+           '</div>').appendTo(inputs);
+       };
+
+       field(current.base, 'input-mag', '15');
+       current.terms.forEach(function(term, i){
+         field('(' + term.color + ')', 'input-color-' + i, '0');
+       });
+
+       compute();
+     };
+
+     $('#conversion-select').on('change', function(){ select($(this).val()); });
+     $('#conversion-inputs').on('input', '.conversion-input', compute);
+
+     $('.conversion-pick').on('click', function(event){
+       event.preventDefault();
+       select($(this).data('conversion'));
+       $('html, body').animate({scrollTop: 0}, 200);
+     });
+
+     select($('#conversion-select').val());
+   });
+  </script>
+
+{% endblock %}

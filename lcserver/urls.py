@@ -24,6 +24,7 @@ from . import views
 from . import views_celery
 from . import views_cutouts
 from . import views_lightcurve
+from . import views_passbands
 from . import views_spectrum
 
 urlpatterns = [
@@ -32,6 +33,9 @@ urlpatterns = [
     # Cutouts - a standalone utility, not tied to the targets
     path('cutouts/', views_cutouts.cutouts, name='cutouts'),
     path('cutouts/ps1', views_cutouts.cutouts_ps1, name='cutouts_ps1'),
+
+    # The photometric conversions everything else here is built on
+    path('passbands/', views_passbands.passbands, name='passbands'),
 
     # Targets
     path('targets/', views.targets, {'id':None}, name='targets'),
