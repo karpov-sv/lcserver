@@ -13,7 +13,7 @@ from astropy.time import Time
 from stdpipe import plots
 
 from ..surveys import survey_source, get_output_files
-from .utils import cleanup_paths
+from .utils import cleanup_paths, plot_with_errors
 
 
 @survey_source(
@@ -110,10 +110,9 @@ def target_combined(config, basepath=None, verbose=True, show=False):
                 log(f"{entry['label']}: {len(data)} points from "
                     f"file:{entry['filename']}")
 
-                ax.errorbar(x, data[entry['mag']], data[entry['err']],
-                            fmt='.', color=entry['color'], alpha=0.2, ms=0)
-                ax.plot(x, data[entry['mag']], '.', color=entry['color'],
-                        label=entry['label'], alpha=1, ms=1)
+                plot_with_errors(ax, x, data[entry['mag']],
+                                 data[entry['err']], color=entry['color'],
+                                 label=entry['label'], ms=1)
 
                 nplotted += 1
                 derived |= entry['kind'] == surveys.BAND_DERIVED

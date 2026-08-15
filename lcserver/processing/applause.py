@@ -20,6 +20,7 @@ from .. import surveys
 from ..surveys import survey_source, get_output_files
 from .utils import (cleanup_paths, parse_votable_lenient, cached_votable_query,
                     quality_field, quality_level, log_bands, log_conversion,
+                    plot_with_errors,
                     QUALITY_STANDARD, QUALITY_RELAXED, QUALITY_PUBLISHED)
 
 
@@ -289,7 +290,8 @@ def target_applause(config, basepath=None, verbose=True, show=False):
     with plots.figure_saver(os.path.join(basepath, 'applause_lc.png'), figsize=(12, 4), show=show) as fig:
         ax = fig.add_subplot(1, 1, 1)
 
-        ax.errorbar(applause['time'].datetime, applause['mag_g'], applause['magerr'], fmt='.', label='g')
+        plot_with_errors(ax, applause['time'].datetime, applause['mag_g'],
+                         applause['magerr'], label='g')
 
         ax.invert_yaxis()
         ax.grid(alpha=0.2)

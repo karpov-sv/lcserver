@@ -28,6 +28,7 @@ from .. import surveys
 from ..surveys import survey_source, get_output_files
 from .utils import (SourceError, cleanup_paths, cached_votable_query,
                     quality_field, quality_level, log_bands, log_conversion,
+                    plot_with_errors,
                     assumed_color, rotse_to_v, v_to_g,
                     ROTSE_TO_V_FORMULA, V_TO_G_FORMULA,
                     QUALITY_STANDARD, QUALITY_RELAXED, QUALITY_PUBLISHED)
@@ -460,8 +461,8 @@ def target_nsvs(config, basepath=None, verbose=True, show=False):
         ax = fig.add_subplot(1, 1, 1)
 
         time = Time(np.asarray(nsvs['mjd'], dtype=float), format='mjd')
-        ax.errorbar(time.datetime, nsvs['mag'], nsvs['magerr'],
-                    fmt='.', alpha=0.5, color='#e377c2')
+        plot_with_errors(ax, time.datetime, nsvs['mag'], nsvs['magerr'],
+                         color='#e377c2')
 
         ax.invert_yaxis()
         ax.grid(alpha=0.2)

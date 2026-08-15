@@ -20,6 +20,7 @@ from .. import surveys
 from ..surveys import survey_source, get_output_files
 from .utils import (SourceError, cleanup_paths, cached_votable_query,
                     quality_field, quality_level, log_bands, log_conversion,
+                    plot_with_errors,
                     assumed_color, b_to_g, B_TO_G_FORMULA,
                     QUALITY_STANDARD, QUALITY_RELAXED, QUALITY_PUBLISHED)
 
@@ -390,7 +391,8 @@ def target_dasch(config, basepath=None, verbose=True, show=False):
     with plots.figure_saver(os.path.join(basepath, 'dasch_lc.png'), figsize=(12, 4), show=show) as fig:
         ax = fig.add_subplot(1, 1, 1)
 
-        ax.errorbar(dasch['time'].datetime, dasch['mag_g'], dasch['magerr'], fmt='.', label='g')
+        plot_with_errors(ax, dasch['time'].datetime, dasch['mag_g'],
+                         dasch['magerr'], label='g')
 
         ax.invert_yaxis()
         ax.grid(alpha=0.2)

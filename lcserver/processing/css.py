@@ -18,7 +18,8 @@ from stdpipe import plots
 from .. import surveys
 from ..surveys import survey_source, get_output_files
 from .utils import (SourceError, cleanup_paths, cached_votable_query, log_bands,
-                    log_conversion, assumed_color, v_to_g, V_TO_G_FORMULA)
+                    log_conversion, plot_with_errors,
+                    assumed_color, v_to_g, V_TO_G_FORMULA)
 
 
 @survey_source(
@@ -229,7 +230,8 @@ def target_css(config, basepath=None, verbose=True, show=False):
     with plots.figure_saver(os.path.join(basepath, 'css_lc.png'), figsize=(12, 4), show=show) as fig:
         ax = fig.add_subplot(1, 1, 1)
 
-        ax.errorbar(css['time'].datetime, css['mag'], css['magerr'], fmt='.', label='V')
+        plot_with_errors(ax, css['time'].datetime, css['mag'], css['magerr'],
+                         label='V')
 
         ax.invert_yaxis()
         ax.grid(alpha=0.2)

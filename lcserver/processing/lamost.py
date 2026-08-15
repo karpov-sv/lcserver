@@ -29,7 +29,8 @@ from astroquery.vizier import Vizier
 from stdpipe import plots
 
 from ..surveys import survey_source, get_output_files
-from .utils import cleanup_paths, cached_votable_query, write_spectrum
+from .utils import (cleanup_paths, cached_votable_query, plot_with_errors,
+                    write_spectrum)
 
 
 # The observation lists: low resolution, and medium resolution
@@ -315,8 +316,8 @@ def target_lamost(config, basepath=None, verbose=True, show=False):
             ax = fig.add_subplot(1, 1, 1)
 
             time = Time(epochs[:, 0], format='mjd')
-            ax.errorbar(time.datetime, epochs[:, 1], epochs[:, 2],
-                        fmt='o', color='#c0392b')
+            plot_with_errors(ax, time.datetime, epochs[:, 1], epochs[:, 2],
+                             marker='o', color='#c0392b')
 
             ax.grid(alpha=0.2)
             ax.set_ylabel('Radial velocity, km/s')

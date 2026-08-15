@@ -18,6 +18,7 @@ from .. import surveys
 from ..surveys import survey_source, get_output_files
 from .utils import (SourceError, cleanup_paths, cached_votable_query,
                     quality_field, quality_level, log_bands, log_conversion,
+                    plot_with_errors,
                     assumed_color, v_to_g, V_TO_G_FORMULA,
                     QUALITY_STANDARD, QUALITY_RELAXED, QUALITY_PUBLISHED)
 
@@ -286,8 +287,10 @@ def target_asas(config, basepath=None, verbose=True, show=False):
             npoints=int(np.sum(idx_g)),
         )
 
-        ax.errorbar(asas[idx_V]['time'].datetime, asas[idx_V]['mag_g'], asas[idx_V]['mag_err'], fmt='.', label='V conv. to g')
-        ax.errorbar(asas[idx_g]['time'].datetime, asas[idx_g]['mag_g'], asas[idx_g]['mag_err'], fmt='.', label='g')
+        plot_with_errors(ax, asas[idx_V]['time'].datetime, asas[idx_V]['mag_g'],
+                         asas[idx_V]['mag_err'], label='V conv. to g')
+        plot_with_errors(ax, asas[idx_g]['time'].datetime, asas[idx_g]['mag_g'],
+                         asas[idx_g]['mag_err'], label='g')
 
         log_bands(log, 'ASAS-SN', [
             {'label': 'V', 'kind': 'native', 'npoints': int(np.sum(idx_V)),

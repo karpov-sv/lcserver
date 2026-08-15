@@ -17,7 +17,8 @@ from .. import surveys
 from ..surveys import survey_source, get_output_files
 from .utils import (SourceError, cleanup_paths, cached_votable_query,
                     clip_noisy_points, quality_field, quality_level,
-                    log_bands, log_conversion, assumed_color, v_to_g, b_to_g,
+                    log_bands, log_conversion, plot_with_errors,
+                    assumed_color, v_to_g, b_to_g,
                     V_TO_G_FORMULA, B_TO_G_FORMULA, CLIP_RATIO_BY_LEVEL,
                     QUALITY_STANDARD, QUALITY_RELAXED, QUALITY_PUBLISHED)
 
@@ -291,11 +292,11 @@ def target_kws(config, basepath=None, verbose=True, show=False):
             idx = kws['filter'] == filt
             if np.sum(idx):
                 label = f'{filt}' if filt else 'unfiltered'
-                ax.errorbar(
+                plot_with_errors(
+                    ax,
                     kws['time_obj'][idx].datetime,
                     kws['mag'][idx],
                     kws['magerr'][idx],
-                    fmt='.',
                     label=label
                 )
 
@@ -339,16 +340,16 @@ def target_kws(config, basepath=None, verbose=True, show=False):
         with plots.figure_saver(os.path.join(basepath, 'kws_color_mag.png'),
                                 figsize=(10, 5), show=show) as fig:
             ax = fig.add_subplot(1, 2, 1)
-            ax.errorbar(color, magV, xerr=color_err, yerr=errV,
-                        fmt='.', color='#e377c2', alpha=0.5)
+            plot_with_errors(ax, color, magV, xerr=color_err, yerr=errV,
+                             color='#e377c2')
             ax.grid(alpha=0.3)
             ax.set_xlabel('V - Ic')
             ax.set_ylabel('V')
             ax.invert_yaxis()
 
             ax = fig.add_subplot(1, 2, 2, sharex=ax)
-            ax.errorbar(color, magI, xerr=color_err, yerr=errI,
-                        fmt='.', color='#8c564b', alpha=0.5)
+            plot_with_errors(ax, color, magI, xerr=color_err, yerr=errI,
+                             color='#8c564b')
             ax.grid(alpha=0.3)
             ax.set_xlabel('V - Ic')
             ax.set_ylabel('Ic')

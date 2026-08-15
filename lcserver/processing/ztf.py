@@ -18,7 +18,8 @@ from stdpipe import plots
 
 from .. import surveys
 from ..surveys import survey_source, get_output_files
-from .utils import SourceError, cleanup_paths, cached_votable_query, log_bands, log_conversion
+from .utils import (SourceError, cleanup_paths, cached_votable_query, log_bands,
+                    log_conversion, plot_with_errors)
 
 
 # Some convenience code for gaussian process based smoothing of unevenly spaced 1d data
@@ -399,8 +400,8 @@ def target_ztf(config, basepath=None, verbose=True, show=False):
     # Plot lightcurve
     with plots.figure_saver(os.path.join(basepath, 'ztf_lc.png'), figsize=(12, 8), show=show) as fig:
         ax = fig.add_subplot(3, 1, 1)
-        ax.errorbar(tg.datetime, cmagg, dmagg, fmt='.', color='green',
-                    label='g=%.2f +/- %.2f' % (np.mean(cmagg), np.std(cmagg)))
+        plot_with_errors(ax, tg.datetime, cmagg, dmagg, color='green',
+                         label='g=%.2f +/- %.2f' % (np.mean(cmagg), np.std(cmagg)))
         ax.invert_yaxis()
         ax.grid(alpha=0.3)
         ax.set_ylabel('g')
@@ -409,8 +410,8 @@ def target_ztf(config, basepath=None, verbose=True, show=False):
 
         ax = fig.add_subplot(3, 1, 2, sharex=ax)
 
-        ax.errorbar(tr.datetime, cmagr, dmagr, fmt='.', color='red',
-                    label='r=%.2f +/- %.2f' % (np.mean(cmagr), np.std(cmagr)))
+        plot_with_errors(ax, tr.datetime, cmagr, dmagr, color='red',
+                         label='r=%.2f +/- %.2f' % (np.mean(cmagr), np.std(cmagr)))
         ax.invert_yaxis()
         ax.grid(alpha=0.3)
         ax.set_ylabel('r')
@@ -420,7 +421,9 @@ def target_ztf(config, basepath=None, verbose=True, show=False):
 
         if len(iig):
             ax.plot(Time(u_mjd, format='mjd').datetime, gr(u_mjd), '--', color='red', alpha=0.3, label='Model')
-            ax.errorbar(tg[iig].datetime, cmagg[iig]-cmagr[iir], np.hypot(dmagg[iig], dmagr[iir]), fmt='.', alpha=0.5, label='g-r=%.2g +/- %.2g' % (np.mean(cmagg[iig]-cmagr[iir]), np.std(cmagg[iig]-cmagr[iir])))
+            plot_with_errors(ax, tg[iig].datetime, cmagg[iig]-cmagr[iir],
+                             np.hypot(dmagg[iig], dmagr[iir]),
+                             label='g-r=%.2g +/- %.2g' % (np.mean(cmagg[iig]-cmagr[iir]), np.std(cmagg[iig]-cmagr[iir])))
         ax.grid(alpha=0.3)
         ax.set_ylabel('g - r')
         ax.set_xlabel('Time')
@@ -431,16 +434,18 @@ def target_ztf(config, basepath=None, verbose=True, show=False):
     # Plot color-magnitude diagram
     with plots.figure_saver(os.path.join(basepath, 'ztf_color_mag.png'), figsize=(10, 5), show=show) as fig:
         ax = fig.add_subplot(1, 2, 1)
-        ax.errorbar(cmagg[iig]-cmagr[iir], cmagg[iig], xerr=np.hypot(dmagg[iig], dmagr[iir]), yerr=dmagg[iig],
-                    fmt='.', color='green', alpha=0.5)
+        plot_with_errors(ax, cmagg[iig]-cmagr[iir], cmagg[iig],
+                         xerr=np.hypot(dmagg[iig], dmagr[iir]), yerr=dmagg[iig],
+                         color='green')
         ax.grid(alpha=0.3)
         ax.set_xlabel('g - r')
         ax.set_ylabel('g')
         ax.invert_yaxis()
 
         ax = fig.add_subplot(1, 2, 2, sharex=ax)
-        ax.errorbar(cmagg[iig]-cmagr[iir], cmagr[iir], xerr=np.hypot(dmagg[iig], dmagr[iir]), yerr=dmagr[iir],
-                    fmt='.', color='red', alpha=0.5)
+        plot_with_errors(ax, cmagg[iig]-cmagr[iir], cmagr[iir],
+                         xerr=np.hypot(dmagg[iig], dmagr[iir]), yerr=dmagr[iir],
+                         color='red')
         ax.grid(alpha=0.3)
         ax.set_xlabel('g - r')
         ax.set_ylabel('r')

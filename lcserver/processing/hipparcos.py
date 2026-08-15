@@ -26,7 +26,8 @@ from stdpipe import plots
 from .. import surveys
 from ..surveys import survey_source, get_output_files
 from .utils import (SourceError, cleanup_paths, cached_votable_query, log_bands,
-                    log_conversion, assumed_color, v_to_g, V_TO_G_FORMULA)
+                    log_conversion, plot_with_errors,
+                    assumed_color, v_to_g, V_TO_G_FORMULA)
 
 
 HIP_ANNEXE_URL = 'https://cdsarc.cds.unistra.fr/ftp/I/239/epophot/hep.gz'
@@ -353,8 +354,8 @@ def target_hipparcos(config, basepath=None, verbose=True, show=False):
         ax = fig.add_subplot(1, 1, 1)
 
         time = Time(np.asarray(hipp['mjd'], dtype=float), format='mjd')
-        ax.errorbar(time.datetime, hipp['mag'], hipp['magerr'],
-                    fmt='.', alpha=0.5, color='#7f7f7f')
+        plot_with_errors(ax, time.datetime, hipp['mag'], hipp['magerr'],
+                         color='#7f7f7f')
 
         ax.invert_yaxis()
         ax.grid(alpha=0.2)

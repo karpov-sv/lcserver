@@ -18,7 +18,8 @@ from stdpipe import plots
 from .. import surveys
 from ..surveys import survey_source, get_output_files
 from .utils import (SourceError, cleanup_paths, cached_votable_query, irsa_client,
-                    log_bands, log_conversion, assumed_color, r_to_g,
+                    log_bands, log_conversion, plot_with_errors,
+                    assumed_color, r_to_g,
                     R_TO_G_FORMULA)
 
 
@@ -219,11 +220,11 @@ def target_ptf(config, basepath=None, verbose=True, show=False):
         for filt in unique_filters:
             idx = ptf['filter'] == filt
             if np.sum(idx):
-                ax.errorbar(
+                plot_with_errors(
+                    ax,
                     ptf['time_obj'][idx].datetime,
                     ptf['mag'][idx],
                     ptf['magerr'][idx],
-                    fmt='.',
                     label=filt
                 )
 

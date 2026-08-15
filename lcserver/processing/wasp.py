@@ -20,7 +20,8 @@ from .. import surveys
 from ..surveys import survey_source, get_output_files
 from .utils import (SourceError, cleanup_paths, cached_votable_query,
                     clip_noisy_points, quality_field, quality_level,
-                    log_bands, log_conversion, assumed_color, v_to_g,
+                    log_bands, log_conversion, plot_with_errors,
+                    assumed_color, v_to_g,
                     V_TO_G_FORMULA, CLIP_RATIO_BY_LEVEL,
                     QUALITY_STANDARD, QUALITY_RELAXED, QUALITY_PUBLISHED)
 
@@ -332,8 +333,8 @@ def target_wasp(config, basepath=None, verbose=True, show=False):
         ax = fig.add_subplot(1, 1, 1)
 
         time = Time(np.asarray(wasp['mjd'], dtype=float), format='mjd')
-        ax.errorbar(time.datetime, wasp['mag'], wasp['magerr'],
-                    fmt='.', ms=3, alpha=0.3, color='#ff7f0e')
+        plot_with_errors(ax, time.datetime, wasp['mag'], wasp['magerr'],
+                         color='#ff7f0e', ms=3)
 
         ax.invert_yaxis()
         ax.grid(alpha=0.2)

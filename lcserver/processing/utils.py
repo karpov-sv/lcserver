@@ -253,6 +253,62 @@ def log_quality(log, quality, dropped, mission='TESS'):
         + (f" on the mission flags: {named}" if named else " on the mission flags"))
 
 
+# How faint a measurement's error bar is drawn beneath its own point
+ERRORBAR_ALPHA = 0.2
+
+
+def plot_with_errors(ax, x, y, yerr=None, xerr=None, color=None, label=None,
+                     marker='.', error_alpha=ERRORBAR_ALPHA, **kwargs):
+    """Draw measurements over their error bars, with the bars faint.
+
+    A survey with small errors and many points draws its bars over its own
+    measurements: each bar is a stroke as wide as the point it belongs to and
+    darkest where the points are densest, so a well-sampled light curve reads
+    as a band with no points in it. Drawn faint and underneath, the bars still
+    say how well each point is known without taking the light curve over.
+
+    The points go down first and the bars take their colour from them: left to
+    itself a second call would draw the next colour in the axes' cycle, and
+    the bars would not match the points they belong to.
+
+    Parameters
+    ----------
+    ax : `matplotlib.axes.Axes`
+        Where to draw
+    x, y : array
+        The measurements
+    yerr, xerr : array, optional
+        What is known of their uncertainty. Bars are drawn only for those
+        given.
+    color : str, optional
+        The colour of the points, taken from the axes' cycle when not given
+    label : str, optional
+        For the legend, carried by the points
+    marker : str, optional
+        The marker to draw the points with
+    error_alpha : float, optional
+        How faint the bars are
+    kwargs : dict
+        Passed on to the points, so `ms` and `alpha` mean what they usually do
+
+    Returns
+    -------
+    line : `matplotlib.lines.Line2D`
+        The points, as `ax.plot` returns them
+    """
+    line, = ax.plot(x, y, marker=marker, ls='none', color=color, label=label,
+                    **kwargs)
+
+    if yerr is not None or xerr is not None:
+        # Just under the points, so that a bar never draws over the point it
+        # belongs to nor over its neighbours'
+        ax.errorbar(x, y, yerr=yerr, xerr=xerr, fmt='none',
+                    ecolor=line.get_color(), alpha=error_alpha,
+                    zorder=line.get_zorder() - 0.5)
+
+    return line
+
+
 def break_at_gaps(time, flux, tolerance=1.5):
     """Keep a line from being drawn across a gap in the sampling.
 

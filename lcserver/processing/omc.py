@@ -20,7 +20,8 @@ from stdpipe import plots
 from .. import surveys
 from ..surveys import survey_source, get_output_files
 from .utils import (SourceError, cleanup_paths, cached_votable_query, log_bands,
-                    log_conversion, assumed_color, v_to_g, V_TO_G_FORMULA)
+                    log_conversion, plot_with_errors,
+                    assumed_color, v_to_g, V_TO_G_FORMULA)
 
 
 OMC_FORM_URL = 'https://sdc.cab.inta-csic.es/omc/secure/form_busqueda.jsp'
@@ -335,8 +336,8 @@ def target_omc(config, basepath=None, verbose=True, show=False):
         ax = fig.add_subplot(1, 1, 1)
 
         time = Time(np.asarray(omc['mjd'], dtype=float), format='mjd')
-        ax.errorbar(time.datetime, omc['mag'], omc['magerr'],
-                    fmt='.', alpha=0.5, color='#17becf')
+        plot_with_errors(ax, time.datetime, omc['mag'], omc['magerr'],
+                         color='#17becf')
 
         ax.invert_yaxis()
         ax.grid(alpha=0.2)

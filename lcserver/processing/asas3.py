@@ -19,7 +19,8 @@ from stdpipe import plots
 from .. import surveys
 from ..surveys import survey_source, get_output_files
 from .utils import (SourceError, cleanup_paths, cached_votable_query, log_bands,
-                    log_conversion, assumed_color, v_to_g, V_TO_G_FORMULA)
+                    log_conversion, plot_with_errors,
+                    assumed_color, v_to_g, V_TO_G_FORMULA)
 
 
 ASAS_CATALOG_URL = 'https://www.astrouw.edu.pl/cgi-asas/asas_cat_input'
@@ -356,8 +357,8 @@ def target_asas3(config, basepath=None, verbose=True, show=False):
 
         for name in datasets:
             idx = np.asarray(asas3['dataset']).astype(str) == name
-            ax.errorbar(time[idx].datetime, asas3['mag'][idx], asas3['magerr'][idx],
-                        fmt='.', alpha=0.5, label=name or 'ASAS-3')
+            plot_with_errors(ax, time[idx].datetime, asas3['mag'][idx],
+                             asas3['magerr'][idx], label=name or 'ASAS-3')
 
         ax.invert_yaxis()
         ax.grid(alpha=0.2)

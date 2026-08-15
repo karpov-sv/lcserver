@@ -19,7 +19,7 @@ from stdpipe import plots
 from .. import surveys
 from ..surveys import survey_source, get_output_files
 from .utils import (SourceError, cleanup_paths, cached_votable_query,
-                    irsa_client, log_bands, log_conversion)
+                    irsa_client, log_bands, log_conversion, plot_with_errors)
 
 
 # The two IRSA tables that between them cover the whole mission, and the bands
@@ -261,8 +261,8 @@ def target_wise(config, basepath=None, verbose=True, show=False):
             if not np.any(idx):
                 continue
 
-            ax.errorbar(time[idx].datetime, wise['mag'][idx], wise['magerr'][idx],
-                        fmt='.', color=color, alpha=0.5, label=band)
+            plot_with_errors(ax, time[idx].datetime, wise['mag'][idx],
+                             wise['magerr'][idx], color=color, label=band)
 
         ax.invert_yaxis()
         ax.grid(alpha=0.2)
