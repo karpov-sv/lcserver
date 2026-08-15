@@ -24,7 +24,7 @@ from stdpipe import catalogs, resolve, plots
 
 from ..surveys import survey_source, get_all_output_files
 from .utils import (cleanup_paths, cached_votable_query, write_spectrum,
-                    log_bands, log_conversion, assumed_color,
+                    log_bands, log_conversion, assumed_color, plot_with_errors,
                     r_to_g, R_TO_G_FORMULA,
                     gaia_g_to_g, GAIA_G_TO_G_FORMULA, GAIA_G_TO_G_RANGE,
                     GAIA_G_TO_G_SIGMA)
@@ -100,6 +100,51 @@ GAIA_EPPHOT_BANDS = [
     ('BP', 'TimeBP', 'BPmag', 'FBP', 'e_FBP', 'BPrVFlag'),
     ('RP', 'TimeRP', 'RPmag', 'FRP', 'e_FRP', 'RPrVFlag'),
 ]
+
+# What each band of the two epoch photometries is drawn in. Read both by the
+# plots below and by the registry entries at the foot of this module, so that
+# a band is the same colour wherever it is looked at.
+PS1_COLOURS = [('g', '#2ca02c'), ('r', '#d62728'), ('i', '#9467bd'),
+               ('z', '#8c564b'), ('y', '#7f7f7f')]
+GAIA_COLOURS = [('G', '#333333'), ('BP', '#1f77b4'), ('RP', '#d62728')]
+
+
+def _plot_epoch_photometry(table, colours, path, title, show=False):
+    """A look at the epoch photometry this step picked up along the way.
+
+    Diagnostic rather than a data product. Pan-STARRS and Gaia both publish a
+    light curve for a star this step is only asking about its brightness, and
+    until now the only sign of what those held was a count of points in the
+    log - a run of measurements that never varied and one with a night's
+    outburst in it read exactly alike. The two are still not surveys of their
+    own, so this is one small panel each rather than a section.
+
+    Each band as measured, in the colour the viewer draws it in; the converted
+    bands are left out, having nothing to say about the data that was fetched.
+    """
+    with plots.figure_saver(path, figsize=(8, 4), show=show) as fig:
+        ax = fig.add_subplot(1, 1, 1)
+
+        time = Time(np.asarray(table['mjd'], dtype=float), format='mjd').datetime
+        band = np.asarray(table['filter'])
+
+        for name, colour in colours:
+            idx = band == name
+
+            if not np.sum(idx):
+                continue
+
+            plot_with_errors(ax, time[idx], table['mag'][idx],
+                             table['magerr'][idx], color=colour,
+                             label=f"{name}")
+
+        ax.invert_yaxis()
+        ax.grid(alpha=0.2)
+        ax.legend()
+
+        ax.set_ylabel('Magnitude')
+        ax.set_xlabel('Time')
+        ax.set_title(title)
 
 
 def _has(row, key):
@@ -201,8 +246,8 @@ def edenhofer_map():
     state_acquired='info acquired',
     log_file='info.log',
     output_files=['info.log', 'galaxy_map.png', 'dust_3d.png', 'ps1.vot',
-                  'ps1.txt', 'gaia.vot', 'gaia.txt', 'gaia_xp.png',
-                  'gaia_xp.vot', 'gaia_xp.txt'],
+                  'ps1.txt', 'ps1.png', 'gaia.vot', 'gaia.txt', 'gaia.png',
+                  'gaia_xp.png', 'gaia_xp.vot', 'gaia_xp.txt'],
     button_text='Get Target Info',
     button_class='btn-info',
     # Coordinates every source queries by, and the colours they convert with
@@ -1120,6 +1165,12 @@ def target_info(config, basepath=None, verbose=True, show=False):
         log("Pan-STARRS DR2 warp photometry written to file:ps1.vot")
         log("Pan-STARRS DR2 warp photometry written to file:ps1.txt")
 
+        _plot_epoch_photometry(
+            ps1, PS1_COLOURS, os.path.join(basepath, 'ps1.png'),
+            f"{config['target_name']} - Pan-STARRS DR2 warp photometry",
+            show=show)
+        log("Pan-STARRS DR2 warp lightcurve written to file:ps1.png")
+
     else:
         log("Warning: No Pan-STARRS DR2 warp data found")
 
@@ -1253,6 +1304,12 @@ def target_info(config, basepath=None, verbose=True, show=False):
             gaia.write(os.path.join(basepath, 'gaia.txt'), format='ascii.commented_header', overwrite=True)
             log("Gaia DR3 epoch photometry written to file:gaia.vot")
             log("Gaia DR3 epoch photometry written to file:gaia.txt")
+
+            _plot_epoch_photometry(
+                gaia, GAIA_COLOURS, os.path.join(basepath, 'gaia.png'),
+                f"{config['target_name']} - Gaia DR3 epoch photometry",
+                show=show)
+            log("Gaia DR3 epoch photometry lightcurve written to file:gaia.png")
         else:
             log("Warning: No usable Gaia DR3 epoch photometry")
 
@@ -1277,8 +1334,7 @@ surveys.register_lightcurve_source(
                      # g is the scale the combined curve is drawn on, so it
                      # goes there as measured
                      combined=(fn == 'g'))
-        for fn, color in [('g', '#2ca02c'), ('r', '#d62728'), ('i', '#9467bd'),
-                          ('z', '#8c564b'), ('y', '#7f7f7f')]
+        for fn, color in PS1_COLOURS
     ] + [
         surveys.band('g (from r)', 'mag_g_from_r', 'magerr', surveys.BAND_DERIVED,
                      filter_column='filter', filter_value='r', color='#98df8a',
@@ -1303,7 +1359,7 @@ surveys.register_lightcurve_source(
         surveys.band(band, 'mag', 'magerr', surveys.BAND_NATIVE,
                      filter_column='filter', filter_value=band, color=color,
                      note='Gaia DR3 per-transit photometry, as reported')
-        for band, color in [('G', '#333333'), ('BP', '#1f77b4'), ('RP', '#d62728')]
+        for band, color in GAIA_COLOURS
     ] + [
         surveys.band('g (conv.)', 'mag_g', 'magerr', surveys.BAND_DERIVED,
                      filter_column='filter', filter_value='G', color='#7f7f7f',
