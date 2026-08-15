@@ -149,6 +149,7 @@ def target_asas(config, basepath=None, verbose=True, show=False):
                                   f"{type(e).__name__}: {e}")
 
             if not lcq or not len(lcq.data):
+                cache.save_empty()
                 log("Warning: No ASAS-SN data found")
                 return
 
@@ -158,6 +159,10 @@ def target_asas(config, basepath=None, verbose=True, show=False):
 
         # Use cached or freshly queried raw data
         asas = cache.data
+
+    # Nothing here, and cached as nothing - the helper has said so already
+    if asas is None:
+        return
 
     log(f"{len(asas)} ASAS-SN data points found")
 

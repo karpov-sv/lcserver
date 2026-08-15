@@ -165,6 +165,7 @@ def target_kws(config, basepath=None, verbose=True, show=False):
                 )
 
                 if not len(kws):
+                    cache.save_empty()
                     log("Warning: No KWS data points found")
                     return
 
@@ -184,6 +185,10 @@ def target_kws(config, basepath=None, verbose=True, show=False):
                                   f"{type(e).__name__}: {e}")
 
         kws = cache.data
+
+    # Nothing here, and cached as nothing - the helper has said so already
+    if kws is None:
+        return
 
     # Filter out bad data
     kws = kws[np.isfinite(kws['mag'])]

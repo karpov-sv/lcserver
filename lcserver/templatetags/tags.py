@@ -23,6 +23,13 @@ def target_file_link(m, target=None):
     return r"<a href='" + url + "'>" + name + r"</a>"
 
 
+def target_cache_link(m, target=None):
+    name = m.group(2)
+    url = reverse('target_files', kwargs={'id':target.id, 'path':os.path.join('cache', name)})
+
+    return r"<a href='" + url + "'>" + name + r"</a>"
+
+
 @register.simple_tag
 def target_file_contents(target, filename, highlight=False):
     path = os.path.join(target.path(), filename)
@@ -59,6 +66,10 @@ def target_file_contents(target, filename, highlight=False):
 
         contents = re.sub(r"\b(file:([\w.-]+\.\w+))\b",
                           partial(target_file_link, target=target),
+                          contents, flags=re.MULTILINE)
+
+        contents = re.sub(r"\b(cache:([\w.-]+\.\w+))\b",
+                          partial(target_cache_link, target=target),
                           contents, flags=re.MULTILINE)
 
         # Last, so that it only ever sees the text: the links put in above are

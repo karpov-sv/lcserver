@@ -671,7 +671,7 @@ def _query_images(ra, dec, basepath, log, refresh):
             if len(data):
                 cache.save(data['access_url', 't_min', 'em_min', 'em_max'])
             else:
-                cache.data = None
+                cache.save_empty()
         else:
             data = cache.data
 

@@ -269,7 +269,7 @@ def _query(ra, dec, sr, basepath, log, refresh):
             if len(table):
                 cache.save(table)
             else:
-                cache.data = None
+                cache.save_empty()
         else:
             table = cache.data
 

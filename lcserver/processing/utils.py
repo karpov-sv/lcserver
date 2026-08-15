@@ -542,10 +542,26 @@ def cached_votable_query(cache_name, basepath, log, description, refresh=False):
             if not cache.hit:
                 # Query code here - only runs if not cached
                 data = external_api.query(...)
-                cache.save(data)
+                if data is not None and len(data):
+                    cache.save(data)
+                else:
+                    cache.save_empty()
 
-            # Use cache.data (either from cache or just saved)
+            # Use cache.data - the query's rows, or None where there were none
             result = cache.data
+
+    An answer of no rows is cached like any other, as an empty file, and comes
+    back as `cache.data` of None. It is an answer: a star outside a survey's
+    footprint is outside it for good, and a service that has nothing on a
+    target usually has nothing on it next month either. Left uncached, those
+    are the queries that run on every single acquisition - SkyMapper alone
+    took a minute of every info run it could never have data for.
+
+    Only the source knows it was an answer, though, which is why this is a
+    call of its own rather than something `save` infers from an empty table: a
+    query that raised, timed out, or came back malformed must not reach it.
+    Cache a failure and the target carries it until someone asks for a
+    refresh.
 
     Parameters
     ----------
@@ -567,9 +583,10 @@ def cached_votable_query(cache_name, basepath, log, description, refresh=False):
     ------
     cache : CacheHelper
         Helper object with:
-        - cache.hit : bool - True if data loaded from cache
-        - cache.data : Table - Cached data (if hit=True) or None
+        - cache.hit : bool - True if the source has been asked before
+        - cache.data : Table - What it answered, or None where that was nothing
         - cache.save(data) : Save data to cache
+        - cache.save_empty() : Remember that the answer was nothing
         - cache.path : str - Full cache file path
 
     Examples
@@ -620,7 +637,28 @@ def cached_votable_query(cache_name, basepath, log, description, refresh=False):
             data.write(cache_path, format='votable', overwrite=True)
             self.data = data
             self._saved = True
-            log(f"Cached {description} data to {cache_name}")
+            log(f"Cached {description} data to cache:{cache_name}")
+
+        def save_empty(self):
+            """Remember that the source answered, and had nothing.
+
+            Only ever for an answer. A query that raised or returned something
+            unreadable has said nothing about the target, and caching that
+            would keep saying it until the cache is refreshed by hand.
+            """
+            if self._saved:
+                return
+
+            os.makedirs(os.path.join(basepath, 'cache'), exist_ok=True)
+
+            # An empty file rather than an empty table: there is generally no
+            # table to write - a catalogue with no match returns nothing at
+            # all rather than a row-less one - and a file of no bytes cannot
+            # be mistaken for data by anything that reads the cache directory
+            open(cache_path, 'w').close()
+            self.data = None
+            self._saved = True
+            log(f"Cached the empty {description} answer to cache:{cache_name}")
 
         def invalidate(self):
             """Remove invalid cached data and reset state for re-query."""
@@ -633,15 +671,20 @@ def cached_votable_query(cache_name, basepath, log, description, refresh=False):
     cache = CacheHelper()
 
     if refresh and os.path.exists(cache_path):
-        log(f"Dropping cached {description} data ({cache_name}) as requested")
+        log(f"Dropping cached {description} data ({cache_name})")
         cache.invalidate()
 
     # Try loading from cache
     if os.path.exists(cache_path):
-        log(f"Loading {description} from cache ({cache_name})")
-        cache.data = Table.read(cache_path)
+        if not os.path.getsize(cache_path):
+            log(f"{description} cache is empty (cache:{cache_name})")
+            cache.data = None
+        else:
+            log(f"Loading {description} from cache (cache:{cache_name})")
+            cache.data = Table.read(cache_path)
+
         cache.hit = True
-        cache._saved = True  # Already have data
+        cache._saved = True  # Already answered, one way or the other
     else:
         log(f"Querying {description}...")
         cache.hit = False
@@ -898,11 +941,11 @@ def cached_lightkurve_search(cache_name, basepath, log, description,
     cache_path = os.path.join(basepath, 'cache', cache_name)
 
     if refresh and os.path.exists(cache_path):
-        log(f"Dropping cached {description} search ({cache_name}) as requested")
+        log(f"Dropping cached {description} search (cache:{cache_name})")
         os.unlink(cache_path)
 
     if os.path.exists(cache_path):
-        log(f"Loading {description} search from cache ({cache_name})")
+        log(f"Loading {description} search from cache (cache:{cache_name})")
         return lk.SearchResult(Table.read(cache_path))
 
     log(f"Querying {description}...")
@@ -919,7 +962,7 @@ def cached_lightkurve_search(cache_name, basepath, log, description,
 
     os.makedirs(os.path.join(basepath, 'cache'), exist_ok=True)
     table.write(cache_path, format='votable', overwrite=True)
-    log(f"Cached {description} search to {cache_name}")
+    log(f"Cached {description} search to cache:{cache_name}")
 
     return res
 

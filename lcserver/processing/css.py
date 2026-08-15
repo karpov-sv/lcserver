@@ -147,6 +147,7 @@ def target_css(config, basepath=None, verbose=True, show=False):
                                       f" - {type(e).__name__}: {e}")
 
                 if not data_array or len(data_array) == 0:
+                    cache.save_empty()
                     log("Warning: No CSS data points found")
                     return
 
@@ -164,6 +165,10 @@ def target_css(config, basepath=None, verbose=True, show=False):
                                   f"{type(e).__name__}: {e}")
 
         css = cache.data
+
+    # Nothing here, and cached as nothing - the helper has said so already
+    if css is None:
+        return
 
     # Filter out bad data
     css = css[np.isfinite(css['mag'])]

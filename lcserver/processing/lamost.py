@@ -159,6 +159,7 @@ def _query(catalogue, ra, dec, sr, basepath, log, name, refresh):
             if cat is not None and len(cat):
                 cache.save(cat)
             else:
+                cache.save_empty()
                 cat = None
         else:
             cat = cache.data
@@ -353,13 +354,16 @@ def target_lamost(config, basepath=None, verbose=True, show=False):
             if not cache.hit:
                 try:
                     spectrum = _fetch_spectrum(obsid, resolution, log)
+
+                    # Inside the try, so that a fetch which failed is not
+                    # remembered as a spectrum that does not exist
+                    if spectrum is not None and len(spectrum):
+                        cache.save(spectrum)
+                    else:
+                        cache.save_empty()
+                        spectrum = None
                 except Exception as e:
                     log(f"  {obsid}: {e}")
-                    spectrum = None
-
-                if spectrum is not None and len(spectrum):
-                    cache.save(spectrum)
-                else:
                     spectrum = None
             else:
                 spectrum = cache.data

@@ -162,6 +162,14 @@ def target_wise(config, basepath=None, verbose=True, show=False):
                     data = irsa_client().query_region(
                         coords, catalog=phase['catalog'],
                         spatial='Cone', radius=wise_sr*u.arcsec)
+
+                    # Inside the try, so that only an archive that answered
+                    # can be recorded as having had nothing
+                    if data is not None and len(data):
+                        cache.save(data)
+                    else:
+                        cache.save_empty()
+                        data = None
                 except Exception as e:
                     import traceback
                     traceback.print_exc()
@@ -171,11 +179,6 @@ def target_wise(config, basepath=None, verbose=True, show=False):
                     log(f"Error: could not query {phase['name']} - "
                         f"{type(e).__name__}: {e}")
                     failures.append(f"{phase['name']} ({type(e).__name__})")
-                    data = None
-
-                if data is not None and len(data):
-                    cache.save(data)
-                else:
                     data = None
             else:
                 data = cache.data

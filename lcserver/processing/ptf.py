@@ -100,6 +100,7 @@ def target_ptf(config, basepath=None, verbose=True, show=False):
                 )
 
                 if not len(table):
+                    cache.save_empty()
                     log(f"Warning: No PTF data points found within {ptf_sr:.1f} arcsec")
                     return
 
@@ -114,6 +115,10 @@ def target_ptf(config, basepath=None, verbose=True, show=False):
 
         # Use cached or freshly queried data
         table = cache.data
+
+    # Nothing here, and cached as nothing - the helper has said so already
+    if table is None:
+        return
 
     # Create standardized columns
     table['mjd'] = table['obsmjd']

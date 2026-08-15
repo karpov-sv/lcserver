@@ -270,6 +270,7 @@ def target_asas3(config, basepath=None, verbose=True, show=False):
                 designation = _query_catalogue(coords, asas3_sr, ASAS_NMIN, log)
 
                 if designation is None:
+                    cache.save_empty()
                     return
 
                 log(f"Requesting the light curve of ASAS {designation}")
@@ -282,12 +283,17 @@ def target_asas3(config, basepath=None, verbose=True, show=False):
                                   f"{type(e).__name__}: {e}")
 
             if asas3 is None or not len(asas3):
+                cache.save_empty()
                 log("Warning: No ASAS-3 data points found")
                 return
 
             cache.save(asas3)
 
         asas3 = cache.data
+
+    # Nothing here, and cached as nothing - the helper has said so already
+    if asas3 is None:
+        return
 
     log(f"{len(asas3)} original data points")
 

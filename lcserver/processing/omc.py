@@ -237,6 +237,7 @@ def target_omc(config, basepath=None, verbose=True, show=False):
                                   rad=f'{omc_sr/60:.4f}')
 
                 if not objects:
+                    cache.save_empty()
                     log("Warning: No OMC object at this position - INTEGRAL "
                         "only observed where it was pointed")
                     return
@@ -264,12 +265,17 @@ def target_omc(config, basepath=None, verbose=True, show=False):
                                   f"{type(e).__name__}: {e}")
 
             if omc is None or not len(omc):
+                cache.save_empty()
                 log("Warning: No OMC data points found")
                 return
 
             cache.save(omc)
 
         omc = cache.data
+
+    # Nothing here, and cached as nothing - the helper has said so already
+    if omc is None:
+        return
 
     log(f"{len(omc)} original data points")
 

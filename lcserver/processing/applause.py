@@ -172,14 +172,18 @@ def target_applause(config, basepath=None, verbose=True, show=False):
             # Use helper function to parse potentially malformed VOTable
             applause = parse_votable_lenient(response.content)
 
-            cache.save(applause)
+            if applause is not None and len(applause):
+                cache.save(applause)
+            else:
+                cache.save_empty()
 
         applause = cache.data
 
-    log(f"{len(applause)} original data points")
-
-    if not len(applause):
+    # Nothing here, and cached as nothing - the helper has said so already
+    if applause is None:
         return
+
+    log(f"{len(applause)} original data points")
 
     quality = quality_level(config, 'applause')
 

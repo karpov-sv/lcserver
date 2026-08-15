@@ -176,7 +176,9 @@ def target_ztf(config, basepath=None, verbose=True, show=False):
     ztf_required_columns = {'filtercode', 'mag', 'magerr', 'catflags', 'clrcoeff', 'mjd'}
 
     with cached_votable_query(cache_name, basepath, log, 'ZTF raw data', refresh=refresh_cache) as cache:
-        if cache.hit:
+        # A hit with nothing in it is an answer of no data, not a table to
+        # check the columns of
+        if cache.hit and cache.data is not None:
             # Validate cached data has expected columns
             if not ztf_required_columns.issubset(cache.data.colnames):
                 log(f"Warning: Cached ZTF data is invalid (missing columns), re-querying")
@@ -219,6 +221,7 @@ def target_ztf(config, basepath=None, verbose=True, show=False):
                 raise SourceError(f"the ZTF archive answered {r.status_code}")
 
             if not lcq or not len(lcq.data):
+                cache.save_empty()
                 log("Warning: No ZTF data found")
                 return
 
@@ -235,6 +238,10 @@ def target_ztf(config, basepath=None, verbose=True, show=False):
 
         # Use cached or freshly queried raw data
         ztf = cache.data
+
+    # Nothing here, and cached as nothing - the helper has said so already
+    if ztf is None:
+        return
 
     log(f"{len(ztf)} ZTF data points found")
     for fn in ['zg', 'zr', 'zi']:

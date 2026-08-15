@@ -236,6 +236,7 @@ def target_hipparcos(config, basepath=None, verbose=True, show=False):
                 star = _find_star(ra, dec, hip_sr, log)
 
                 if star is None:
+                    cache.save_empty()
                     log("Warning: No Hipparcos star at this position - the catalogue "
                         "reaches only to about twelfth magnitude")
                     return
@@ -247,6 +248,7 @@ def target_hipparcos(config, basepath=None, verbose=True, show=False):
                 header, rows = _fetch_record(star['hip'], offsets, log)
 
                 if not rows:
+                    cache.save_empty()
                     log(f"HIP {star['hip']} has no epoch photometry in the annexe")
                     return
 
@@ -278,12 +280,17 @@ def target_hipparcos(config, basepath=None, verbose=True, show=False):
                                   f"{type(e).__name__}: {e}")
 
             if not len(hipp):
+                cache.save_empty()
                 log("Warning: No Hipparcos data points found")
                 return
 
             cache.save(hipp)
 
         hipp = cache.data
+
+    # Nothing here, and cached as nothing - the helper has said so already
+    if hipp is None:
+        return
 
     log(f"{len(hipp)} transits")
 

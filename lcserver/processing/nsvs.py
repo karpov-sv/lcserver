@@ -318,6 +318,7 @@ def target_nsvs(config, basepath=None, verbose=True, show=False):
                 obj = _find_object(ra, dec, nsvs_sr, log)
 
                 if obj is None:
+                    cache.save_empty()
                     log("Warning: No NSVS object at this position")
                     return
 
@@ -360,12 +361,17 @@ def target_nsvs(config, basepath=None, verbose=True, show=False):
                                   f"{type(e).__name__}: {e}")
 
             if not len(nsvs):
+                cache.save_empty()
                 log("Warning: No NSVS data points found")
                 return
 
             cache.save(nsvs)
 
         nsvs = cache.data
+
+    # Nothing here, and cached as nothing - the helper has said so already
+    if nsvs is None:
+        return
 
     log(f"{len(nsvs)} original data points")
 

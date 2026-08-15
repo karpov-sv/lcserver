@@ -145,6 +145,7 @@ def target_mmt9(config, basepath=None, verbose=True, show=False):
                                   f' - {type(e).__name__}: {e}')
 
             if not len(mmt9):
+                cache.save_empty()
                 log("Warning: No Mini-MegaTORTORA data found")
                 return
 
@@ -153,6 +154,10 @@ def target_mmt9(config, basepath=None, verbose=True, show=False):
             cache.save(mmt9)
 
         mmt9 = cache.data
+
+    # Nothing here, and cached as nothing - the helper has said so already
+    if mmt9 is None:
+        return
 
     log(f"{len(mmt9)} original data points")
 

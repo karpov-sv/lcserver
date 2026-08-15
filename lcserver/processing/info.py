@@ -283,6 +283,7 @@ def target_info(config, basepath=None, verbose=True, show=False):
             if res and len(res):
                 cache.save(res)
             else:
+                cache.save_empty()
                 res = None
         else:
             res = cache.data
@@ -324,6 +325,7 @@ def target_info(config, basepath=None, verbose=True, show=False):
                 if vsx is not None and len(vsx):
                     cache.save(vsx)
                 else:
+                    cache.save_empty()
                     vsx = None
             except Exception as e:
                 log(f"Error: could not reach VizieR: {e}")
@@ -422,6 +424,7 @@ def target_info(config, basepath=None, verbose=True, show=False):
                 if cat and len(cat):
                     cache.save(cat)
                 else:
+                    cache.save_empty()
                     cat = None
             else:
                 cat = cache.data
@@ -479,6 +482,7 @@ def target_info(config, basepath=None, verbose=True, show=False):
             if cat and len(cat):
                 cache.save(cat)
             else:
+                cache.save_empty()
                 cat = None
         else:
             cat = cache.data
@@ -575,6 +579,7 @@ def target_info(config, basepath=None, verbose=True, show=False):
                         xp.sort('wavelength')
                         cache.save(xp)
                     else:
+                        cache.save_empty()
                         xp = None
                 except Exception as e:
                     log(f"Error: could not fetch the XP spectrum: {e}")
@@ -642,6 +647,7 @@ def target_info(config, basepath=None, verbose=True, show=False):
             if cat and len(cat):
                 cache.save(cat)
             else:
+                cache.save_empty()
                 cat = None
         else:
             cat = cache.data
@@ -1005,6 +1011,7 @@ def target_info(config, basepath=None, verbose=True, show=False):
                 if ps1_raw and len(ps1_raw):
                     cache.save(ps1_raw)
                 else:
+                    cache.save_empty()
                     ps1_raw = None
             except Exception as e:
                 import traceback
@@ -1018,6 +1025,7 @@ def target_info(config, basepath=None, verbose=True, show=False):
     ps1 = None
     if ps1_raw and len(ps1_raw):
         ps1 = ps1_raw[ps1_raw['psfQfPerfect'] > 0.95]  # Quality cut
+        log(f"{len(ps1)} of {len(ps1_raw)} points after quality cut")
 
     if ps1 and len(ps1):
         ps1.sort('obsTime')
@@ -1132,6 +1140,7 @@ def target_info(config, basepath=None, verbose=True, show=False):
                 if epphot and len(epphot):
                     cache.save(epphot)
                 else:
+                    cache.save_empty()
                     epphot = None
             except Exception as e:
                 import traceback

@@ -237,11 +237,16 @@ def target_desi(config, basepath=None, verbose=True, show=False):
                                  'survey', 'instrument', 'dateobs', 'exptime',
                                  'specprimary'])
                     got = res.records[0] if res.records else None
+                    answered = True
                 except Exception as e:
                     log(f"  {uuid[:8]}: {e}")
-                    got = None
+                    got, answered = None, False
 
                 if got is None:
+                    # Only an archive that answered is remembered as having
+                    # had nothing; one that failed has said nothing at all
+                    if answered:
+                        cache.save_empty()
                     spectrum = None
                 else:
                     spectrum = Table({
@@ -358,6 +363,7 @@ def target_desi(config, basepath=None, verbose=True, show=False):
                 if mws is not None and len(mws):
                     cache.save(mws)
                 else:
+                    cache.save_empty()
                     mws = None
             else:
                 mws = cache.data

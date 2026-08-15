@@ -264,9 +264,16 @@ def target_dasch(config, basepath=None, verbose=True, show=False):
             # Filter out rows with invalid data
             dasch = dasch[np.isfinite(dasch['ExposureDate'])]
 
-            cache.save(dasch)
+            if len(dasch):
+                cache.save(dasch)
+            else:
+                cache.save_empty()
 
         dasch = cache.data
+
+    # Nothing here, and cached as nothing - the helper has said so already
+    if dasch is None:
+        return
 
     log(f"{len(dasch)} original data points")
 

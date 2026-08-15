@@ -188,6 +188,7 @@ def target_wasp(config, basepath=None, verbose=True, show=False):
                 objects = _search(ra, dec, wasp_sr, WASP_NMIN, log)
 
                 if not objects:
+                    cache.save_empty()
                     log("Warning: No SuperWASP object at this position - its coverage, "
                         "though wide, is not the whole sky")
                     return
@@ -208,12 +209,17 @@ def target_wasp(config, basepath=None, verbose=True, show=False):
                                   f"{type(e).__name__}: {e}")
 
             if wasp is None or not len(wasp):
+                cache.save_empty()
                 log("Warning: No SuperWASP data points found")
                 return
 
             cache.save(wasp)
 
         wasp = cache.data
+
+    # Nothing here, and cached as nothing - the helper has said so already
+    if wasp is None:
+        return
 
     log(f"{len(wasp)} original data points")
 
