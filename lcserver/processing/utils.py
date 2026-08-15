@@ -253,6 +253,47 @@ def log_quality(log, quality, dropped, mission='TESS'):
         + (f" on the mission flags: {named}" if named else " on the mission flags"))
 
 
+def break_at_gaps(time, flux, tolerance=1.5):
+    """Keep a line from being drawn across a gap in the sampling.
+
+    A pipeline that publishes the cadences it could not measure, with nothing
+    in their flux, breaks its own line - matplotlib draws through no NaN. One
+    that leaves them out instead hands over two runs of points with a jump
+    between them, and the line is then drawn straight across the gap, which
+    reads as data where there is none. TEQUILA does this at every mid-sector
+    downlink; QLP does it too, and is saved from it only when the quality mask
+    happens to empty the cadences on either side.
+
+    So a gap wider than a cadence and a half gets an empty point of its own
+    for the line to break at. It goes at the far side of the gap, a cadence
+    before the point that resumes it, because these are drawn as steps: a step
+    is horizontal into its own point, so an empty point at the near side would
+    leave that horizontal run to be drawn clear across the gap anyway. Put at
+    the far side it leaves a step of the usual width instead.
+
+    Returns the two arrays with those points inserted.
+    """
+    time = np.asarray(time, dtype=float)
+    flux = np.asarray(flux, dtype=float)
+
+    if len(time) < 3:
+        return time, flux
+
+    steps = np.diff(time)
+    cadence = np.median(steps[steps > 0]) if np.any(steps > 0) else 0
+
+    if not cadence > 0:
+        return time, flux
+
+    gaps = np.nonzero(steps > tolerance * cadence)[0]
+
+    if not len(gaps):
+        return time, flux
+
+    return (np.insert(time, gaps + 1, time[gaps + 1] - cadence),
+            np.insert(flux, gaps + 1, np.nan))
+
+
 def clip_noisy_points(mag, err, groups=None, log=None, group_name='group',
                       ratio=CLIP_MAX_ERR_RATIO, nmin=CLIP_NMIN):
     """Which points are noisier than their own kind manages at that brightness.
@@ -851,3 +892,178 @@ def drop_mast_downloads(basepath, source_id, log):
 
     shutil.rmtree(path, ignore_errors=True)
     log("Dropped the cached downloads as requested")
+
+
+def download_mast_product(row, download_dir):
+    """Fetch one product from MAST, and say where it landed.
+
+    Deliberately the download lightkurve would have made, into the same place,
+    so that a pipeline read here is cached, reused and refreshed exactly as
+    the ones read by lightkurve are.
+
+    Parameters
+    ----------
+    row : `lightkurve.SearchResult`
+        A single product to download
+    download_dir : str
+        Where this source keeps its downloads, as for `row.download()`
+
+    Returns
+    -------
+    path : str
+        Where the file is on disk
+    """
+    table = row.table[:1]
+
+    # Where lightkurve's downloader would have left it - hard-coded there too,
+    # to save asking MAST for the size of a file that is already on disk
+    path = os.path.join(download_dir.rstrip('/'), 'mastDownload',
+                        str(table['obs_collection'][0]),
+                        str(table['obs_id'][0]),
+                        str(table['productFilename'][0]))
+
+    if os.path.exists(path):
+        return path
+
+    from astroquery.mast import Observations
+
+    response = Observations.download_products(table, mrp_only=False,
+                                              download_dir=download_dir)[0]
+    if response['Status'] != 'COMPLETE':
+        raise RuntimeError(
+            f"Could not download {table['dataURI'][0]}: "
+            f"{response['Status']}: {response['Message']}")
+
+    return response['Local Path']
+
+
+def download_tequila_lightcurve(row, download_dir):
+    """Fetch one TEQUILA light curve, which lightkurve cannot open itself.
+
+    lightkurve finds these products - they carry an author like any other -
+    but dies on opening them. The files were written with `LightCurve.to_fits`,
+    so its detector reads the CREATOR card, takes them for SPOC light curves,
+    and the SPOC reader then fails on a missing 'quality' column, which
+    TEQUILA calls SAP_QUALITY. It raises rather than returning nothing, which
+    would end the whole step, so the file is fetched and read here.
+
+    Parameters
+    ----------
+    row : `lightkurve.SearchResult`
+        A single product to download
+    download_dir : str
+        Where this source keeps its downloads, as for `row.download()`
+
+    Returns
+    -------
+    lc : `lightkurve.TessLightCurve`
+        The light curve, carrying the metadata the plotting expects
+    """
+    import lightkurve as lk
+    from astropy.io import fits
+    from astropy.time import Time
+    from astropy import units as u
+
+    path = download_mast_product(row, download_dir)
+
+    with fits.open(path) as hdus:
+        header, data = hdus[0].header, hdus[1].data
+        flux_unit = u.electron / u.s
+
+        # FLUX is the master frame's reference flux plus the differential one,
+        # so it stands on the same footing as what the other pipelines
+        # publish; d_FLUX is what the difference imaging actually measured,
+        # and is kept beside it. TIME is BTJD offset by 2457000, whatever the
+        # TIMESYS card says - it is a quarter of an hour from where the other
+        # pipelines put the same cadence, so this is not the light curve to
+        # phase a precise ephemeris on.
+        lc = lk.TessLightCurve(
+            time=Time(np.asarray(data['TIME'], dtype=float),
+                      format='jd', scale='tdb'),
+            flux=np.asarray(data['FLUX'], dtype=float) * flux_unit,
+            flux_err=np.asarray(data['FLUX_ERR'], dtype=float) * flux_unit,
+            # Published in every file, and zero in every one seen so far
+            quality=np.asarray(data['SAP_QUALITY'], dtype=int),
+            meta={'SECTOR': header['SECTOR'],
+                  'AUTHOR': header['HLSPID'],
+                  'MISSION': 'TESS',
+                  'FLUX_ORIGIN': 'flux',
+                  'LABEL': header['HLSPTARG'],
+                  'TARGETID': header['HLSPTARG'],
+                  'CAMERA': header['CAMERA'],
+                  'CCD': header['CCD']})
+
+        lc['d_flux'] = np.asarray(data['d_FLUX'], dtype=float) * flux_unit
+        lc['d_flux_err'] = np.asarray(data['d_FLUX_ERR'], dtype=float) * flux_unit
+
+    return lc
+
+
+def download_tars_lightcurve(row, download_dir):
+    """Fetch one TARS light curve, which lightkurve cannot open either.
+
+    A different failure from TEQUILA's, and a plainer one: the files carry no
+    CREATOR card at all, so lightkurve's detector recognises nothing and its
+    reader refuses the file outright. It raises, as ever, so this is read here.
+
+    There is not much to read. TARS publishes two columns - the time, and a
+    flux already normalised by its own median - with no quality flags, so the
+    quality control does not reach these light curves. What it does publish
+    beside them is its periodogram, which is the survey's point: the periods
+    of its five strongest peaks, and the amplitude of a sine fit at the first.
+    Those are carried into the metadata for the log.
+
+    Parameters
+    ----------
+    row : `lightkurve.SearchResult`
+        A single product to download
+    download_dir : str
+        Where this source keeps its downloads, as for `row.download()`
+
+    Returns
+    -------
+    lc : `lightkurve.TessLightCurve`
+        The light curve, carrying the metadata the plotting expects
+    """
+    import lightkurve as lk
+    from astropy.io import fits
+    from astropy.time import Time
+
+    path = download_mast_product(row, download_dir)
+
+    with fits.open(path) as hdus:
+        header, data = hdus[0].header, hdus[1].data
+
+        flux = np.asarray(data['FLUX'], dtype=float)
+
+        # No per-point uncertainty is published either, only the sector's
+        # point-to-point noise, and every point is given that. An empty column
+        # would be worse than a rough one: everything downstream asks for a
+        # finite error and drops what has none, so the light curve would go
+        # missing from the folding and the periodograms rather than merely
+        # carrying no error bars.
+        rms = float(hdus[1].header.get('P2PRMS') or 0.0)
+        if not rms > 0:
+            rms = float(np.nanstd(np.diff(flux)) / np.sqrt(2))
+
+        # TIME is BTJD in TDB, as the header says and as it agrees with QLP
+        lc = lk.TessLightCurve(
+            time=Time(np.asarray(data['TIME'], dtype=float) + 2457000.0,
+                      format='jd', scale='tdb'),
+            flux=flux,
+            flux_err=np.full(len(flux), rms),
+            meta={'SECTOR': header['SECTOR'],
+                  'AUTHOR': header['HLSPID'],
+                  'MISSION': 'TESS',
+                  'FLUX_ORIGIN': 'flux',
+                  'LABEL': header['HLSPTARG'],
+                  'TARGETID': header.get('TICID'),
+                  'CAMERA': header['CAMERA'],
+                  'CCD': header['CCD'],
+                  # From the table's own header rather than the primary one,
+                  # and only ever read together, so absent is zero
+                  'PERIOD': float(hdus[1].header.get('PER1') or 0.0),
+                  'PERIOD_AMPLITUDE': float(hdus[1].header.get('AMPFIT') or 0.0),
+                  'PERIOD_SNR': float(hdus[1].header.get('SNR') or 0.0)})
+
+    return lc

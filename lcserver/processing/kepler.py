@@ -25,7 +25,7 @@ from astropy.time import Time
 from stdpipe import plots
 
 from ..surveys import survey_source, get_output_files
-from .utils import (cleanup_paths, cached_lightkurve_search,
+from .utils import (break_at_gaps, cleanup_paths, cached_lightkurve_search,
                     drop_mast_downloads, mast_download_dir,
                     mission_quality_mask, log_quality, quality_field,
                     quality_level,
@@ -233,7 +233,8 @@ def _acquire_phase(config, basepath, log, show, phase, coord, sr, cadence,
                     log_quality(log, lc['quality'], had & ~keep, 'Kepler')
 
                 ax.axhline(1, ls='--', color='gray', alpha=0.3)
-                ax.plot(time, flux, drawstyle='steps', lw=1, color=phase['color'])
+                ax.plot(*break_at_gaps(time, flux),
+                        drawstyle='steps', lw=1, color=phase['color'])
 
                 ax.grid(alpha=0.2)
 

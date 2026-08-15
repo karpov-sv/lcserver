@@ -15,7 +15,8 @@ from astropy.time import Time
 from stdpipe import plots
 
 from ..surveys import survey_source, get_output_files
-from .utils import (cleanup_paths, cached_lightkurve_search,
+from .utils import (break_at_gaps, cleanup_paths, cached_lightkurve_search,
+                    download_tars_lightcurve, download_tequila_lightcurve,
                     drop_mast_downloads, mast_download_dir,
                     mission_quality_mask, log_quality, quality_field,
                     quality_level,
@@ -23,8 +24,23 @@ from .utils import (cleanup_paths, cached_lightkurve_search,
 
 
 # The reductions TESS light curves come from, in the order they are preferred
-# when the choice is left open
+# when the choice is left open. Two more can be asked for by name but are not
+# among them, as each answers a narrower question than "the light curve of
+# this star". TEQUILA covers only the prime mission at half-hour cadence, its
+# timestamps sit a quarter of an hour from everyone else's, and where it
+# overlaps QLP it measures the same thing slightly less precisely; what it has
+# that they do not is the faint end, as it looks for what varies in the
+# difference images rather than at what the TIC lists, and so reaches the
+# variables and the transients the others had no target for. TARS detrends
+# against the other pixels of its own camera rather than fitting the star's
+# own trend away, which is what keeps a rotation signal that spans days
+# intact where the others flatten it - at the price of a bare light curve,
+# with no uncertainties and no flags.
 TESS_AUTHORS = ['TESS-SPOC', 'QLP', 'SPOC']
+
+# The pipelines read here rather than by lightkurve, which cannot open either
+TESS_OWN_READERS = {'TEQUILA': download_tequila_lightcurve,
+                    'TARS': download_tars_lightcurve}
 
 
 @survey_source(
@@ -42,7 +58,9 @@ TESS_AUTHORS = ['TESS-SPOC', 'QLP', 'SPOC']
             'choices': [('auto', 'Best available'),
                         ('TESS-SPOC', 'TESS-SPOC'),
                         ('QLP', 'QLP'),
-                        ('SPOC', 'SPOC')],
+                        ('SPOC', 'SPOC'),
+                        ('TEQUILA', 'TEQUILA (faint variables, sectors 1-26)'),
+                        ('TARS', 'TARS (rotation, flux only)')],
             'initial': 'auto',
             'required': False,
         },
@@ -134,9 +152,19 @@ def target_tess(config, basepath=None, verbose=True, show=False):
     else:
         log(f"{len(res)} data products found")
 
-    for tname in np.unique(res.target_name):
-        idx = res.target_name == tname
-        log(f"\nTESS target {tname} at {res[idx].distance[0].value:.1f} arcsec")
+    # What counts as one target among the products found. Most pipelines name
+    # the star and keep that name across its sectors, so its sectors gather
+    # under it. TEQUILA names the position on the CCD it measured instead -
+    # s0014-cam3-ccd2-x0284-y1546, a different name in every sector - so
+    # grouping on what it publishes would make each sector a target of its own.
+    tnames = np.array(res.target_name, dtype=object)
+    tnames[np.asarray(res.author) == 'TEQUILA'] = 'TEQUILA source'
+
+    for tname in np.unique(tnames):
+        idx = tnames == tname
+        # The nearest of them, as a group holds one match per sector rather
+        # than one match
+        log(f"\nTESS target {tname} at {np.min(res[idx].distance.value):.1f} arcsec")
 
         for mission in np.unique(res[idx].mission):
             idx1 = idx & (res.mission == mission)
@@ -153,9 +181,22 @@ def target_tess(config, basepath=None, verbose=True, show=False):
                 is_done = False
 
                 for row in res[idx2]:
-                    lc = row.download(download_dir=mast_download_dir(basepath, 'tess'))
+                    if author in TESS_OWN_READERS:
+                        lc = TESS_OWN_READERS[author](
+                            row, mast_download_dir(basepath, 'tess'))
+                    else:
+                        lc = row.download(download_dir=mast_download_dir(basepath, 'tess'))
+
                     if not lc:
                         continue
+
+                    # What the pipeline made of the sector itself, where it
+                    # says so - TARS looks for rotation and publishes the
+                    # period it found beside the light curve
+                    if lc.meta.get('PERIOD'):
+                        log(f"    {lc.meta['AUTHOR']} period {lc.meta['PERIOD']:.4f} d, "
+                            f"amplitude {lc.meta['PERIOD_AMPLITUDE']:.4f}, "
+                            f"S/N {lc.meta['PERIOD_SNR']:.1f}")
 
                     # Plot the lightcurve
                     lcname = f"tess_lc_{lc.meta['SECTOR']}_{lc.meta['AUTHOR']}_{row.exptime[0].value:.0f}.png"
@@ -178,7 +219,8 @@ def target_tess(config, basepath=None, verbose=True, show=False):
                             log_quality(log, lc['quality'], had & ~keep, 'TESS')
 
                         ax.axhline(1, ls='--', color='gray', alpha=0.3)
-                        ax.plot(time, flux, drawstyle='steps', lw=1)
+                        ax.plot(*break_at_gaps(time, flux),
+                                drawstyle='steps', lw=1)
 
                         ax.grid(alpha=0.2)
 
