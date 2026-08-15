@@ -21,7 +21,22 @@
 
     <!-- jQuery -->
     <script type="text/javascript">
+     // Page width, remembered in a cookie so that the server may render the
+     // container the way it was left, and the page never starts at one width
+     // and jumps to the other
+     var set_layout = function(fluid){
+       $('#main-container').toggleClass('container-fluid', fluid).toggleClass('container', !fluid);
+       $('#layout-toggle i').toggleClass('fa-television', fluid).toggleClass('fa-tablet', !fluid);
+
+       document.cookie = 'layout=' + (fluid ? 'fluid' : 'fixed') +
+                         '; path=/; max-age=' + 365*24*3600 + '; samesite=lax';
+     };
+
      $(document).ready(function(){
+       $('#layout-toggle').on('click', function(event){
+         event.preventDefault();
+         set_layout(!$('#main-container').hasClass('container-fluid'));
+       });
      });
 
      // Show a Bootstrap toast notification, same style as Django messages
@@ -87,6 +102,12 @@
           </ul>
 
           <ul class="navbar-nav ms-auto me-2">
+            <li class="nav-item" style="width: 2rem; text-align: center">
+              <a class="nav-link" href="#" id="layout-toggle" role="button" title="Toggle the page width">
+                <i class="fa {% if request.COOKIES.layout == 'fluid' %}fa-television{% else %}fa-tablet{% endif %}"></i>
+              </a>
+            </li>
+
             {% if user.is_authenticated %}
               <li class="nav-item dropdown">
                 <a href="#" class="dropdown-toggle nav-link" data-bs-toggle="dropdown">User: {{ user|user }} <span class="caret"></span></a>
@@ -161,7 +182,7 @@
     </div>
 
     <!-- Main content -->
-    <div class="container">
+    <div class="{% if request.COOKIES.layout == 'fluid' %}container-fluid{% else %}container{% endif %}" id="main-container">
 
       {% block title_div %}
         <h1 class="mb-4">{% block title %}{% endblock %}</h1>
