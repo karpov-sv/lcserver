@@ -8,6 +8,63 @@
 
 {% block head %}
   {% include "popup_image.html" %}
+
+  <style>
+   /* As many cutouts per row as fit at their nominal width, sharing what is
+      left over so that a full row spans the page. auto-fill, and not auto-fit,
+      is what keeps a row of one or two from stretching them across it. */
+   .cutout-grid {
+     display: grid;
+     grid-template-columns: repeat(auto-fill, minmax(14rem, 1fr));
+     gap: 0.5rem;
+   }
+
+   /* The frame holds the square the image will occupy from the start, so that
+      nothing on the page moves as the images arrive one by one */
+   .cutout-frame {
+     position: relative;
+     aspect-ratio: 1;
+     overflow: hidden;
+     background-color: var(--bs-secondary-bg);
+     /* Keeping the corners the card would have rounded itself */
+     border-bottom-left-radius: var(--bs-card-inner-border-radius);
+     border-bottom-right-radius: var(--bs-card-inner-border-radius);
+   }
+
+   .cutout-frame img {
+     display: block;
+     width: 100%;
+     height: 100%;
+     cursor: pointer;
+   }
+
+   /* Only an image with something in it is worth showing, or clicking */
+   .cutout-frame:not(.loaded) img {
+     visibility: hidden;
+   }
+
+   .cutout-status {
+     position: absolute;
+     inset: 0;
+     display: flex;
+     align-items: center;
+     justify-content: center;
+   }
+
+   /* One line of the status per state of the frame around it */
+   .cutout-status > * { display: none; }
+   .cutout-frame.loading .status-loading { display: inline-block; }
+   .cutout-frame.empty .status-empty { display: inline; }
+   .cutout-frame.failed .status-failed { display: inline; }
+
+   /* One line per header, whatever the column came out at, so that the images
+      of a row all begin at the same height */
+   .cutout-grid .card-header span {
+     white-space: nowrap;
+     overflow: hidden;
+     text-overflow: ellipsis;
+   }
+  </style>
 {% endblock %}
 
 {% block content %}
@@ -99,6 +156,64 @@
        update_group($(this).closest('.survey-group'));
      });
    });
+
+   // Each cutout says which of the three it is - still on its way, an image,
+   // or a position the survey has nothing at
+   $(function(){
+     var NBLANK = 32;   // the image is read back at this size, to average the noise out
+     var TBLANK = 2;    // and counts as empty below this much variation, out of 255
+
+     var set_state = function(img, state){
+       $(img).closest('.cutout-frame').removeClass('loading').addClass(state);
+     };
+
+     // Sky a survey never covered comes back as a perfectly uniform tile
+     // rather than as an error, which no amount of looking at the response
+     // would reveal - so the pixels themselves are what tells us
+     var is_blank = function(img){
+       try {
+         var canvas = document.createElement('canvas');
+         canvas.width = canvas.height = NBLANK;
+
+         var ctx = canvas.getContext('2d', {willReadFrequently: true});
+         ctx.drawImage(img, 0, 0, NBLANK, NBLANK);
+
+         var data = ctx.getImageData(0, 0, NBLANK, NBLANK).data;
+         var min = 255, max = 0;
+
+         for(var i = 0; i < data.length; i += 4){
+           var value = (data[i] + data[i + 1] + data[i + 2])/3;
+
+           if(value < min) min = value;
+           if(value > max) max = value;
+         }
+
+         return max - min < TBLANK;
+       } catch(e) {
+         // The image came from a service that sends no CORS headers of its
+         // own, so the canvas is tainted and nothing may be read back from it
+         return false;
+       }
+     };
+
+     var loaded = function(img){
+       set_state(img, is_blank(img) ? 'empty' : 'loaded');
+     };
+
+     var failed = function(img){
+       set_state(img, 'failed');
+     };
+
+     $('.cutout-image')
+       .on('load', function(){ loaded(this); })
+       .on('error', function(){ failed(this); })
+       .each(function(){
+         // An image already in the browser cache may well have arrived before
+         // the handlers above were attached to it
+         if(this.complete)
+           (this.naturalWidth ? loaded : failed)(this);
+       });
+   });
   </script>
 
   {% if truncated %}
@@ -125,18 +240,27 @@
         </span>
       </div>
 
-      <div class="d-flex flex-wrap gap-2 mb-4">
+      <div class="cutout-grid mb-4">
         {% for cutout in target.cutouts %}
-          <div class="card" style="width: 16rem;">
+          <div class="card">
             <div class="card-header py-1 d-flex justify-content-between">
-              <span>{{ cutout.name }}</span>
+              <span title="{{ cutout.name }}">{{ cutout.name }}</span>
               {% if cutout.fits %}
                 <a href="{{ cutout.fits }}" title="Download the cutout as a FITS file">FITS</a>
               {% endif %}
             </div>
-            <img src="{{ cutout.url }}" class="card-img-bottom" loading="lazy" alt="{{ cutout.name }}"
-                 style="cursor: pointer;"
-                 onclick="popupImage(event, '{{ cutout.url_large }}', '{{ cutout.name }} - {{ target.query }}', true)"/>
+            <div class="cutout-frame loading">
+              <div class="cutout-status text-body-secondary small">
+                <div class="spinner-border spinner-border-sm status-loading" role="status">
+                  <span class="visually-hidden">Loading</span>
+                </div>
+                <span class="status-empty">Nothing here</span>
+                <span class="status-failed">Not available</span>
+              </div>
+              <img src="{{ cutout.url }}" class="cutout-image" loading="lazy" alt="{{ cutout.name }}"
+                   {% if cutout.cors %}crossorigin="anonymous"{% endif %}
+                   onclick="popupImage(event, '{{ cutout.url_large }}', '{{ cutout.name }} - {{ target.query }}', true)"/>
+            </div>
           </div>
         {% endfor %}
       </div>

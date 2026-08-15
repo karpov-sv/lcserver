@@ -187,6 +187,9 @@ def get_cutout(sid, ra, dec, fov):
         cutout['url'] = hips_url(survey, ra, dec, fov, CUTOUT_SIZE)
         cutout['url_large'] = hips_url(survey, ra, dec, fov, CUTOUT_SIZE_LARGE)
         cutout['fits'] = hips_url(survey, ra, dec, fov, CUTOUT_SIZE_LARGE, format='fits')
+        # Sky the survey never saw comes back as a perfectly uniform tile, and
+        # hips2fits sends the CORS headers that let the page notice as much
+        cutout['cors'] = True
 
     elif survey.get('skyview'):
         cutout['url'] = skyview_url(survey, ra, dec, fov, CUTOUT_SIZE)
