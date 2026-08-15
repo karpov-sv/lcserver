@@ -38,9 +38,19 @@ CUTOUT_SIZE_LARGE = 768
 # request may ask for is bounded
 MAX_POSITIONS = 50
 
-# Field of view limits, degrees
+# Where the last survey selection and size are kept, so that the page comes
+# back the way it was left - the same way the page width is remembered. The
+# values are joined with a bar rather than a comma, which a cookie may only
+# carry quoted
+SELECTION_COOKIE = 'cutout_surveys'
+FOV_COOKIE = 'cutout_fov'
+COOKIE_AGE = 365 * 24 * 3600
+
+# Field of view limits and default, degrees
 FOV_MIN = 1 / 3600
 FOV_MAX = 10
+FOV_DEFAULT = 3
+FOV_UNITS_DEFAULT = 'arcmin'
 
 UNITS = OrderedDict([
     ('deg', 1),
@@ -308,13 +318,41 @@ def resolve_position(string):
     return result or None
 
 
+def get_selected(request):
+    """The surveys the form starts with - the ones this browser was last left
+    on, and the default set if it has never been here."""
+    stored = request.COOKIES.get(SELECTION_COOKIE)
+
+    if stored is None:
+        return [_ for _ in CUTOUT_SURVEYS if CUTOUT_SURVEYS[_].get('default')]
+
+    # Whatever a survey was called when the cookie was written, only the ones
+    # still offered are worth ticking
+    return [_ for _ in stored.split('|') if _ in CUTOUT_SURVEYS]
+
+
+def get_fov(request):
+    """The size the form starts with, as the value and the units it is in -
+    the ones this browser was last left on, or the default."""
+    value, _, units = request.COOKIES.get(FOV_COOKIE, '').partition('|')
+
+    try:
+        value = float(value)
+    except ValueError:
+        value = FOV_DEFAULT
+
+    return value, units if units in UNITS else FOV_UNITS_DEFAULT
+
+
 def cutouts(request):
     """Bulk preview of multi-wavelength images of arbitrary sky positions."""
+    fov_value, fov_units = get_fov(request)
+
     context = {
         'groups': get_survey_groups(),
-        'fov_value': 3,
-        'fov_units': 'arcmin',
-        'selected': [_ for _ in CUTOUT_SURVEYS if CUTOUT_SURVEYS[_].get('default')],
+        'fov_value': fov_value,
+        'fov_units': fov_units,
+        'selected': get_selected(request),
         'max_positions': MAX_POSITIONS,
     }
 
@@ -334,11 +372,11 @@ def cutouts(request):
     # An unticked survey is simply absent from what the form posts, so an empty
     # selection is only taken at face value when it came from the form itself
     if request.method == 'POST' or 'surveys' in data:
-        context['selected'] = data.getlist('surveys')
+        context['selected'] = [_ for _ in data.getlist('surveys') if _ in CUTOUT_SURVEYS]
 
-    context['fov_units'] = data.get('fov_units', 'arcmin')
+    context['fov_units'] = data.get('fov_units', context['fov_units'])
     if context['fov_units'] not in UNITS:
-        context['fov_units'] = 'arcmin'
+        context['fov_units'] = FOV_UNITS_DEFAULT
 
     try:
         context['fov_value'] = float(data.get('fov_value'))
@@ -378,4 +416,14 @@ def cutouts(request):
 
     context['targets'] = targets
 
-    return TemplateResponse(request, 'cutouts.html', context=context)
+    response = TemplateResponse(request, 'cutouts.html', context=context)
+
+    # Only what was asked for in the form itself is worth remembering, so that
+    # following someone else's link does not rewrite your own selection
+    if request.method == 'POST':
+        response.set_cookie(SELECTION_COOKIE, '|'.join(context['selected']),
+                            max_age=COOKIE_AGE, samesite='Lax')
+        response.set_cookie(FOV_COOKIE, '%g|%s' % (context['fov_value'], context['fov_units']),
+                            max_age=COOKIE_AGE, samesite='Lax')
+
+    return response

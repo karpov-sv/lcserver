@@ -92,7 +92,7 @@
         <div class="input-group">
           <span class="input-group-text">Size</span>
           <input type="text" class="form-control" id="fov_value" name="fov_value" style="max-width: 6em;"
-                 value="{{ fov_value|floatformat:'-4' }}" aria-label="Size">
+                 value="{{ fov_value|stringformat:'g' }}" aria-label="Size">
           <select class="form-select" name="fov_units" title="Units" aria-label="Units" style="max-width: 8em;">
             <option value="deg" {% if fov_units == 'deg' %}selected{% endif %}>Deg</option>
             <option value="arcmin" {% if fov_units == 'arcmin' %}selected{% endif %}>Arcmin</option>
