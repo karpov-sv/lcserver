@@ -22,11 +22,16 @@ from django.contrib.auth import views as auth_views
 
 from . import views
 from . import views_celery
+from . import views_cutouts
 from . import views_lightcurve
 from . import views_spectrum
 
 urlpatterns = [
     path('', views.index, name='index'),
+
+    # Cutouts - a standalone utility, not tied to the targets
+    path('cutouts/', views_cutouts.cutouts, name='cutouts'),
+    path('cutouts/ps1', views_cutouts.cutouts_ps1, name='cutouts_ps1'),
 
     # Targets
     path('targets/', views.targets, {'id':None}, name='targets'),

@@ -81,6 +81,9 @@
             <li class="nav-item">
               <a class="nav-link {% if request.resolver_match.view_name == 'targets' %}active{% endif %}" href="{% url 'targets' %}">Targets</a>
             </li>
+            <li class="nav-item">
+              <a class="nav-link {% if request.resolver_match.view_name == 'cutouts' %}active{% endif %}" href="{% url 'cutouts' %}">Cutouts</a>
+            </li>
           </ul>
 
           <ul class="navbar-nav ms-auto me-2">

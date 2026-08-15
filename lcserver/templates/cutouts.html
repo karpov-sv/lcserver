@@ -1,0 +1,156 @@
+{% extends "template.html" %}
+
+{% load filters %}
+
+{% block ptitle %}Cutouts{% endblock %}
+
+{% block title %}Cutouts{% endblock %}
+
+{% block head %}
+  {% include "popup_image.html" %}
+{% endblock %}
+
+{% block content %}
+
+  <p class="text-body-secondary">
+    Quick multi-wavelength preview of any sky position, from the surveys below. Enter a name or
+    coordinates, or a list of them, one per line - no login needed.
+  </p>
+
+  <form class="mb-4" role="form" action="{% url 'cutouts' %}" method="post">{% csrf_token %}
+
+    <div class="row g-2 mb-2">
+      <div class="col-md">
+        <div class="input-group">
+          <span class="input-group-text">Position</span>
+          <input type="text" class="form-control" id="coords" name="coords" value="{{ coords|default:'' }}"
+                 placeholder="Coordinates or object name" aria-label="Position">
+          <button type="button" class="btn btn-outline-secondary" data-bs-toggle="collapse"
+                  data-bs-target="#collapseMultiCoords" aria-expanded="{% if multicoords %}true{% else %}false{% endif %}"
+                  aria-controls="collapseMultiCoords">Multiple?</button>
+        </div>
+      </div>
+
+      <div class="col-md-auto">
+        <div class="input-group">
+          <span class="input-group-text">Size</span>
+          <input type="text" class="form-control" id="fov_value" name="fov_value" style="max-width: 6em;"
+                 value="{{ fov_value|floatformat:'-4' }}" aria-label="Size">
+          <select class="form-select" name="fov_units" title="Units" aria-label="Units" style="max-width: 8em;">
+            <option value="deg" {% if fov_units == 'deg' %}selected{% endif %}>Deg</option>
+            <option value="arcmin" {% if fov_units == 'arcmin' %}selected{% endif %}>Arcmin</option>
+            <option value="arcsec" {% if fov_units == 'arcsec' %}selected{% endif %}>Arcsec</option>
+          </select>
+          <button type="submit" class="btn btn-primary">Show</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="collapse {% if multicoords %}show{% endif %} mb-2" id="collapseMultiCoords">
+      <textarea class="form-control" id="multicoords" name="multicoords" rows="3"
+                placeholder="Coordinates or object names, one per line, up to {{ max_positions }} of them">{{ multicoords|default:'' }}</textarea>
+    </div>
+
+    <div class="row row-cols-1 row-cols-sm-2 row-cols-lg-4 g-2">
+      {% for group in groups %}
+        <div class="col">
+          <div class="card h-100 survey-group">
+            <div class="card-header py-1">
+              <div class="form-check mb-0">
+                <input class="form-check-input group-check" type="checkbox" id="cb_group_{{ group.id }}">
+                <label class="form-check-label fw-semibold" for="cb_group_{{ group.id }}">{{ group.name }}</label>
+              </div>
+            </div>
+            <div class="card-body py-2">
+              {% for survey in group.surveys %}
+                <div class="form-check mb-0">
+                  <input class="form-check-input survey-check" type="checkbox" id="cb_{{ survey.id }}"
+                         name="surveys" value="{{ survey.id }}" {% if survey.id in selected %}checked{% endif %}>
+                  <label class="form-check-label" for="cb_{{ survey.id }}">{{ survey.name }}</label>
+                </div>
+              {% endfor %}
+            </div>
+          </div>
+        </div>
+      {% endfor %}
+    </div>
+  </form>
+
+  <script language="javascript">
+   // The section checkbox follows its surveys - ticked when all of them are,
+   // half-ticked when only some - and sets them all when clicked itself
+   $(function(){
+     var update_group = function(group){
+       var boxes = group.find('.survey-check');
+       var nchecked = boxes.filter(':checked').length;
+       var toggle = group.find('.group-check')[0];
+
+       toggle.checked = nchecked == boxes.length;
+       toggle.indeterminate = nchecked > 0 && nchecked < boxes.length;
+     };
+
+     $('.survey-group').each(function(){ update_group($(this)); });
+
+     $('.group-check').on('change', function(){
+       $(this).closest('.survey-group').find('.survey-check').prop('checked', this.checked);
+     });
+
+     $('.survey-check').on('change', function(){
+       update_group($(this).closest('.survey-group'));
+     });
+   });
+  </script>
+
+  {% if truncated %}
+    <div class="alert alert-warning" role="alert">
+      {{ truncated }} positions requested, only the first {{ max_positions }} are shown.
+    </div>
+  {% endif %}
+
+  {% for target in targets %}
+
+    {% if target.message %}
+      <div class="alert alert-warning" role="alert">
+        {{ target.message }}
+      </div>
+    {% else %}
+      <div class="alert alert-secondary d-flex flex-wrap column-gap-3" role="alert">
+        <strong>{{ target.query }}</strong>
+        <span>
+          <em>{{ target.ra|to_sexadecimal_hours }} {{ target.dec|to_sexadecimal_plus }}</em>
+          = {{ target.ra|floatformat:5 }} {{ target.dec|floatformat:5 }}
+        </span>
+        <span class="text-body-secondary">
+          galactic l={{ target.l|floatformat:4 }} b={{ target.b|floatformat:4 }}
+        </span>
+      </div>
+
+      <div class="d-flex flex-wrap gap-2 mb-4">
+        {% for cutout in target.cutouts %}
+          <div class="card" style="width: 16rem;">
+            <div class="card-header py-1 d-flex justify-content-between">
+              <span>{{ cutout.name }}</span>
+              {% if cutout.fits %}
+                <a href="{{ cutout.fits }}" title="Download the cutout as a FITS file">FITS</a>
+              {% endif %}
+            </div>
+            <img src="{{ cutout.url }}" class="card-img-bottom" loading="lazy" alt="{{ cutout.name }}"
+                 style="cursor: pointer;"
+                 onclick="popupImage(event, '{{ cutout.url_large }}', '{{ cutout.name }} - {{ target.query }}', true)"/>
+          </div>
+        {% endfor %}
+      </div>
+    {% endif %}
+
+  {% endfor %}
+
+  <div class="mt-4 text-body-secondary small">
+    The images come from
+    <a href="https://alasky.u-strasbg.fr/hips-image-services/hips2fits">hips2fits</a> at CDS,
+    <a href="https://skyview.gsfc.nasa.gov/">SkyView</a> at NASA,
+    <a href="https://skyserver.sdss.org/">SDSS SkyServer</a> and
+    <a href="https://ps1images.stsci.edu/">Pan-STARRS image services</a> at STScI,
+    and are loaded by your browser directly from them.
+  </div>
+
+{% endblock %}

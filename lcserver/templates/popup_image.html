@@ -42,7 +42,8 @@
    bootbox.dialog(params);
 
    // FIXME: prevent updating already created overlays?..
-   overlay_stdview_images();
+   if(typeof overlay_stdview_images === 'function')
+     overlay_stdview_images();
 
    return false;
  }
