@@ -5,6 +5,8 @@
 {% block title %}Photometric conversions{% endblock %}
 
 {% block head %}
+  <script src="https://cdn.plot.ly/plotly-3.7.0.min.js" charset="utf-8"></script>
+
   <style>
    /* A formula wraps between its terms and never inside one - hence a span
       per term, as hard spaces alone would still let a browser break after the
@@ -91,6 +93,35 @@
       <div class="text-warning-emphasis mt-2" id="conversion-warning"></div>
       <div class="text-body-secondary small mt-2" id="conversion-note"></div>
 
+    </div>
+  </div>
+
+  <!-- Passbands -->
+  <div class="card mb-4">
+    <div class="card-header d-flex justify-content-start flex-wrap">
+      <span>Passbands</span>
+
+      <div class="form-check pb-0 ms-4 text-body-secondary small">
+        <input class="form-check-input" type="checkbox" id="passband-stack">
+        <label class="form-check-label" for="passband-stack"
+               title="Draws the families one above another, a full transmission apart, rather than all of them over the same axis">
+          Stack families
+        </label>
+      </div>
+
+      <span class="text-body-secondary small ms-auto me-0">
+        from the
+        <a href="http://svo2.cab.inta-csic.es/theory/fps/" target="_blank" rel="noopener">SVO Filter
+        Profile Service</a>, each curve normalised to its own peak
+      </span>
+    </div>
+    <div class="card-body">
+      <div class="text-body-secondary text-center py-5" id="passband-status">
+        <div class="spinner-border spinner-border-sm" role="status"></div>
+        Loading the transmission curves
+      </div>
+
+      <div id="passband-plot" style="width: 100%; height: 420px; display: none;"></div>
     </div>
   </div>
 
@@ -239,6 +270,128 @@
      });
 
      select($('#conversion-select').val());
+   });
+
+   // The passbands themselves. The curves are loaded once the page is up
+   // rather than with it, so that the documentation is never waiting on an
+   // external service - one trace per filter, one legend entry per family, so
+   // that a click hides a whole survey at once.
+   $(function(){
+     var alpha = function(color, opacity){
+       // #rrggbb, as the families are given, to something with an alpha
+       var value = parseInt(color.slice(1), 16);
+       return 'rgba(' + [(value >> 16) & 255, (value >> 8) & 255, value & 255, opacity].join(',') + ')';
+     };
+
+     var passbands = null;
+
+     var traces_of = function(stacked){
+       var traces = [];
+
+       passbands.families.forEach(function(family, index){
+         // Stacked, a family sits a full transmission above the one before it,
+         // the way the spectrum viewer steps normalised spectra apart
+         var offset = stacked ? index : 0;
+
+         family.filters.forEach(function(filter, i){
+           if(stacked)
+             // The family's own zero, for its curves to be filled down to
+             traces.push({
+               x: [filter.wave[0], filter.wave[filter.wave.length - 1]],
+               y: [offset, offset],
+               mode: 'lines',
+               line: {width: 0},
+               legendgroup: family.id,
+               showlegend: false,
+               hoverinfo: 'skip',
+             });
+
+           traces.push({
+             x: filter.wave,
+             y: offset ? filter.trans.map(function(t){ return t + offset; }) : filter.trans,
+             // What the curve says regardless of where it is drawn, so that
+             // the hover reads the same stacked or not
+             customdata: filter.trans,
+             name: family.name,
+             legendgroup: family.id,
+             showlegend: i === 0,
+             mode: 'lines',
+             line: {color: family.color, width: 1.5},
+             fill: stacked ? 'tonexty' : 'tozeroy',
+             fillcolor: alpha(family.color, 0.10),
+             hovertemplate: '<b>' + family.name + ' ' + filter.label + '</b><br>' +
+                            '%{x:.4g} µm, transmission %{customdata:.2f}<br>' +
+                            'mean wavelength ' + filter.lambda_eff + ' µm<extra></extra>',
+           });
+         });
+       });
+
+       return traces;
+     };
+
+     var layout_of = function(stacked){
+       var yaxis = {
+         title: {text: stacked ? 'Transmission, one family per step'
+                               : 'Transmission, normalised'},
+         range: [0, (stacked ? passbands.families.length : 1) + 0.08],
+         // Stacked, the numbers on the axis would say nothing - each family
+         // has a zero of its own - so a gridline per family marks them instead
+         showticklabels: !stacked,
+         showgrid: true, gridcolor: '#e0e0e0', zeroline: false,
+       };
+
+       if(stacked)
+         yaxis.dtick = 1;
+
+       return {
+         margin: {l: 55, r: 20, t: 10, b: 50},
+         xaxis: {
+           type: 'log',
+           title: {text: 'Wavelength, µm'},
+           showgrid: true, gridcolor: '#e0e0e0', zeroline: false,
+         },
+         yaxis: yaxis,
+         hovermode: 'closest',
+         legend: {orientation: 'h', y: -0.18},
+         plot_bgcolor: 'white',
+         paper_bgcolor: 'white',
+       };
+     };
+
+     var redraw = function(){
+       // The switch sits in the header, and so may be reached before the
+       // curves it would rearrange have arrived
+       if(!passbands)
+         return;
+
+       var stacked = $('#passband-stack').is(':checked');
+
+       Plotly.react('passband-plot', traces_of(stacked), layout_of(stacked),
+                    {responsive: true, displaylogo: false});
+     };
+
+     var draw = function(data){
+       passbands = data;
+
+       $('#passband-status').hide();
+       $('#passband-plot').show();
+
+       redraw();
+     };
+
+     $('#passband-stack').on('change', redraw);
+
+     $.getJSON("{% url 'passbands_data' %}")
+      .done(function(data){
+        if(data.families && data.families.length)
+          draw(data);
+        else
+          $('#passband-status').text('The transmission curves could not be loaded' +
+                                     (data.error ? ': ' + data.error : ''));
+      })
+      .fail(function(){
+        $('#passband-status').text('The transmission curves could not be loaded');
+      });
    });
   </script>
 

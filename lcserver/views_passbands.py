@@ -1,4 +1,5 @@
-"""Photometric conversions, written out and calculable.
+"""Photometric conversions, written out and calculable, and the passbands
+they run between.
 
 Another standalone utility, tied to no processing at all: the combined light
 curve is drawn on a single scale, and a dozen surveys have to be brought onto
@@ -12,11 +13,20 @@ polynomial in one or more colours:
 
 which is what lets one calculator serve all of them, in the page as well as
 here. The coefficients are in numpy.polyval order, highest power first.
+
+The transmission curves come from the SVO Filter Profile Service, and are
+cached here rather than fetched by the browser, both to keep the page fast and
+to ask the service once rather than once per visitor.
 """
 
 from django.template.response import TemplateResponse
+from django.http import JsonResponse
+from django.core.cache import cache
 
 from collections import OrderedDict
+from concurrent.futures import ThreadPoolExecutor
+
+import numpy as np
 
 
 # Where a relation is used, and so how much it is worth trusting
@@ -428,6 +438,179 @@ CONVERSIONS = [
         used_by='SDSS DR16 catalogue',
     ),
 ]
+
+
+# ---------------------------------------------------------------------------
+# The passbands themselves, as the plot shows them: the families a conversion
+# runs between, from the ultraviolet to the mid-infrared, each filter named by
+# its id in the SVO Filter Profile Service.
+# ---------------------------------------------------------------------------
+
+SVO_SERVICE_URL = 'http://svo2.cab.inta-csic.es/theory/fps/'
+
+# The curves change about as often as a survey is redefined, so they are kept
+# for a week; a staff user may ask for them again sooner
+PASSBAND_CACHE = 'passbands_curves'
+PASSBAND_CACHE_AGE = 7 * 24 * 3600
+
+# Points per curve after thinning, and the fraction of the peak below which the
+# wings of a curve are of no interest
+PASSBAND_MAX_POINTS = 150
+PASSBAND_FLOOR = 0.001
+
+PASSBAND_THREADS = 8
+
+PASSBAND_FAMILIES = OrderedDict([
+    ('galex', {'name': 'GALEX', 'color': '#9467bd', 'filters': [
+        ('FUV', 'GALEX/GALEX.FUV'), ('NUV', 'GALEX/GALEX.NUV')]}),
+    ('johnson', {'name': 'Johnson-Cousins', 'color': '#1f77b4', 'filters': [
+        ('U', 'Generic/Johnson.U'), ('B', 'Generic/Johnson.B'), ('V', 'Generic/Johnson.V'),
+        ('R', 'Generic/Cousins.R'), ('I', 'Generic/Cousins.I')]}),
+    ('sdss', {'name': 'SDSS', 'color': '#2ca02c', 'filters': [
+        ('u', 'SLOAN/SDSS.u'), ('g', 'SLOAN/SDSS.g'), ('r', 'SLOAN/SDSS.r'),
+        ('i', 'SLOAN/SDSS.i'), ('z', 'SLOAN/SDSS.z')]}),
+    ('ps1', {'name': 'Pan-STARRS', 'color': '#ff7f0e', 'filters': [
+        ('g', 'PAN-STARRS/PS1.g'), ('r', 'PAN-STARRS/PS1.r'), ('i', 'PAN-STARRS/PS1.i'),
+        ('z', 'PAN-STARRS/PS1.z'), ('y', 'PAN-STARRS/PS1.y')]}),
+    ('skymapper', {'name': 'SkyMapper', 'color': '#e377c2', 'filters': [
+        ('u', 'SkyMapper/SkyMapper.u'), ('v', 'SkyMapper/SkyMapper.v'),
+        ('g', 'SkyMapper/SkyMapper.g'), ('r', 'SkyMapper/SkyMapper.r'),
+        ('i', 'SkyMapper/SkyMapper.i'), ('z', 'SkyMapper/SkyMapper.z')]}),
+    ('gaia', {'name': 'Gaia DR3', 'color': '#17becf', 'filters': [
+        ('BP', 'GAIA/GAIA3.Gbp'), ('G', 'GAIA/GAIA3.G'), ('RP', 'GAIA/GAIA3.Grp')]}),
+    ('2mass', {'name': '2MASS', 'color': '#d62728', 'filters': [
+        ('J', '2MASS/2MASS.J'), ('H', '2MASS/2MASS.H'), ('Ks', '2MASS/2MASS.Ks')]}),
+    ('vista', {'name': 'VISTA (VHS)', 'color': '#8c564b', 'filters': [
+        ('Z', 'Paranal/VISTA.Z'), ('Y', 'Paranal/VISTA.Y'), ('J', 'Paranal/VISTA.J'),
+        ('H', 'Paranal/VISTA.H'), ('Ks', 'Paranal/VISTA.Ks')]}),
+    ('wise', {'name': 'WISE', 'color': '#bcbd22', 'filters': [
+        ('W1', 'WISE/WISE.W1'), ('W2', 'WISE/WISE.W2'),
+        ('W3', 'WISE/WISE.W3'), ('W4', 'WISE/WISE.W4')]}),
+])
+
+
+def fetch_passband(filter_id):
+    """One transmission curve, as the SVO Filter Profile Service has it."""
+    from astroquery.svo_fps import SvoFps
+
+    data = SvoFps.get_transmission_data(filter_id)
+
+    return (np.asarray(data['Wavelength'], dtype=float),
+            np.asarray(data['Transmission'], dtype=float))
+
+
+def prepare_passband(wave, trans):
+    """One curve as the plot wants it: in microns, normalised to its own peak,
+    without the wings, and thinned to something a browser will not choke on.
+
+    The normalisation is what makes the families comparable at all - GALEX
+    publishes effective area rather than a fraction, and reaches 60 where the
+    rest of them reach 1.
+    """
+    peak = np.nanmax(trans)
+
+    if not np.isfinite(peak) or peak <= 0:
+        return None
+
+    trans = trans/peak
+
+    # The wings, where the filter passes a thousandth of what it does at its
+    # peak, are noise on a plot - but one point either side is kept, so that
+    # the curve still comes down to the axis
+    above = np.nonzero(trans > PASSBAND_FLOOR)[0]
+
+    if not len(above):
+        return None
+
+    first, last = max(above[0] - 1, 0), min(above[-1] + 2, len(wave))
+    wave, trans = wave[first:last], trans[first:last]
+
+    if len(wave) > PASSBAND_MAX_POINTS:
+        keep = np.unique(np.concatenate([
+            np.linspace(0, len(wave) - 1, PASSBAND_MAX_POINTS).astype(int),
+            [int(np.argmax(trans))],
+        ]))
+        wave, trans = wave[keep], trans[keep]
+
+    # The mean wavelength of the response, which is what the hover shows
+    integrate = getattr(np, 'trapezoid', None) or np.trapz  # renamed in numpy 2
+    lambda_eff = float(integrate(wave*trans, wave)/integrate(trans, wave))
+
+    return {
+        'wave': [round(_*1e-4, 5) for _ in wave],     # Angstrom to micron
+        'trans': [round(float(_), 4) for _ in trans],
+        'lambda_eff': round(lambda_eff*1e-4, 4),
+    }
+
+
+def get_passbands(refresh=False):
+    """Every curve the plot draws, fetched once and kept.
+
+    A filter the service will not give up is left out rather than allowed to
+    break the plot, and a fetch that brings back nothing at all is not cached,
+    so that one unreachable moment is not remembered for a week.
+    """
+    payload = None if refresh else cache.get(PASSBAND_CACHE)
+
+    if payload is not None:
+        return payload
+
+    wanted = [(fid, family_id, label, filter_id)
+              for family_id, family in PASSBAND_FAMILIES.items()
+              for fid, (label, filter_id) in
+              enumerate(family['filters'])]
+
+    def fetch(job):
+        _, _, _, filter_id = job
+
+        try:
+            return prepare_passband(*fetch_passband(filter_id))
+        except Exception:
+            return None
+
+    with ThreadPoolExecutor(PASSBAND_THREADS) as pool:
+        curves = list(pool.map(fetch, wanted))
+
+    families = []
+
+    for family_id, family in PASSBAND_FAMILIES.items():
+        filters = []
+
+        for (_, job_family, label, filter_id), curve in zip(wanted, curves):
+            if job_family == family_id and curve is not None:
+                filters.append(dict(curve, id=filter_id, label=label))
+
+        if filters:
+            families.append({
+                'id': family_id,
+                'name': family['name'],
+                'color': family['color'],
+                'filters': filters,
+            })
+
+    payload = {'families': families}
+
+    if families:
+        cache.set(PASSBAND_CACHE, payload, PASSBAND_CACHE_AGE)
+
+    return payload
+
+
+def passbands_data(request):
+    """The transmission curves, for the plot in the page to draw."""
+    # Refetching is what a stale or half-empty cache needs, and is not for
+    # every visitor to be able to ask of the SVO service
+    refresh = bool(request.GET.get('refresh')) and request.user.is_staff
+
+    try:
+        payload = get_passbands(refresh=refresh)
+    except Exception as e:
+        payload = {'families': [], 'error': str(e)}
+
+    if not payload.get('families') and 'error' not in payload:
+        payload['error'] = 'The SVO Filter Profile Service returned nothing'
+
+    return JsonResponse(payload)
 
 
 def format_term(color, coeffs):

@@ -36,6 +36,7 @@ urlpatterns = [
 
     # The photometric conversions everything else here is built on
     path('passbands/', views_passbands.passbands, name='passbands'),
+    path('passbands/data/', views_passbands.passbands_data, name='passbands_data'),
 
     # Targets
     path('targets/', views.targets, {'id':None}, name='targets'),
