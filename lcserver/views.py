@@ -10,7 +10,7 @@ from django.contrib.auth.decorators import login_required
 from django.conf import settings
 from django.shortcuts import get_object_or_404
 
-import os, io, glob, shutil, time
+import os, io, glob, shutil, time, re
 
 import mimetypes
 import magic
@@ -234,13 +234,32 @@ def preview(request, path, width=None, minwidth=256, maxwidth=1024, base=setting
         return HttpResponse("Error generating preview", status=500)
 
 
-def download(request, path, attachment=True, base=settings.TARGETS_PATH):
+def filename_prefix(name):
+    """Turn a target name into something that may lead a filename.
+
+    Names arrive as the user typed them - 'RA=10.0 Dec=20.0', 'Gaia DR3 12345'
+    - so everything outside a conservative set becomes an underscore, and runs
+    of underscores collapse, to keep the result readable in a download folder.
+    """
+    prefix = re.sub(r'[^\w+.-]+', '_', name, flags=re.UNICODE).strip('_.')
+
+    return prefix
+
+
+def download(request, path, attachment=True, base=settings.TARGETS_PATH, prefix=None):
     path = sanitize_path(path)
 
     fullpath = os.path.join(base, path)
 
     if os.path.isfile(fullpath):
-        return FileResponse(open(os.path.abspath(fullpath), 'rb'), as_attachment=attachment)
+        # The files are stored under names that only say what they are, not
+        # what they are of - so the target name leads the one the user gets
+        filename = os.path.basename(path)
+        if prefix and not filename.startswith(prefix + '_'):
+            filename = prefix + '_' + filename
+
+        return FileResponse(open(os.path.abspath(fullpath), 'rb'),
+                            as_attachment=attachment, filename=filename)
     else:
         return HttpResponse("No such file", status=404)
 
@@ -254,7 +273,8 @@ def target_download(request, id=None, path='', **kwargs):
     if not target.can_view(request.user):
         raise Http404
 
-    return download(request, path, base=target.path(), **kwargs)
+    return download(request, path, base=target.path(),
+                    prefix=filename_prefix(target.name), **kwargs)
 
 
 # vary_on_cookie keeps the cache from answering one user out of another's
