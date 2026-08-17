@@ -223,6 +223,15 @@ def target_desi(config, basepath=None, verbose=True, show=False):
 
     for separation, record in matches:
         uuid = record['sparcl_id']
+
+        # SPARCL's specid is DESI's TARGETID, and the search already carries
+        # it - so the section is opened before the spectrum is fetched, and
+        # what the cache has to say about it lands inside rather than above
+        targetid = record['specid']
+
+        log(f"\n---- DESI spectrum {targetid} ----\n")
+        log(f"{separation:.2f} arcsec away")
+
         cache_name = f"desi_spec_{uuid}.vot"
 
         with cached_votable_query(cache_name, basepath, log,
@@ -280,11 +289,7 @@ def target_desi(config, basepath=None, verbose=True, show=False):
         def field(name, default=None):
             return first[name] if name in spectrum.colnames else default
 
-        targetid = field('targetid')
         redshift = field('redshift')
-
-        log(f"\n---- {targetid} ----\n")
-        log(f"{separation:.2f} arcsec away")
 
         epochs = _epochs(field('dateobs'))
 
@@ -342,14 +347,17 @@ def target_desi(config, basepath=None, verbose=True, show=False):
         })
         write_spectrum(table, basepath, name)
 
-        log(f"Spectrum plotted in file:{name}.png, written to "
-            f"file:{name}.vot and file:{name}.txt")
+        log(f"Spectrum plotted in file:{name}.png")
+        log(f"Spectrum written to file:{name}.vot")
+        log(f"Spectrum written to file:{name}.txt")
 
         if targetid is not None:
             targetids.append(int(targetid))
 
     # What the Milky Way Survey made of the star, which SPARCL does not carry
     if targetids:
+        log("\n---- Stellar parameters (Milky Way Survey) ----\n")
+
         cache_name = f"desi_mws_{ra:.4f}_{dec:.4f}_{sr:.1f}.vot"
 
         with cached_votable_query(cache_name, basepath, log, 'DESI stellar parameters',
@@ -371,10 +379,8 @@ def target_desi(config, basepath=None, verbose=True, show=False):
         if mws is None or not len(mws):
             log("\nNot in the Milky Way Survey, so no stellar parameters")
         else:
-            log("\n---- Stellar parameters (Milky Way Survey) ----\n")
-
             for row in mws:
-                log(f"{row['targetid']}  {row['survey']}/{row['program']}")
+                log(f"\n{row['targetid']}  {row['survey']}/{row['program']}")
 
                 for label, key, err, fmt in [
                         ('Teff', 'teff', 'teff_err', '.0f'),
