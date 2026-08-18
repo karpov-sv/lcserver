@@ -644,6 +644,7 @@ CACHE_PREFIXES = {
     'kws_': 'kws',
     'mmt9_': 'mmt9',
     'ptf_': 'ptf',
+    'bgds_': 'bgds',
     'ztf_raw_': 'ztf',
     'wise_': 'wise',
     'asas3_': 'asas3',

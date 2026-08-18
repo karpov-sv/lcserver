@@ -115,7 +115,7 @@ CONVERSIONS = [
         'r_to_g', 'Pan-STARRS r to Pan-STARRS g', 'lcserver', 'r', 'g',
         terms=[('g - r', [1.0, 0.0])],
         reference='the definition of the colour',
-        used_by='Pan-STARRS r epochs, in the info step',
+        used_by='BGDS r, PTF R, and the Pan-STARRS r epochs of the info step',
     ),
     conversion(
         'gaia_g_to_g', 'Gaia G to Pan-STARRS g', 'lcserver', 'G', 'g',
