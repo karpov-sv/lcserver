@@ -78,7 +78,7 @@ def flambda_from_fnu(flux, wavelength):
             * SPEED_OF_LIGHT / wavelength ** 2)
 
 
-def write_spectrum(table, basepath, name):
+def write_spectrum(table, basepath, name, calibrated=True):
     """Write a spectrum out, in the one form they are all written in.
 
     Every source goes through here rather than writing its own pair of files,
@@ -90,6 +90,19 @@ def write_spectrum(table, basepath, name):
     which is why those units are the same for every source rather than
     something each one declares for itself.
 
+    `calibrated` says whether the flux is on a physical scale at all. Most of
+    the archives here publish one; three quarters of the ESO spectra do not,
+    their instruments having been built to measure where a line sits rather
+    than how much light arrived - and HARPS, which is most of them, reports
+    detector counts. Those are still worth reading, the shape of a line being
+    the whole point of a spectrum at R = 115000, but stamping erg/s/cm2/A on
+    counts would be a lie the exported file then carries everywhere. So a
+    source with no flux scale says so, its flux columns are left without a
+    unit, and it is expected to have divided by something of its own - the
+    median of the spectrum - so that the numbers still mean one thing.
+
+    The wavelength is always stamped: every source knows what that is.
+
     Returns the two file names, for the source to say where it put them.
     """
     for column in SPECTRUM_WAVELENGTH_COLUMNS:
@@ -98,7 +111,7 @@ def write_spectrum(table, basepath, name):
 
     for column in SPECTRUM_FLUX_COLUMNS:
         if column in table.colnames:
-            table[column].unit = SPECTRUM_FLUX_UNIT
+            table[column].unit = SPECTRUM_FLUX_UNIT if calibrated else None
 
     # Angstrom and erg are both deprecated in the strict VOUnit standard, in
     # favour of 0.1nm and cm2.g.s-2, and astropy says so on every write. The

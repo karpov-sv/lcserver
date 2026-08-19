@@ -22,12 +22,16 @@ The module is organized into separate files:
 - omc.py: INTEGRAL OMC lightcurve acquisition
 - nsvs.py: NSVS lightcurve acquisition
 - hipparcos.py: Hipparcos epoch photometry acquisition
+- sdss.py: SDSS optical spectra
 - lamost.py: LAMOST DR11 spectra
+- apogee.py: APOGEE DR17 near-infrared spectra
+- eso.py: reduced spectra from the ESO archive
 - desi.py: DESI DR1 spectra
 - spherex.py: SPHEREx QR2 near-infrared spectrophotometry
 - sed.py: broadband catalogue photometry from VizieR, as an SED
 - kepler.py: Kepler lightcurve acquisition, both the original mission and K2
 - combined.py: Combined lightcurve plotting
+
 """
 
 # astroquery keeps a cache of its own under ~/.astropy/cache, holding pickled
@@ -90,7 +94,10 @@ from .wasp import target_wasp
 from .omc import target_omc
 from .nsvs import target_nsvs
 from .hipparcos import target_hipparcos
+from .sdss import target_sdss
 from .lamost import target_lamost
+from .apogee import target_apogee
+from .eso import target_eso
 from .desi import target_desi
 from .spherex import target_spherex
 from .sed import target_sed

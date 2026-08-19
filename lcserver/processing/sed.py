@@ -687,7 +687,9 @@ def _gaia_xp(basepath, log):
         },
     },
     help_text='Broadband photometry from VizieR, 0.15 to 22 um',
-    order=83,
+    # Last of the spectral block: it is assembled out of other catalogues'
+    # photometry rather than observed, and spans all of them
+    order=89,
     # Measurements and no curve, so the viewer draws them as points and they
     # keep the full weight of anything else it shows
     spectrum_points='sed*.txt',
