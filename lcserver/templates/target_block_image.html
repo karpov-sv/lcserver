@@ -8,7 +8,7 @@
          class="figure-img img-fluid rounded mb-0" style="max-width: 256px;"
          onclick="popupImage(event, '{% url 'target_preview' target.id fits %}?timestamp={{ target.modified|unix }}', '{{ fits }}', true, 'stdview-image', {'data-stretch':1, {% if target.config.target_ra or target.config.target_dec %}'data-mark-ra':{{ target.config.target_ra }}, 'data-mark-dec':{{ target.config.target_dec }},{% endif %} 'data-grid':1, 'data-zoom':1, {% if obj %}'data-obj':1,{%endif %}})"/>
 
-    <figcaption class="figure-caption text-center mt-0 mb-3">
+    <figcaption class="figure-caption text-center text-break mt-0 mb-3">
       <small><a href="{% url 'target_download' target.id fits %}">{{ fits }}</a></small>
     </figcaption>
 
@@ -22,7 +22,7 @@
          {% endif %}
          />
 
-    <figcaption class="figure-caption text-center mt-0 mb-3">
+    <figcaption class="figure-caption text-center text-break mt-0 mb-3">
       <small><a href="{% url 'target_view' target.id image %}">{{ image }}</a></small>
     </figcaption>
 
@@ -31,7 +31,7 @@
     <!-- HiPS cutout -->
     <img src="https://alasky.u-strasbg.fr/hips-image-services/hips2fits?hips={{ hips|urlencode }}&width={{ width }}&height={{ height }}&fov={{ fov }}&ra={{ ra }}&dec={{ dec }}&projection=TAN&coordsys=icrs&rotation_angle=0.0&format=jpg{% if cmap %}&cmap={{ cmap|urlencode }}{% endif %}{% if min_cut %}&min_cut={{ min_cut|urlencode }}{% endif %}{% if max_cut %}&max_cut={{ max_cut|urlencode }}{% endif %}"
          class="figure-img img-fluid rounded mb-0" />
-    <figcaption class="figure-caption text-center mt-0 mb-3">
+    <figcaption class="figure-caption text-center text-break mt-0 mb-3">
       <small>{{ name|default:hips }}</small>
     </figcaption>
 
@@ -40,7 +40,7 @@
     <!-- SkyView cutout -->
     <img src="https://skyview.gsfc.nasa.gov/current/cgi/runquery.pl?Survey={{ skyview|urlencode }}&Pixels={{ width }}&Size={{ fov }}&Position={{ ra }},{{ dec }}&scaling=histeq&LUT={{ "colortables/blue-white.bin"|urlencode }}&Return=GIF{% if catalog %}&Catalog={{ catalog|urlencode }}{% endif %}"
          class="figure-img img-fluid rounded mb-0" />
-    <figcaption class="figure-caption text-center mt-0 mb-3">
+    <figcaption class="figure-caption text-center text-break mt-0 mb-3">
       <small>{{ skyview }}</small>
     </figcaption>
 
