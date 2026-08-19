@@ -144,6 +144,13 @@ def survey_source(
     # is worth having without its being the first thing seen.
     spectrum_hidden=None,            # glob pattern, loaded but unticked
     spectrum_label=None,             # what to call them, if not the short name
+    # Where one source publishes a few named spectra rather than many alike -
+    # the info step's Gaia XP and RVS - this names each of them. Keyed by the
+    # part of the filename the glob stood for, so gaia_xp.txt under
+    # 'gaia_*.txt' is looked up as 'xp'. Anything not named here keeps that
+    # part of the filename, which is what a source with one spectrum per
+    # observation wants.
+    spectrum_labels=None,
     spectrum_color=None,             # a source with one spectrum
     spectrum_palette=None,           # a source with several, told apart by shade
     # Config keys this source writes for others to convert with. A source that
@@ -295,6 +302,7 @@ def survey_source(
             'spectrum_points': spectrum_points,
             'spectrum_hidden': spectrum_hidden,
             'spectrum_label': spectrum_label,
+            'spectrum_labels': spectrum_labels or {},
             'spectrum_color': spectrum_color,
             'spectrum_palette': spectrum_palette,
             'provides_config': provides_config or [],
@@ -669,6 +677,7 @@ CACHE_PREFIXES = {
     'dust_': 'info',
     'dustext_': 'info',
     'gaiaxp_': 'info',
+    'gaiarvs_': 'info',
     'skymapper_': 'info',
     # What MAST was asked for, and what it sent back: the product search of
     # each, and the downloads themselves in a directory per source

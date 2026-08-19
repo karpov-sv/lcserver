@@ -168,7 +168,12 @@ def load_spectrum_data(basepath):
                          or survey_config['short_name'])
 
                 if rest:
-                    label += ' ' + rest.strip('_').replace('_', ' ')
+                    # A source that names its spectra says what this one is;
+                    # one that has a spectrum per observation lets the
+                    # filename speak, that being what tells them apart
+                    named = survey_config.get('spectrum_labels') or {}
+                    label += ' ' + named.get(rest.strip('_'),
+                                             rest.strip('_').replace('_', ' '))
 
 
                 # All four sources are now in the one unit, so this is no longer

@@ -47,6 +47,28 @@ GAIA_XP_SR = 5.0
 GAIA_XP_TO_CGS = 100.0
 GAIA_XP_TO_ANGSTROM = 10.0
 
+# The RVS mean spectra, as Vizier serves them, and the radius to look in.
+#
+# Gaia's third instrument, a narrow window around the calcium triplet that the
+# radial velocities are measured from. It complements the XP spectra above
+# rather than repeating them: those cover the whole optical at a resolving
+# power of a few tens, which is a colour rather than a spectrum, where this
+# covers 24 nm at eleven and a half thousand, and lines are lines.
+#
+# Published for about a million of the brightest stars, against 220 million
+# with an XP spectrum, which is why both are asked for only when the
+# catalogue row says they exist.
+GAIA_RVS_CATALOGUE = 'I/355/rvsmean'
+GAIA_RVS_SR = 5.0
+
+# Nanometres as Vizier serves them, into the Angstrom every spectrum here is
+# written in. The flux is not converted at all: the mission publishes these
+# divided by their own continuum, so there is no flux scale to put them on.
+GAIA_RVS_TO_ANGSTROM = 10.0
+
+# The calcium triplet, in nm, which is why the window is where it is
+GAIA_RVS_CA_TRIPLET = (849.8, 854.2, 866.2)
+
 # AAVSO VSX, the variable star index, and the radius to look in. Wider than the
 # cones above: many VSX positions come from surveys with coarse astrometry, or
 # from discovery papers a century old.
@@ -247,7 +269,8 @@ def edenhofer_map():
     log_file='info.log',
     output_files=['info.log', 'galaxy_map.png', 'dust_3d.png', 'ps1.vot',
                   'ps1.txt', 'ps1.png', 'gaia.vot', 'gaia.txt', 'gaia.png',
-                  'gaia_xp.png', 'gaia_xp.vot', 'gaia_xp.txt'],
+                  'gaia_xp.png', 'gaia_xp.vot', 'gaia_xp.txt',
+                  'gaia_rvs.png', 'gaia_rvs.vot', 'gaia_rvs.txt'],
     button_text='Get Target Info',
     button_class='btn-info',
     # Coordinates every source queries by, and the colours they convert with
@@ -260,10 +283,23 @@ def edenhofer_map():
     # It resolves the target and describes it, which it can always do; the
     # photometry and the spectrum below are what it finds along the way
     data_files=[],
-    # Spectral viewer
-    spectrum_files='gaia_xp.txt',
-    spectrum_label='Gaia XP',
-    spectrum_color='#2980b9',
+    # Spectral viewer. Two spectra of the one mission - the XP sampled
+    # spectrum and the RVS mean spectrum - so they are matched by a glob and
+    # named individually rather than sharing the one label.
+    spectrum_files='gaia_*.txt',
+    spectrum_label='Gaia',
+    spectrum_labels={'xp': 'XP', 'rvs': 'RVS'},
+    # Loaded but not ticked. The RVS spectrum is continuum normalised and runs
+    # about one, where every calibrated spectrum beside it runs at 1e-14 or
+    # so; on a shared axis it is the only thing visible and the rest lie flat
+    # along the bottom. It is worth reaching for, not worth being shown by
+    # default at the cost of everything else.
+    spectrum_hidden='gaia_rvs.txt',
+    # By filename order, which is how the viewer enumerates them: gaia_rvs
+    # before gaia_xp. Written in that order so that XP keeps the blue it has
+    # always had rather than being recoloured by the arrival of a second
+    # spectrum beside it.
+    spectrum_palette=['#c2185b', '#2980b9'],
     # Template metadata
     template_layout='custom',
 )
@@ -522,7 +558,7 @@ def target_info(config, basepath=None, verbose=True, show=False):
                                           'I/355/gaiadr3',
                                           extra=['_RAJ2000', '_DEJ2000', 'e_Gmag', 'e_BPmag', 'e_RPmag',
                                                  'A0', 'b_A0', 'B_A0', 'AG', 'b_AG', 'B_AG',
-                                                 'Source', 'XPsamp'],
+                                                 'Source', 'XPsamp', 'RVS'],
                                           get_distance=True, verbose=False)
             if cat and len(cat):
                 cache.save(cat)
@@ -576,6 +612,9 @@ def target_info(config, basepath=None, verbose=True, show=False):
         # and its absence below is otherwise indistinguishable from a failure
         if _number(star, 'XPsamp') == 0:
             log("No XP spectrum was published for this source")
+
+        if _number(star, 'RVS') == 0:
+            log("No RVS spectrum was published for this source")
 
         # Kept for the distances section below, which turns them into a
         # velocity once it knows how far away the star is
@@ -675,6 +714,100 @@ def target_info(config, basepath=None, verbose=True, show=False):
             write_spectrum(written, basepath, 'gaia_xp')
             log("XP spectrum written to file:gaia_xp.vot")
             log("XP spectrum written to file:gaia_xp.txt")
+
+    # Gaia DR3 RVS mean spectrum
+    #
+    # The same shape of thing as the XP spectrum above, from the same release
+    # and the same service, and asked for on the same terms: only where the
+    # catalogue row says one was published.
+    if config.get('gaia_source') and _number(star, 'RVS'):
+        log("\n---- Gaia DR3 RVS spectrum ----\n")
+
+        cache_name = f"gaiarvs_{ra:.4f}_{dec:.4f}.vot"
+
+        with cached_votable_query(cache_name, basepath, log, 'Gaia DR3 RVS spectrum',
+                                  refresh=refresh_cache) as cache:
+            if not cache.hit:
+                try:
+                    res = Vizier(columns=['**'], row_limit=-1).query_region(
+                        SkyCoord(ra, dec, unit='deg'), radius=GAIA_RVS_SR*u.arcsec,
+                        catalog=GAIA_RVS_CATALOGUE)
+
+                    rvs = res[0] if res and len(res) else None
+
+                    if rvs is not None and len(rvs):
+                        # A cone this size can hold more than one Gaia source,
+                        # each with its own spectrum, so the one this step has
+                        # settled on is the one taken
+                        if 'Source' in rvs.colnames:
+                            wanted = rvs['Source'] == config['gaia_source']
+                            if np.sum(wanted):
+                                rvs = rvs[wanted]
+
+                        rvs = Table({
+                            'wavelength': np.asarray(rvs['lambda'], dtype=float),
+                            'flux': np.asarray(rvs['Flux'], dtype=float),
+                            'flux_error': np.asarray(rvs['e_Flux'], dtype=float),
+                            'transits': np.asarray(rvs['NTransit'], dtype=float),
+                        })
+                        rvs.sort('wavelength')
+                        cache.save(rvs)
+                    else:
+                        cache.save_empty()
+                        rvs = None
+                except Exception as e:
+                    log(f"Error: could not fetch the RVS spectrum: {e}")
+                    rvs = None
+            else:
+                rvs = cache.data
+
+        if rvs is not None and len(rvs):
+            # As Vizier serves it: nanometres, and a flux already divided by
+            # its own continuum. The cache keeps that; what is written out is
+            # on the wavelength scale every spectrum here is written on, and
+            # keeps the flux as it is - there being no flux scale to convert.
+            lam = np.asarray(rvs['wavelength'], dtype=float)
+            flux = np.asarray(rvs['flux'], dtype=float)
+            err = np.asarray(rvs['flux_error'], dtype=float)
+
+            transits = (_number(rvs[0], 'transits')
+                        if 'transits' in rvs.colnames else None)
+
+            log(f"{len(rvs)} points from {lam.min():.1f} to {lam.max():.1f} nm"
+                + (f", combined from {int(transits)} transits"
+                   if transits else ''))
+            log("Continuum normalised rather than flux calibrated, as the "
+                "mission publishes it - the numbers run about one")
+
+            with plots.figure_saver(os.path.join(basepath, 'gaia_rvs.png'),
+                                    figsize=(8, 4), show=show) as fig:
+                ax = fig.add_subplot(1, 1, 1)
+
+                ax.fill_between(lam, flux - err, flux + err,
+                                alpha=0.25, color='#c2185b', lw=0)
+                ax.plot(lam, flux, '-', lw=0.8, color='#c2185b')
+
+                # The three lines the window was chosen for, and which the
+                # radial velocities are measured from
+                for line in GAIA_RVS_CA_TRIPLET:
+                    ax.axvline(line, color='#7f8c8d', lw=0.6, ls='--', alpha=0.6)
+
+                ax.grid(alpha=0.2)
+                ax.set_xlabel('Wavelength, nm')
+                ax.set_ylabel('Flux, relative to the continuum')
+                ax.set_title(f"{config['target_name']} - Gaia DR3 RVS spectrum"
+                             "  (dashed: Ca II triplet)")
+
+            log("RVS spectrum plot saved to file:gaia_rvs.png")
+
+            write_spectrum(Table({
+                'wavelength': lam * GAIA_RVS_TO_ANGSTROM,
+                'flux': flux,
+                'flux_error': err,
+            }), basepath, 'gaia_rvs', calibrated=False)
+
+            log("RVS spectrum written to file:gaia_rvs.vot")
+            log("RVS spectrum written to file:gaia_rvs.txt")
 
     # Gaia DR3 distances by Bailer-Jones
     ra = config.get('target_ra')
