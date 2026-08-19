@@ -34,6 +34,25 @@ The module is organized into separate files:
 - corot.py: CoRoT lightcurve acquisition
 - combined.py: Combined lightcurve plotting
 
+Sources deliberately not here yet, all of them because they would put real
+work on somebody else's machine for every target acquired, rather than
+because there is nothing to fetch:
+
+- ATLAS forced photometry (fallingstar-data.com/forcedphot). The largest gap
+  in the optical time domain here - all-sky, o and c bands, since 2015, and
+  the main high-cadence survey of the southern sky, where ZTF does not
+  reach. It is a queue that measures each position on the images on demand,
+  needs a registered account and token, and would want a server-level
+  credential in the settings and a job that waits rather than a request that
+  answers.
+- ZTF forced photometry (IRSA). Deeper at the faint end than the DR light
+  curves the ztf source uses, and it gives the non-detections, which matter
+  for anything in outburst. Submitted by email and collected later, so the
+  same shape of problem as ATLAS.
+- gPhoton, for time-resolved GALEX ultraviolet photometry. It builds a light
+  curve out of the individual photon events, which is minutes of computation
+  per target somebody else pays for, and there is no ultraviolet time domain
+  here at all without it.
 """
 
 # astroquery keeps a cache of its own under ~/.astropy/cache, holding pickled
