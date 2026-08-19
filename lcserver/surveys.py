@@ -651,6 +651,7 @@ CACHE_PREFIXES = {
     'wasp_': 'wasp',
     'omc_': 'omc',
     'nsvs_': 'nsvs',
+    'kelt_': 'kelt',
     'hipparcos_': 'hipparcos',
     'sdss_': 'sdss',
     'lamost_': 'lamost',
@@ -673,6 +674,7 @@ CACHE_PREFIXES = {
     # each, and the downloads themselves in a directory per source
     'tess_search_': 'tess',
     'kepler_search_': 'kepler',
+    'corot_': 'corot',
     'mast_tess': 'tess',
     'mast_kepler': 'kepler',
 }

@@ -21,6 +21,7 @@ The module is organized into separate files:
 - wasp.py: SuperWASP lightcurve acquisition
 - omc.py: INTEGRAL OMC lightcurve acquisition
 - nsvs.py: NSVS lightcurve acquisition
+- kelt.py: KELT lightcurve acquisition
 - hipparcos.py: Hipparcos epoch photometry acquisition
 - sdss.py: SDSS optical spectra
 - lamost.py: LAMOST DR11 spectra
@@ -30,6 +31,7 @@ The module is organized into separate files:
 - spherex.py: SPHEREx QR2 near-infrared spectrophotometry
 - sed.py: broadband catalogue photometry from VizieR, as an SED
 - kepler.py: Kepler lightcurve acquisition, both the original mission and K2
+- corot.py: CoRoT lightcurve acquisition
 - combined.py: Combined lightcurve plotting
 
 """
@@ -93,6 +95,7 @@ from .asas3 import target_asas3
 from .wasp import target_wasp
 from .omc import target_omc
 from .nsvs import target_nsvs
+from .kelt import target_kelt
 from .hipparcos import target_hipparcos
 from .sdss import target_sdss
 from .lamost import target_lamost
@@ -102,6 +105,7 @@ from .desi import target_desi
 from .spherex import target_spherex
 from .sed import target_sed
 from .kepler import target_kepler
+from .corot import target_corot
 from .tess import target_tess
 from .dasch import target_dasch
 from .applause import target_applause
