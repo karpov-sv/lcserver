@@ -64,11 +64,16 @@ def target_file_contents(target, filename, highlight=False):
                           r"\1<span class='text-warning'>\2</span>",
                           contents, flags=re.MULTILINE)
 
-        contents = re.sub(r"\b(file:([\w.-]+\.\w+))\b",
+        # A plus is in the character class because survey identifiers carry
+        # one: an APOGEE spectrum is named for its 2MASS designation, and half
+        # of those are a declination that is not negative. Without it the name
+        # stops at the plus, fails to reach an extension, and the whole link
+        # goes unrecognised rather than merely being cut short.
+        contents = re.sub(r"\b(file:([\w.+-]+\.\w+))\b",
                           partial(target_file_link, target=target),
                           contents, flags=re.MULTILINE)
 
-        contents = re.sub(r"\b(cache:([\w.-]+\.\w+))\b",
+        contents = re.sub(r"\b(cache:([\w.+-]+\.\w+))\b",
                           partial(target_cache_link, target=target),
                           contents, flags=re.MULTILINE)
 
