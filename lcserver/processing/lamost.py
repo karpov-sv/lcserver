@@ -325,8 +325,8 @@ def target_lamost(config, basepath=None, verbose=True, show=False):
             ax.set_xlabel('Time')
             ax.set_title(f"{config['target_name']} - LAMOST radial velocities")
 
-        log(f"\nRadial velocities at {len(set(epochs[:, 0]))} epochs"
-            f" written to file:lamost_rv.png")
+        log(f"\nRadial velocities at {len(set(epochs[:, 0]))} epochs")
+        log("Velocities plotted in file:lamost_rv.png")
 
     # The spectra themselves, one request each
     wanted = []
@@ -412,5 +412,7 @@ def target_lamost(config, basepath=None, verbose=True, show=False):
         # never written; both forms are what every other source leaves
         write_spectrum(written, basepath, name)
 
-        log(f"  {obsid}: {len(spectrum)} points plotted in file:{name}.png,"
-            f" written to file:{name}.vot and file:{name}.txt")
+        log(f"  {obsid}: {len(spectrum)} points")
+        log(f"    Spectrum plotted in file:{name}.png")
+        log(f"    Spectrum written to file:{name}.vot")
+        log(f"    Spectrum written to file:{name}.txt")

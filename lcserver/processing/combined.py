@@ -142,5 +142,5 @@ def target_combined(config, basepath=None, verbose=True, show=False):
                         transform=ax.transAxes, ha='right', va='bottom',
                         fontsize='x-small', alpha=0.6)
 
-    log(f"\nCombined lightcurves written to file:combined_short_lc.png and "
-        f"file:combined_lc.png")
+    log("\nCombined lightcurve written to file:combined_short_lc.png")
+    log("Combined lightcurve written to file:combined_lc.png")
