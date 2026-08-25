@@ -12,6 +12,7 @@ The module is organized into separate files:
 - dasch.py: DASCH lightcurve acquisition
 - applause.py: APPLAUSE lightcurve acquisition
 - mmt9.py: Mini-MegaTORTORA lightcurve acquisition
+- fram.py: FRAM telescopes lightcurve acquisition
 - css.py: Catalina Sky Survey lightcurve acquisition
 - kws.py: Kamogata Wide-field Survey lightcurve acquisition
 - ptf.py: Palomar Transient Factory lightcurve acquisition
@@ -105,6 +106,7 @@ from .info import target_info
 from .ztf import target_ztf, gaussian_smoothing
 from .asas import target_asas
 from .mmt9 import target_mmt9
+from .fram import target_fram
 from .css import target_css
 from .kws import target_kws
 from .ptf import target_ptf
@@ -152,5 +154,6 @@ __all__ = [
     'target_dasch',
     'target_applause',
     'target_mmt9',
+    'target_fram',
     'target_combined',
 ]

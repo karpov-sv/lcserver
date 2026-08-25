@@ -793,6 +793,21 @@ def r_to_g(mag, g_minus_r):
     return mag + g_minus_r
 
 
+RC_TO_G_FORMULA = 'g = Rc + 0.0971 + 1.1837*(g - r)'
+
+
+def rc_to_g(mag, g_minus_r):
+    """Cousins R onto the Pan-STARRS g scale, through an assumed (g - r).
+
+    Lupton (2005) publishes Rc = r - 0.1837*(g - r) - 0.0971, with a scatter
+    of 0.0106 for the stars it was fitted to. Inverted for r, which the colour
+    itself then carries to g. The r there is SDSS rather than Pan-STARRS, so a
+    hundredth or so of the difference between the two scales rides along with
+    the conversion.
+    """
+    return mag + 0.0971 + 1.1837*g_minus_r
+
+
 ROTSE_TO_V_FORMULA = 'V = m_ROTSE + (B - V)/1.875'
 
 

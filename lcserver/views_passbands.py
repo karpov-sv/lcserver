@@ -98,7 +98,7 @@ CONVERSIONS = [
         'v_to_g', 'Johnson V to Pan-STARRS g', 'lcserver', 'V', 'g',
         terms=[('g - r', [0.008, 0.498, 0.02])],
         reference=REF_KOSTOV[0] + ', inverted', url=REF_KOSTOV[1],
-        used_by='ASAS-SN V, ASAS-3, CSS, KWS, Hipparcos, INTEGRAL OMC, NSVS',
+        used_by='ASAS-SN V, ASAS-3, CSS, KWS, Hipparcos, INTEGRAL OMC, NSVS, FRAM V',
         note="Published the other way round, as V = g - 0.02 - 0.498*(g - r) "
              "- 0.008*(g - r)^2, and inverted here.",
     ),
@@ -106,7 +106,7 @@ CONVERSIONS = [
         'b_to_g', 'Johnson B to Pan-STARRS g', 'lcserver', 'B', 'g',
         terms=[('g - r', [-0.3130, -0.2271])],
         reference=REF_LUPTON[0] + ', inverted', url=REF_LUPTON[1],
-        used_by='KWS B', sigma=0.011,
+        used_by='KWS B, FRAM B', sigma=0.011,
         note="The scatter quoted is the one of the original fit. The photographic "
              "plates this is used on are a good deal further from Johnson B than "
              "that, so the number to expect is the plates' own colour term.",
@@ -116,6 +116,17 @@ CONVERSIONS = [
         terms=[('g - r', [1.0, 0.0])],
         reference='the definition of the colour',
         used_by='BGDS r, PTF R, and the Pan-STARRS r epochs of the info step',
+    ),
+    conversion(
+        'rc_to_g', 'Cousins R to Pan-STARRS g', 'lcserver', 'Rc', 'g',
+        terms=[('g - r', [1.1837, 0.0971])],
+        reference=REF_LUPTON[0] + ', inverted and carried on to g',
+        url=REF_LUPTON[1],
+        used_by='FRAM R', sigma=0.0106,
+        note="Published as Rc = r - 0.1837*(g - r) - 0.0971; inverted for r, "
+             "which the colour itself then carries to g. The r of the relation "
+             "is SDSS rather than Pan-STARRS, so the difference between those "
+             "two scales rides along with it.",
     ),
     conversion(
         'gaia_g_to_g', 'Gaia G to Pan-STARRS g', 'lcserver', 'G', 'g',

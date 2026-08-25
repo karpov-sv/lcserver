@@ -651,6 +651,7 @@ CACHE_PREFIXES = {
     'dasch_': 'dasch',
     'kws_': 'kws',
     'mmt9_': 'mmt9',
+    'fram_': 'fram',
     'ptf_': 'ptf',
     'bgds_': 'bgds',
     'ztf_raw_': 'ztf',
