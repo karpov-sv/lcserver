@@ -5,7 +5,6 @@ Gaia DR3, Pan-STARRS DR2, and other catalogs.
 """
 
 import os
-import threading
 from collections import namedtuple
 import numpy as np
 import requests
@@ -121,11 +120,10 @@ EDENHOFER_RV = 3.1
 BAYESTAR_TO_AV = 2.742
 BAYESTAR_RV = 3.1
 
-# How many of the map's five posterior samples to read. None of them: each is
-# two gigabytes resident and only the best-fit profile is queried below, which
-# is a dataset of its own. The reader takes the count as a slice, so zero of
-# them leaves an empty array rather than refusing.
-BAYESTAR_SAMPLES = 0
+# How many rows of its pixel index to hold at a time while looking for the one
+# a line of sight falls in. Twenty megabytes a slice, against the hundred and
+# seventy the whole index is - several sources may be reading at once.
+BAYESTAR_INDEX_CHUNK = 500000
 
 # How many distances the profiles through the maps are drawn at
 EDENHOFER_POINTS = 256
@@ -247,60 +245,26 @@ def _vsx_magnitude(row, key):
     return f"{text} {band}" if band else text
 
 
-# The loaded three-dimensional map, and the lock that keeps two steps from
-# building it at once
-_edenhofer = None
-_edenhofer_lock = threading.Lock()
+# The three-dimensional maps are read one line of sight at a time, straight out
+# of the files dustmaps downloaded, rather than through its query classes.
+#
+# Those classes hold the whole sky: Edenhofer materialises its 516 shells to
+# 1.7 GB, Bayestar its best-fit profiles to 2.4 GB, and a worker that had met
+# one distant target carried both for the rest of its life. A target is one
+# line of sight, which is four healpix columns of one and a single row of the
+# other, so nothing here needs the sky. What it costs instead is knowing how
+# the two files are laid out, which is why each reader says what it is doing.
 
 
-def edenhofer_map():
-    """The three-dimensional dust map of Edenhofer et al. (2023).
+def dust_map_path(*parts):
+    """A file under whatever directory dustmaps was configured to fetch into.
 
-    Reading it takes some ten seconds and leaves 1.6 GB resident, so it is
-    built once and kept: the worker runs its steps in threads, and two targets
-    asking for it at the same time would otherwise each load their own copy.
-
-    Raises ImportError where dustmaps is not installed, and FileNotFoundError
-    where it is but its data have not been fetched.
+    Raises ImportError where dustmaps is not installed, which is how a missing
+    map is told apart from a broken one.
     """
-    global _edenhofer
+    from dustmaps.std_paths import data_dir
 
-    with _edenhofer_lock:
-        if _edenhofer is None:
-            from dustmaps.edenhofer2023 import Edenhofer2023Query
-
-            # Integrated: the extinction accumulated out to a distance, which
-            # is what a star behind it suffers, rather than the local density
-            _edenhofer = Edenhofer2023Query(integrated=True)
-
-    return _edenhofer
-
-
-# The same, for the map that takes over where the one above ends
-_bayestar = None
-_bayestar_lock = threading.Lock()
-
-
-def bayestar_map():
-    """The three-dimensional dust map Bayestar2019 (Green et al. 2019).
-
-    Kept for the same reason as the map above, and the more so: reading it
-    takes some twenty seconds and leaves four gigabytes resident even with the
-    posterior samples cut down to one.
-
-    Raises ImportError where dustmaps is not installed, and FileNotFoundError
-    where it is but its data have not been fetched.
-    """
-    global _bayestar
-
-    with _bayestar_lock:
-        if _bayestar is None:
-            from dustmaps.bayestar import BayestarQuery
-
-            _bayestar = BayestarQuery(version='bayestar2019',
-                                      max_samples=BAYESTAR_SAMPLES)
-
-    return _bayestar
+    return os.path.join(data_dir(), *parts)
 
 
 # A three-dimensional map read along one line of sight: what it is called, the
@@ -311,25 +275,75 @@ Dust3D = namedtuple('Dust3D', ['label', 'inner', 'outer', 'rv', 'colour',
                                'extinction_at'])
 
 
+def _scalar_like(result, distance):
+    """The profile as a number where one distance was asked about."""
+    return result if np.ndim(distance) else float(result[0])
+
+
 def edenhofer_profile(l, b):
     """The Edenhofer et al. (2023) map along one line of sight.
 
-    Resolved into 800 shells over the nearest kiloparsec, so it is the one to
+    Resolved into 516 shells over the nearest 1.25 kpc, so it is the one to
     read wherever it reaches; beyond that it has nothing to say at all.
+
+    The file holds extinction density per shell over the whole sky. Its query
+    interpolates over the four healpix pixels around the direction asked for,
+    and in the log of the density accumulated outwards, so those four columns
+    are read and accumulated here - the same arithmetic the map's own reader
+    does to all 786432 of them.
     """
-    dust3d = edenhofer_map()
+    from astropy.io import fits
+    from dustmaps.edenhofer2023 import DATA_DIR_SUBDIR
+    from healpy.pixelfunc import get_interp_weights
+
+    path = dust_map_path(DATA_DIR_SUBDIR, 'mean_and_std_healpix.fits')
+
+    with fits.open(path, memmap=True) as hdul:
+        mean = hdul['MEAN']
+
+        # The density within the innermost radius, which the map does not
+        # resolve and reports as one number per direction
+        inner_hdu = next(hdu for hdu in hdul
+                         if hdu.name.lower().startswith('mean of integrated inner'))
+
+        radii = np.asarray(hdul['RADIAL PIXEL CENTERS']
+                           .data['radial pixel centers'], dtype=float)
+        bounds = np.asarray(hdul['RADIAL PIXEL BOUNDARIES']
+                            .data['radial pixel boundaries'], dtype=float)
+
+        index, weight = get_interp_weights(mean.header['NSIDE'], l, b,
+                                           nest=True, lonlat=True)
+        index, weight = np.ravel(index), np.ravel(weight)
+
+        # Density by shell volume, plus the unresolved sphere in the middle,
+        # accumulated outwards and kept in the log the interpolation is done in
+        column = np.array(mean.data[:, index], dtype=float)
+        column *= np.diff(bounds)[:, np.newaxis]
+        column[0] += inner_hdu.data[index]
+        np.cumsum(column, axis=0, out=column)
+        np.log(column, out=column)
 
     # The map is a set of shells, and the interpolation needs a point between
     # two of their centres, so its own bounds are just inside
-    inner = float(dust3d.distances[0].to_value('pc')) * 1.001
-    outer = float(dust3d.distances[-1].to_value('pc')) * 0.999
+    inner = radii[0] * 1.001
+    outer = radii[-1] * 0.999
 
     def extinction_at(distance):
-        coords = SkyCoord(l=l*u.deg, b=b*u.deg,
-                          distance=np.clip(distance, inner, outer)*u.pc,
-                          frame='galactic')
+        d = np.clip(np.atleast_1d(distance).astype(float), inner, outer)
 
-        return EDENHOFER_TO_AV * dust3d.query(coords)
+        # Between which pair of shells, and how far between them
+        upper = np.searchsorted(radii, d)
+        lower = upper - 1
+        w = np.abs(np.stack((radii[upper] - d, radii[lower] - d)))
+        w /= w.sum(axis=0)
+
+        # (2 shells, 4 pixels, distances), summed over both
+        value = column[np.stack((lower, upper))[:, :, np.newaxis],
+                       np.arange(index.size)[np.newaxis, np.newaxis, :]]
+        value = (value * weight).sum(axis=-1)
+        value = (value * w).sum(axis=0)
+
+        return _scalar_like(EDENHOFER_TO_AV * np.exp(value), distance)
 
     return Dust3D('Edenhofer et al. (2023)', inner, outer, EDENHOFER_RV,
                   '#8e44ad', extinction_at)
@@ -341,21 +355,70 @@ def bayestar_profile(l, b):
     Coarser than the map above and starting no nearer, but it runs to 60 kpc
     rather than 1.25, which is what makes it the fallback for a distant star.
     It is built out of Pan-STARRS photometry and so covers only the three
-    quarters of the sky that survey saw, returning NaN south of dec = -30.
-    """
-    dust3d = bayestar_map()
+    quarters of the sky that survey saw, and says nothing at all south of
+    dec = -30.
 
-    inner = float(dust3d.distances[0].to_value('pc')) * 1.001
-    outer = float(dust3d.distances[-1].to_value('pc')) * 0.999
+    The map is adaptive: each direction is a pixel at whichever of five healpix
+    resolutions the stars there could constrain, listed in an index of four
+    million rows that has to be searched to find the row a direction falls in.
+    The index is the only bulky thing either map asks for, so it is walked a
+    slice at a time and not kept - what comes out of it is one row of 120
+    numbers, the maximum probability extinction profile, which is what the
+    map's own 'best' mode returns.
+    """
+    import h5py
+    from healpy.pixelfunc import ang2pix
+
+    path = dust_map_path('bayestar', 'bayestar2019.h5')
+
+    with h5py.File(path, 'r') as f:
+        pixels = f['/pixel_info']
+        edges = np.asarray(pixels.attrs['DM_bin_edges'], dtype=float)
+
+        row = -1
+
+        for start in range(0, pixels.shape[0], BAYESTAR_INDEX_CHUNK):
+            block = pixels[start:start + BAYESTAR_INDEX_CHUNK]
+
+            # A slice spans one resolution or two, and the pixel a direction
+            # falls in is a different one at each of them
+            for level in np.unique(block['nside']):
+                found = np.flatnonzero(
+                    (block['nside'] == level) &
+                    (block['healpix_index'] == ang2pix(int(level), l, b,
+                                                       nest=True, lonlat=True)))
+
+                if found.size:
+                    row = start + int(found[0])
+                    break
+
+            if row >= 0:
+                break
+
+        # Everywhere the survey looked is in the index exactly once; a
+        # direction missing from it is one the map was never built for
+        best = (np.asarray(f['/best_fit'][row], dtype=float)
+                if row >= 0 else None)
+
+    # Distance moduli, which is what the map is binned in
+    inner = 10**(0.2*edges[0] + 1) * 1.001
+    outer = 10**(0.2*edges[-1] + 1) * 0.999
 
     def extinction_at(distance):
-        coords = SkyCoord(l=l*u.deg, b=b*u.deg,
-                          distance=np.clip(distance, inner, outer)*u.pc,
-                          frame='galactic')
+        d = np.clip(np.atleast_1d(distance).astype(float), inner, outer)
 
-        # The maximum-probability profile rather than the median of the
-        # posterior samples, of which only one is loaded
-        return BAYESTAR_TO_AV * dust3d.query(coords, mode='best')
+        if best is None:
+            return _scalar_like(np.full(d.shape, np.nan), distance)
+
+        dm = 5*np.log10(d) - 5
+        upper = np.searchsorted(edges, dm)
+
+        # Clipped above, so every distance falls between two bins
+        hi, lo = edges[upper], edges[upper - 1]
+        a = (hi - dm) / (hi - lo)
+        value = (1 - a)*best[upper] + a*best[upper - 1]
+
+        return _scalar_like(BAYESTAR_TO_AV * value, distance)
 
     return Dust3D('Bayestar2019 (Green et al. 2019)', inner, outer,
                   BAYESTAR_RV, '#2980b9', extinction_at)
@@ -1098,8 +1161,8 @@ def target_info(config, basepath=None, verbose=True, show=False):
     # dust far better and is read wherever it reaches, but it ends at 1.25 kpc,
     # and most things with a distance are behind that; Bayestar2019 is coarser
     # but runs to 60 kpc, and takes over for a star the first cannot be read at,
-    # or where the first is missing altogether. It is only loaded then, being
-    # twenty seconds and four gigabytes to keep.
+    # or where the first is missing altogether. It is only read then, its index
+    # being the slow part of either of them.
     #
     # Filled in below and read by the band table after it: the extinction to
     # the star, the sign it is only a limit in where it is one, and the map it
