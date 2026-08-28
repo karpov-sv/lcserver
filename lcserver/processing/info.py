@@ -121,10 +121,11 @@ EDENHOFER_RV = 3.1
 BAYESTAR_TO_AV = 2.742
 BAYESTAR_RV = 3.1
 
-# How many of the map's five posterior samples to read. Each of them is two
-# gigabytes resident, and only the best-fit profile is queried below, so the
-# samples are loaded as thinly as the reader allows.
-BAYESTAR_SAMPLES = 1
+# How many of the map's five posterior samples to read. None of them: each is
+# two gigabytes resident and only the best-fit profile is queried below, which
+# is a dataset of its own. The reader takes the count as a slice, so zero of
+# them leaves an empty array rather than refusing.
+BAYESTAR_SAMPLES = 0
 
 # How many distances the profiles through the maps are drawn at
 EDENHOFER_POINTS = 256
