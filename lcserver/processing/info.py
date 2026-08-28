@@ -6,6 +6,7 @@ Gaia DR3, Pan-STARRS DR2, and other catalogs.
 
 import os
 import threading
+from collections import namedtuple
 import numpy as np
 import requests
 from io import BytesIO
@@ -112,7 +113,20 @@ DUST_ANCHOR = 'CTIO V'
 EDENHOFER_TO_AV = 2.8
 EDENHOFER_RV = 3.1
 
-# How many distances the profile through the map is drawn at
+# Bayestar2019 (Green et al. 2019) reports reddening in a unit of its own,
+# normalised so that E(g-r) = 0.901 mag when E = 1 - which is the colour excess
+# Schlafly & Finkbeiner (2011) give for E(B-V) = 1 of the map the two above are
+# quoted in. Its unit is therefore that E(B-V), and the same law's A(V)/E(B-V)
+# turns it into extinction.
+BAYESTAR_TO_AV = 2.742
+BAYESTAR_RV = 3.1
+
+# How many of the map's five posterior samples to read. Each of them is two
+# gigabytes resident, and only the best-fit profile is queried below, so the
+# samples are loaded as thinly as the reader allows.
+BAYESTAR_SAMPLES = 1
+
+# How many distances the profiles through the maps are drawn at
 EDENHOFER_POINTS = 256
 
 # Per band: name, and the columns holding its time, magnitude, flux, flux error
@@ -259,6 +273,99 @@ def edenhofer_map():
             _edenhofer = Edenhofer2023Query(integrated=True)
 
     return _edenhofer
+
+
+# The same, for the map that takes over where the one above ends
+_bayestar = None
+_bayestar_lock = threading.Lock()
+
+
+def bayestar_map():
+    """The three-dimensional dust map Bayestar2019 (Green et al. 2019).
+
+    Kept for the same reason as the map above, and the more so: reading it
+    takes some twenty seconds and leaves four gigabytes resident even with the
+    posterior samples cut down to one.
+
+    Raises ImportError where dustmaps is not installed, and FileNotFoundError
+    where it is but its data have not been fetched.
+    """
+    global _bayestar
+
+    with _bayestar_lock:
+        if _bayestar is None:
+            from dustmaps.bayestar import BayestarQuery
+
+            _bayestar = BayestarQuery(version='bayestar2019',
+                                      max_samples=BAYESTAR_SAMPLES)
+
+    return _bayestar
+
+
+# A three-dimensional map read along one line of sight: what it is called, the
+# distances in parsecs it is defined between, the R(V) its A(V) is turned back
+# into E(B-V) with, the colour it is drawn in, and A(V) accumulated out to a
+# distance or an array of them
+Dust3D = namedtuple('Dust3D', ['label', 'inner', 'outer', 'rv', 'colour',
+                               'extinction_at'])
+
+
+def edenhofer_profile(l, b):
+    """The Edenhofer et al. (2023) map along one line of sight.
+
+    Resolved into 800 shells over the nearest kiloparsec, so it is the one to
+    read wherever it reaches; beyond that it has nothing to say at all.
+    """
+    dust3d = edenhofer_map()
+
+    # The map is a set of shells, and the interpolation needs a point between
+    # two of their centres, so its own bounds are just inside
+    inner = float(dust3d.distances[0].to_value('pc')) * 1.001
+    outer = float(dust3d.distances[-1].to_value('pc')) * 0.999
+
+    def extinction_at(distance):
+        coords = SkyCoord(l=l*u.deg, b=b*u.deg,
+                          distance=np.clip(distance, inner, outer)*u.pc,
+                          frame='galactic')
+
+        return EDENHOFER_TO_AV * dust3d.query(coords)
+
+    return Dust3D('Edenhofer et al. (2023)', inner, outer, EDENHOFER_RV,
+                  '#8e44ad', extinction_at)
+
+
+def bayestar_profile(l, b):
+    """Bayestar2019 along one line of sight.
+
+    Coarser than the map above and starting no nearer, but it runs to 60 kpc
+    rather than 1.25, which is what makes it the fallback for a distant star.
+    It is built out of Pan-STARRS photometry and so covers only the three
+    quarters of the sky that survey saw, returning NaN south of dec = -30.
+    """
+    dust3d = bayestar_map()
+
+    inner = float(dust3d.distances[0].to_value('pc')) * 1.001
+    outer = float(dust3d.distances[-1].to_value('pc')) * 0.999
+
+    def extinction_at(distance):
+        coords = SkyCoord(l=l*u.deg, b=b*u.deg,
+                          distance=np.clip(distance, inner, outer)*u.pc,
+                          frame='galactic')
+
+        # The maximum-probability profile rather than the median of the
+        # posterior samples, of which only one is loaded
+        return BAYESTAR_TO_AV * dust3d.query(coords, mode='best')
+
+    return Dust3D('Bayestar2019 (Green et al. 2019)', inner, outer,
+                  BAYESTAR_RV, '#2980b9', extinction_at)
+
+
+# The maps above in the order they are tried, each with the module whose
+# fetch() downloads its data, for the message where it has not been
+DUST_3D_MAPS = [
+    ('Edenhofer et al. (2023)', 'dustmaps.edenhofer2023', edenhofer_profile),
+    ('Bayestar2019', 'dustmaps.bayestar', bayestar_profile),
+]
 
 
 @survey_source(
@@ -980,130 +1087,168 @@ def target_info(config, basepath=None, verbose=True, show=False):
 
     # The same thing in three dimensions
     #
-    # The maps above integrate the whole column through the Galaxy; this one is
-    # resolved in distance, so it can say how much of that column lies in front
-    # of the star. It is optional - several gigabytes of data behind an optional
-    # dependency - and where it is not installed nothing is said of it at all,
-    # rather than a missing dependency being reported at every run.
+    # The maps above integrate the whole column through the Galaxy; these are
+    # resolved in distance, so they can say how much of that column lies in
+    # front of the star. They are optional - several gigabytes of data behind an
+    # optional dependency - and where they are not installed nothing is said of
+    # them at all, rather than a missing dependency being reported at every run.
+    #
+    # Two of them, tried in turn. Edenhofer et al. (2023) resolves the nearby
+    # dust far better and is read wherever it reaches, but it ends at 1.25 kpc,
+    # and most things with a distance are behind that; Bayestar2019 is coarser
+    # but runs to 60 kpc, and takes over for a star the first cannot be read at,
+    # or where the first is missing altogether. It is only loaded then, being
+    # twenty seconds and four gigabytes to keep.
+    #
     # Filled in below and read by the band table after it: the extinction to
-    # the star, and the sign it is only a limit in where it is one
-    av_3d, av_3d_limit = None, ''
+    # the star, the sign it is only a limit in where it is one, and the map it
+    # was taken from
+    av_3d, av_3d_limit, av_3d_label = None, '', ''
 
-    try:
-        import dustmaps.edenhofer2023  # noqa: F401
-        has_dustmaps = True
-    except ImportError:
-        has_dustmaps = False
+    distance = config.get('gaia_distance')
 
-    if has_dustmaps:
+    # Every map that loaded and has anything to say here, as (profile,
+    # distances, A(V)), and the one the star itself is read off
+    profiles = []
+    chosen = None
+
+    for label, module, make_profile in DUST_3D_MAPS:
         try:
-            dust3d = edenhofer_map()
+            profile = make_profile(config['target_l'], config['target_b'])
+        except ImportError:
+            # Not installed, which is not worth a line of its own
+            continue
         except Exception as e:
-            log(f"Warning: the Edenhofer et al. (2023) map could not be loaded "
-                f"({e}) - dustmaps.edenhofer2023.fetch() downloads its data")
-            dust3d = None
+            log(f"Warning: the {label} map could not be loaded "
+                f"({e}) - {module}.fetch() downloads its data")
+            continue
 
-        if dust3d is not None:
-            # The map is a set of shells, and the interpolation needs a point
-            # between two of their centres, so its own bounds are just inside
-            inner = float(dust3d.distances[0].value) * 1.001
-            outer = float(dust3d.distances[-1].value) * 0.999
+        dist = np.geomspace(profile.inner, profile.outer, EDENHOFER_POINTS)
+        av = np.atleast_1d(profile.extinction_at(dist))
 
-            def extinction_at(distance):
-                """A(V) accumulated out to a distance, in parsecs."""
-                coords = SkyCoord(l=config['target_l']*u.deg,
-                                  b=config['target_b']*u.deg,
-                                  distance=np.clip(distance, inner, outer)*u.pc,
-                                  frame='galactic')
+        # Bayestar is built out of Pan-STARRS photometry and answers NaN
+        # throughout for the quarter of the sky that survey never saw
+        if not np.any(np.isfinite(av)):
+            log(f"The {profile.label} map does not cover this line of sight")
+            continue
 
-                return EDENHOFER_TO_AV * dust3d.query(coords)
+        profiles.append((profile, dist, av))
 
-            dist = np.geomspace(inner, outer, EDENHOFER_POINTS)
-            av = extinction_at(dist)
+        # The first map that actually reaches the star wins, and where there is
+        # no distance to reach there is nothing a second map could add; the
+        # rest are not even loaded
+        if distance is None or profile.inner <= distance <= profile.outer:
+            chosen = profiles[-1]
+            break
 
-            distance = config.get('gaia_distance')
-            av_star = (float(extinction_at(distance))
-                       if distance is not None else None)
+    # Nothing covers it - too near, or too far for both - so the nearest thing
+    # to an answer is the first map read as a limit, which is what it was
+    # before the second one was there to try
+    if chosen is None and profiles:
+        chosen = profiles[0]
 
-            if av_star is not None and not np.isfinite(av_star):
-                av_star = None
+    if chosen is not None:
+        profile, dist, av = chosen
 
-            # Whether the star is somewhere the map can actually be read at,
-            # rather than in front of its innermost shell or behind it all
-            inside = av_star is not None and inner <= distance <= outer
+        av_star = (float(profile.extinction_at(distance))
+                   if distance is not None else None)
 
-            log("")
+        if av_star is not None and not np.isfinite(av_star):
+            av_star = None
 
-            if av_star is not None:
-                config['av_3d'] = av_star
-                config['ebv_3d'] = av_star / EDENHOFER_RV
+        # Whether the star is somewhere the map can actually be read at, rather
+        # than in front of its innermost shell or behind it all
+        inside = av_star is not None and profile.inner <= distance <= profile.outer
 
-                av_3d = av_star
-                av_3d_limit = '' if inside else ('<' if distance < inner else '>')
+        log("")
 
-                log(f"Target distance is {distance:.0f} pc")
-                log(f"Edenhofer et al. 2023 3D map valid between {inner:.0f} pc to {outer/1000:.2f} kpc")
+        if av_star is not None:
+            config['av_3d'] = av_star
+            config['ebv_3d'] = av_star / profile.rv
+            config['dust_3d_map'] = profile.label
 
-                if inside:
-                    log(f"E(B-V) = {av_star/EDENHOFER_RV:.4f}, A(V) = {av_star:.3f}")
-                elif distance < inner:
-                    log(f"E(B-V) < {av_star/EDENHOFER_RV:.4f}, A(V) < {av_star:.3f}")
-                else:
-                    log(f"E(B-V) > {av_star/EDENHOFER_RV:.4f}, A(V) > {av_star:.3f}")
+            av_3d = av_star
+            av_3d_limit = '' if inside else ('<' if distance < profile.inner else '>')
+            av_3d_label = profile.label
+
+            log(f"Target distance is {distance:.0f} pc")
+
+            # Every map that was tried, so that a fallback shows why it was
+            # fallen back to
+            for other, _, _ in profiles:
+                log(f"{other.label} 3D map valid between {other.inner:.0f} pc "
+                    f"to {other.outer/1000:.2f} kpc"
+                    + ("" if other is profile else ", and the star is outside it"))
 
             if inside:
-                lo = float(extinction_at(config['gaia_distance_lo']))
-                hi = float(extinction_at(config['gaia_distance_hi']))
-                log(f"  A(V) spans [{lo:.3f} ... {hi:.3f}] mag over the distance interval")
+                log(f"E(B-V) = {av_star/profile.rv:.4f}, A(V) = {av_star:.3f}")
+            elif distance < profile.inner:
+                log(f"E(B-V) < {av_star/profile.rv:.4f}, A(V) < {av_star:.3f}")
+            else:
+                log(f"E(B-V) > {av_star/profile.rv:.4f}, A(V) > {av_star:.3f}")
 
-            if np.isfinite(av[-1]):
-                log(f"  Total map A(V) = {av[-1]:.3f} mag in this direction")
+            # Which of them the numbers above are - worth saying only where
+            # more than one was read
+            if len(profiles) > 1:
+                log(f"  from {profile.label}")
+
+        if inside:
+            lo = float(profile.extinction_at(config['gaia_distance_lo']))
+            hi = float(profile.extinction_at(config['gaia_distance_hi']))
+            log(f"  A(V) spans [{lo:.3f} ... {hi:.3f}] mag over the distance interval")
+
+        if np.isfinite(av[-1]):
+            log(f"  Total map A(V) = {av[-1]:.3f} mag in this direction")
+
+            if inside and av[-1] > 0:
                 log(f"  the star sits in front of "
-                    f"{100*(1 - av_star/av[-1]):.0f}% of it"
-                    if inside and av[-1] > 0 else "")
+                    f"{100*(1 - av_star/av[-1]):.0f}% of it")
 
-            with plots.figure_saver(os.path.join(basepath, 'dust_3d.png'),
-                                    figsize=(8, 5), show=show) as fig:
-                ax = fig.add_subplot(1, 1, 1)
+        with plots.figure_saver(os.path.join(basepath, 'dust_3d.png'),
+                                figsize=(8, 5), show=show) as fig:
+            ax = fig.add_subplot(1, 1, 1)
 
-                ax.plot(dist, av, '-', color='#8e44ad',
-                        label='Edenhofer et al. (2023)')
+            # Every map that was read, not just the one quoted: where they
+            # overlap, how far apart they run is the honest uncertainty
+            for other, other_dist, other_av in profiles:
+                ax.plot(other_dist, other_av, '-', color=other.colour,
+                        label=other.label)
 
-                # Where the star stands, marked on the profile where the map
-                # covers it and left as a bare line where it does not
-                if distance is not None:
-                    ax.axvspan(config['gaia_distance_lo'],
-                               config['gaia_distance_hi'],
-                               color='0.5', alpha=0.2)
-                    ax.axvline(distance, ls='--', color='0.4', lw=1)
+            # Where the star stands, marked on the profile where the map
+            # covers it and left as a bare line where it does not
+            if distance is not None:
+                ax.axvspan(config['gaia_distance_lo'],
+                           config['gaia_distance_hi'],
+                           color='0.5', alpha=0.2)
+                ax.axvline(distance, ls='--', color='0.4', lw=1)
 
-                if inside:
-                    ax.plot(distance, av_star, '*', color='yellow',
-                            markeredgecolor='black', markersize=16, zorder=10,
-                            label=config.get('target_name'))
+            if inside:
+                ax.plot(distance, av_star, '*', color='yellow',
+                        markeredgecolor='black', markersize=16, zorder=10,
+                        label=config.get('target_name'))
 
-                # The whole column, which the profile should approach from
-                # below and never cross
-                if config.get('ebv_sf11') is not None:
-                    ax.axhline(EDENHOFER_RV * config['ebv_sf11'], ls=':',
-                               color='#c0392b',
-                               label='Schlafly & Finkbeiner, whole Galaxy')
+            # The whole column, which the profiles should approach from
+            # below and never cross
+            if config.get('ebv_sf11') is not None:
+                ax.axhline(3.1 * config['ebv_sf11'], ls=':',
+                           color='#c0392b',
+                           label='Schlafly & Finkbeiner, whole Galaxy')
 
-                # And what Gaia fits for the star itself, which should agree
-                # with the profile where it is read
-                if config.get('gaia_A0') is not None:
-                    ax.axhline(config['gaia_A0'], ls='-.', color='#16a085',
-                               label='Gaia A0')
+            # And what Gaia fits for the star itself, which should agree
+            # with the profile where it is read
+            if config.get('gaia_A0') is not None:
+                ax.axhline(config['gaia_A0'], ls='-.', color='#16a085',
+                           label='Gaia A0')
 
-                ax.set_xscale('log')
-                ax.set_xlabel('Distance, pc')
-                ax.set_ylabel('A(V), mag')
-                ax.set_title('Extinction along the line of sight')
-                ax.grid(alpha=0.2)
-                ax.legend(loc='best', fontsize='small')
+            ax.set_xscale('log')
+            ax.set_xlabel('Distance, pc')
+            ax.set_ylabel('A(V), mag')
+            ax.set_title('Extinction along the line of sight')
+            ax.grid(alpha=0.2)
+            ax.legend(loc='best', fontsize='small')
 
-            log("Extinction profile saved to file:dust_3d.png")
-            log("")
+        log("Extinction profile saved to file:dust_3d.png")
+        log("")
 
     # Extinction band by band
     cache_name = f"dustext_{ra:.4f}_{dec:.4f}.vot"
@@ -1165,9 +1310,9 @@ def target_info(config, basepath=None, verbose=True, show=False):
         log("  Galaxy, on the two calibrations of the same map.")
 
         if scale_3d is not None:
-            log("  A(3D) is written on this law rather than the one its own map")
-            log("  is defined by, and < or > marks a star outside the distances")
-            log("  that map covers.")
+            log(f"  A(3D) comes from {av_3d_label}, written on this law rather")
+            log("  than the one that map is defined by, and < or > marks a star")
+            log("  outside the distances it covers.")
 
     # Pan-STARRS DR2 warp photometry
     log("\n---- Pan-STARRS DR2 warp photometry ----\n")
