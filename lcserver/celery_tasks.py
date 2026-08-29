@@ -200,9 +200,28 @@ def create_survey_task(source_id, survey_config):
                 log(f"\nError: {e}")
                 target.state = 'failed'
                 target.source_states[source_id] = 'failed'
-            except:
+            except BaseException as e:
+                # As broad as the bare except it replaces: a worker told to
+                # stop in the middle of a step leaves it marked failed rather
+                # than running for good
                 import traceback
-                log("\nError: the step did not finish\n", traceback.format_exc())
+
+                if processing.source_failure(e):
+                    # The same kind of failure, in the words of whatever
+                    # library met it first: a socket that timed out, a service
+                    # that refused, an answer that would not parse. A source
+                    # that did not think to catch it says no less about the
+                    # archive than one that did, so it is reported the same
+                    # way. The worker keeps the traceback for whoever is
+                    # reading the console; the log gets the reason.
+                    traceback.print_exc()
+                    log(f"\nError: {processing.failure_message(e)}")
+                else:
+                    # Nothing that an archive does explains this one, so the
+                    # whole of it goes into the log
+                    log("\nError: the step did not finish\n",
+                        traceback.format_exc())
+
                 target.state = 'failed'
                 target.source_states[source_id] = 'failed'
 

@@ -434,6 +434,88 @@ class SourceError(RuntimeError):
     """
 
 
+# The same failure told in a library's words rather than a source's own.
+#
+# A source that has written its own SourceError says why it could not get its
+# data; one that has not still fails for the same reasons, and what escapes it
+# is whatever requests, pyvo or astropy raised. Those are archive failures too,
+# and are reported the same way - the reason on one line, no traceback - so
+# that a source need not have thought of every way a service can misbehave to
+# report the ones it did not.
+#
+# Named rather than imported: a failure is not the moment to drag lightkurve
+# and astroquery into a worker that has never touched them, and a name is
+# matched against the whole ancestry, so a base covers everything under it.
+SOURCE_FAILURE_TYPES = {
+    'pyvo.dal.exceptions.DALAccessError',    # every TAP failure there is
+    'lightkurve.search.SearchError',
+    'astroquery.exceptions.RemoteServiceError',
+    'astroquery.exceptions.TableParseError',
+    'astropy.io.ascii.core.InconsistentTableError',
+    'astropy.io.votable.exceptions.VOWarning',   # every E and W it can raise
+    'astropy.io.fits.verify.VerifyError',
+    'lxml.etree.LxmlError',                      # not one of ET's own
+}
+
+# A file this code went looking for and did not find is a fault of its own,
+# whatever the reason the archive gave; the rest of OSError is the network -
+# everything requests raises descends from it, as do urllib, the socket
+# timeouts, a gzip that will not unpack and a FITS that stops halfway.
+LOCAL_OS_ERRORS = (FileNotFoundError, PermissionError, IsADirectoryError,
+                   NotADirectoryError, FileExistsError)
+
+# How much of one to keep. A refused TAP query can answer with an entire XML
+# document explaining itself, and the log wants a line.
+FAILURE_MESSAGE_CHARS = 400
+
+
+def source_failure(exc):
+    """Whether an exception carries its own explanation.
+
+    True where the reason is the whole of the story - an archive that could
+    not be reached or would not answer sensibly, and the guards this code
+    raises in so many words. False for the failures nobody wrote down: a
+    KeyError, a TypeError, the ones that need a stack trace to make sense of.
+    """
+    import http.client
+    import json
+    import xml.etree.ElementTree as ET
+
+    if isinstance(exc, LOCAL_OS_ERRORS):
+        return False
+
+    # Nothing here raises a RuntimeError by accident. Every one of them is a
+    # written sentence - a source told to run before it had coordinates, a
+    # name that would not resolve, a download the archive refused - and a
+    # stack trace adds nothing to a sentence. The console keeps the trace
+    # regardless, for the times it turns out to have come from a library.
+    if isinstance(exc, RuntimeError):
+        return True
+
+    # lxml's XMLSyntaxError is one of ET's ParseErrors, so both are covered
+    if isinstance(exc, (OSError, http.client.HTTPException,
+                        json.JSONDecodeError, ET.ParseError)):
+        return True
+
+    return any(f"{cls.__module__}.{cls.__qualname__}" in SOURCE_FAILURE_TYPES
+               for cls in type(exc).__mro__)
+
+
+def failure_message(exc):
+    """A failure as one line, named by what raised it.
+
+    Not named where the name says nothing: a plain RuntimeError is this code
+    speaking, and its message is already a sentence, where a ReadTimeout or a
+    DALServiceError is the class saying which way the archive went wrong.
+    """
+    text = ' '.join(str(exc).split()) or 'no reason given'
+
+    if len(text) > FAILURE_MESSAGE_CHARS:
+        text = text[:FAILURE_MESSAGE_CHARS] + '...'
+
+    return text if type(exc) is RuntimeError else f"{type(exc).__name__}: {text}"
+
+
 # How long any one request to IRSA may take. Their TAP service answers a cone
 # search in seconds when it answers at all, so this is long enough to be no
 # constraint on a working service and short enough to give up on a dead one.

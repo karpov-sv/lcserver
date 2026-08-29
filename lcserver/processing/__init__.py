@@ -91,6 +91,8 @@ astroquery_query.AstroQuery.from_cache = lambda self, cache_location, cache_time
 # Import all utilities
 from .utils import (
     SourceError,
+    source_failure,
+    failure_message,
     parse_votable_lenient,
     cleanup_paths,
     print_to_file,
