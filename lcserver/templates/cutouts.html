@@ -43,12 +43,15 @@
      visibility: hidden;
    }
 
+   /* The status stays on the frame for its whole life, with only its lines
+      hidden once loaded - so it must never take the clicks meant for the image */
    .cutout-status {
      position: absolute;
      inset: 0;
      display: flex;
      align-items: center;
      justify-content: center;
+     pointer-events: none;
    }
 
    /* One line of the status per state of the frame around it */
