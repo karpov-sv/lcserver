@@ -3,7 +3,10 @@
 
 <script language="javascript">
 
- popupImage = function(event, url, title, ok, extraClass, extraKwargs)
+ // The dialog may be given the whole set of images this one belongs to, as a
+ // list of {url, title} with the index of the one clicked, and then gets a
+ // pair of buttons that step through them without leaving it
+ popupImage = function(event, url, title, ok, extraClass, extraKwargs, siblings, index)
  {
    // Fix for Safari CMD-click handled by onclick()
    if(event.metaKey)
@@ -12,8 +15,12 @@
    extraClass = extraClass || "";
    extraKwargs = extraKwargs || {};
 
+   // Nothing to step through unless there is more than this one image
+   siblings = (siblings && siblings.length > 1) ? siblings : null;
+   var current = index || 0;
+
    var body = $("<div/>", {class: "text-center"});
-   var params = {class:"img-fluid center-block " + extraClass, src:url};
+   var params = {class:"img-fluid center-block popup-image " + extraClass, src:url};
 
    if(extraKwargs){
      params = Object.assign({}, params, extraKwargs);
@@ -29,17 +36,43 @@
      onEscape: function() {},
    };
 
-   if(ok){
-     params.buttons = {
-       success: {
-         label: "Ok",
-         className: "btn-primary",
-         callback: function() {}
-       }
+   var buttons = {};
+
+   if(siblings){
+     // The image itself stays in place, so that whatever was attached to it
+     // still is - only what it shows changes
+     var show = function(idx){
+       current = (idx + siblings.length) % siblings.length;
+
+       dialog.find('.popup-image').attr('src', siblings[current].url);
+       dialog.find('.modal-title').text(siblings[current].title);
+     };
+
+     buttons.prev = {
+       label: "◁ Prev",
+       className: "btn-secondary",
+       callback: function() { show(current - 1); return false; }
+     };
+
+     buttons.next = {
+       label: "Next ▷",
+       className: "btn-secondary me-auto",
+       callback: function() { show(current + 1); return false; }
      };
    }
 
-   bootbox.dialog(params);
+   if(ok){
+     buttons.success = {
+       label: "Ok",
+       className: "btn-primary",
+       callback: function() {}
+     };
+   }
+
+   if(Object.keys(buttons).length)
+     params.buttons = buttons;
+
+   var dialog = bootbox.dialog(params);
 
    // FIXME: prevent updating already created overlays?..
    if(typeof overlay_stdview_images === 'function')

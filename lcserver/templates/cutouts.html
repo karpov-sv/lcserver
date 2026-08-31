@@ -170,6 +170,20 @@
      });
    });
 
+   // The popup opens on the cutout clicked, and steps from there through the
+   // ones of the same position that have an image in them, in the order the
+   // grid shows them
+   popupCutout = function(event, img){
+     var images = $(img).closest('.cutout-grid').find('.cutout-frame.loaded .cutout-image');
+
+     var siblings = images.map(function(){
+       return {url: $(this).data('large'), title: $(this).data('title')};
+     }).get();
+
+     return popupImage(event, $(img).data('large'), $(img).data('title'), true,
+                       '', {}, siblings, images.index(img));
+   };
+
    // Each cutout says which of the three it is - still on its way, an image,
    // or a position the survey has nothing at
    $(function(){
@@ -278,8 +292,9 @@
                 <span class="status-failed">Not available</span>
               </div>
               <img src="{{ cutout.url }}" class="cutout-image" loading="lazy" alt="{{ cutout.name }}"
+                   data-large="{{ cutout.url_large }}" data-title="{{ cutout.name }} - {{ target.query }}"
                    {% if cutout.cors %}crossorigin="anonymous"{% endif %}
-                   onclick="popupImage(event, '{{ cutout.url_large }}', '{{ cutout.name }} - {{ target.query }}', true)"/>
+                   onclick="return popupCutout(event, this)"/>
             </div>
           </div>
         {% endfor %}
