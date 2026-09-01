@@ -235,23 +235,23 @@ class Command(BaseCommand):
         config = target.config
         config['target_name'] = target.name
 
-        # Setup logging function
+        # The source's own log file, which has to end up holding exactly what
+        # a Celery run would have written there. This command's scaffolding -
+        # what it is about to run, and what it found afterwards - goes to the
+        # terminal alone, or the web UI serves it back as if the source had
+        # said it.
         logname = os.path.join(basepath, f'{step}.log')
 
-        if verbose:
-            # Print to both stdout and file
-            def log(*args, clear=False, **kwargs):
-                message = ' '.join(str(arg) for arg in args)
-                self.stdout.write(message)
-                processing.print_to_file(message, logname=logname, clear=clear)
-        else:
-            # Just to file
-            log = partial(processing.print_to_file, logname=logname)
+        # print_to_file echoes to the terminal itself, so verbosity is its
+        # own affair - writing to stdout here as well printed every line of
+        # the source's log twice
+        log = partial(processing.print_to_file, logname=logname, echo=verbose)
 
         log(clear=True)
-        log(f"Starting step: {step}")
-        log(f"Target: {target.name}")
-        log(f"Path: {basepath}\n")
+
+        self.stdout.write(f"Starting step: {step}")
+        self.stdout.write(f"Target: {target.name}")
+        self.stdout.write(f"Path: {basepath}\n")
 
         # Debug mode: no exception handling
         if debug:
@@ -267,21 +267,11 @@ class Command(BaseCommand):
             else:
                 raise ValueError(f"Unknown step: {step}")
 
-            log(f"\nStep '{step}' completed successfully")
-
             # Save in debug mode too
             celery_tasks.fix_config(config)
             target.save()
 
-            # Show output files
-            if os.path.exists(basepath):
-                files = os.listdir(basepath)
-                if files:
-                    log(f"\nGenerated files in {basepath}:")
-                    for f in sorted(files):
-                        fpath = os.path.join(basepath, f)
-                        size = os.path.getsize(fpath)
-                        log(f"  {f} ({size} bytes)")
+            self._show_output_files(basepath)
 
             return
 
@@ -299,8 +289,6 @@ class Command(BaseCommand):
             else:
                 raise ValueError(f"Unknown step: {step}")
 
-            log(f"\nStep '{step}' completed successfully")
-
         except Exception as e:
             import traceback
             error_msg = traceback.format_exc()
@@ -313,12 +301,20 @@ class Command(BaseCommand):
             celery_tasks.fix_config(config)
             target.save()
 
-            # Show output files
-            if os.path.exists(basepath):
-                files = os.listdir(basepath)
-                if files:
-                    log(f"\nGenerated files in {basepath}:")
-                    for f in sorted(files):
-                        fpath = os.path.join(basepath, f)
-                        size = os.path.getsize(fpath)
-                        log(f"  {f} ({size} bytes)")
+            self._show_output_files(basepath)
+
+    def _show_output_files(self, basepath):
+        """What the step left behind, for the terminal only."""
+        if not os.path.exists(basepath):
+            return
+
+        files = sorted(os.listdir(basepath))
+
+        if not files:
+            return
+
+        self.stdout.write(f"\nGenerated files in {basepath}:")
+
+        for f in files:
+            size = os.path.getsize(os.path.join(basepath, f))
+            self.stdout.write(f"  {f} ({size} bytes)")

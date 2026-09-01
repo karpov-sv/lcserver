@@ -801,14 +801,20 @@ def cleanup_paths(paths, basepath=None):
                     os.unlink(fullpath)
 
 
-def print_to_file(*args, clear=False, logname='out.log', **kwargs):
-    """Print to both stdout and a log file."""
+def print_to_file(*args, clear=False, logname='out.log', echo=True, **kwargs):
+    """Print to a log file, and to stdout unless asked to keep quiet.
+
+    A worker echoes, so that its console carries what it is doing; a command
+    run without --verbose wants the file alone.
+    """
     if clear and os.path.exists(logname):
-        print('Clearing', logname)
+        if echo:
+            print('Clearing', logname)
         os.unlink(logname)
 
     if len(args) or len(kwargs):
-        print(*args, **kwargs)
+        if echo:
+            print(*args, **kwargs)
         with open(logname, 'a+') as lfd:
             print(file=lfd, *args, **kwargs)
 
