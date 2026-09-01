@@ -896,18 +896,68 @@ def rc_to_g(mag, g_minus_r):
     return mag + 0.0971 + 1.1837*g_minus_r
 
 
-ROTSE_TO_V_FORMULA = 'V = m_ROTSE + (B - V)/1.875'
+ROTSE_TO_V_FORMULA = 'V = m_ROTSE - 0.468 + (B - V)/1.875'
+
+# The constant the delivered catalogue carries and its definition does not.
+# Measured against the Landolt-standardised Gaia synthetic photometry
+# (I/360/syntphot, VFlag = BFlag = 1) over twelve NSVS fields around the sky,
+# some four thousand stars at 10 < V < 14.5 and 0 < B - V < 1.6: the survey
+# reads that much fainter than its own definition says it should, at every
+# brightness across that range. APASS DR9 gives 0.534 over the same fields, so
+# the two references agree to within the field-to-field scatter below.
+ROTSE_TO_V_ZP = 0.468
+
+# How much that zero point moves from one NSVS field to the next, which is what
+# the relative photometry being solved per field leaves behind. It cannot be
+# removed without calibrating each field in turn, so it is the floor on any V
+# derived here, and larger than the error the survey quotes for a point.
+ROTSE_TO_V_SIGMA = 0.037
 
 
 def rotse_to_v(mag, b_minus_v):
     """Unfiltered ROTSE-I onto Johnson V.
 
     The NSVS magnitudes are defined against V with a colour term already in
-    them - m_ROTSE = V - (B - V)/1.875 (Wozniak et al. 2004) - so the band is
-    on the V scale for a star of zero colour and drifts from it for any other.
-    Inverted here to put it back on V.
+    them - m_ROTSE = V - (B - V)/1.875 (Wozniak et al. 2004) - so the band
+    would be on the V scale for a star of zero colour and drift from it for any
+    other. Inverted here to put it back on V.
+
+    The definition is not the whole of it. The catalogue as delivered sits
+    ROTSE_TO_V_ZP fainter than that relation predicts, which left the converted
+    V half a magnitude below what every other survey measured for the same
+    star; the offset is taken out here. The colour term itself is the survey's
+    and is right - fitting it freely against the same stars returns -0.533,
+    and holding it at that value rather than fitting it *narrows* the spread of
+    the zero point between fields, from 0.060 to 0.037.
     """
-    return mag + b_minus_v/1.875
+    return mag - ROTSE_TO_V_ZP + b_minus_v/1.875
+
+
+ROTSE_TO_R_FORMULA = 'R = m_ROTSE - 0.502'
+
+# What separates the ROTSE-I band from Cousins R, measured the same way as the
+# V zero point above and over the same stars: m_ROTSE - R = 0.502 - 0.042*(B-V),
+# and that colour term is consistent with zero - it moves the answer by 0.07
+# across the whole colour range, against a 0.15 scatter per star. So the survey
+# is measuring R and is simply half a magnitude off it, which is why this
+# conversion needs no colour at all where the one onto V needs (B - V).
+ROTSE_TO_R_ZP = 0.502
+
+# The same field-to-field spread that ROTSE_TO_V_SIGMA carries, for R
+ROTSE_TO_R_SIGMA = 0.038
+
+
+def rotse_to_r(mag):
+    """Unfiltered ROTSE-I onto Cousins R.
+
+    The published band is what ROTSE-I actually measured - 450 to 1000 nm,
+    unfiltered - and against Landolt R it needs no colour term, only its zero
+    point. Taking the magnitudes as R without this is what made the NSVS point
+    of a star sit redward of every other survey's: the raw number is half a
+    magnitude fainter than R, so V - R came out negative for stars that have no
+    business being that blue.
+    """
+    return mag - ROTSE_TO_R_ZP
 
 
 GAIA_G_TO_G_FORMULA = ('g = G - (0.2199 - 0.6365*x - 0.1548*x^2 + 0.0064*x^3),'

@@ -28,6 +28,12 @@ from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 
+# Taken from where the light curves apply it, rather than written out again
+# here: the page is meant to say what the code does, and two copies of a
+# number are two chances to disagree
+from .processing.utils import (ROTSE_TO_V_ZP, ROTSE_TO_V_SIGMA,
+                              ROTSE_TO_R_ZP, ROTSE_TO_R_SIGMA)
+
 
 # Where a relation is used, and so how much it is worth trusting
 GROUPS = OrderedDict([
@@ -139,14 +145,36 @@ CONVERSIONS = [
              "its relation is the better determined.",
     ),
     conversion(
+        'rotse_to_r', 'Unfiltered ROTSE-I to Cousins R', 'lcserver', 'm_ROTSE', 'R',
+        offset=-ROTSE_TO_R_ZP,
+        reference='Measured against Gaia synthetic photometry (I/360/syntphot)',
+        url='https://vizier.cds.unistra.fr/viz-bin/VizieR-3?-source=I/360/syntphot',
+        used_by='NSVS, alongside the conversion onto V',
+        sigma=ROTSE_TO_R_SIGMA,
+        note="ROTSE-I observed unfiltered from 450 to 1000 nm, and against Landolt "
+             "R that needs no colour term at all: measured over twelve NSVS fields, "
+             "m_ROTSE - R = 0.502 - 0.042*(B - V), and the colour term there moves "
+             "the answer by 0.07 mag across the whole range against a 0.15 scatter "
+             "per star. So the survey is measuring R and is simply half a magnitude "
+             "off its zero point.",
+    ),
+    conversion(
         'rotse_to_v', 'Unfiltered ROTSE-I to Johnson V', 'lcserver', 'm_ROTSE', 'V',
-        terms=[('B - V', [1/1.875, 0.0])],
-        reference='Wozniak et al. (2004), AJ 127, 2436',
+        terms=[('B - V', [1/1.875, 0.0])], offset=-ROTSE_TO_V_ZP,
+        reference='Wozniak et al. (2004), AJ 127, 2436, for the colour term',
         url='https://arxiv.org/abs/astro-ph/0401217',
         used_by='NSVS, which is then taken through V to g',
+        sigma=ROTSE_TO_V_SIGMA,
         note="The NSVS magnitudes are defined against V with a colour term already "
-             "in them, m_ROTSE = V - (B - V)/1.875, so the band is on the V scale "
-             "for a star of zero colour and drifts from it for any other.",
+             "in them, m_ROTSE = V - (B - V)/1.875, so the band would be on the V "
+             "scale for a star of zero colour and drifts from it for any other. "
+             "The delivered catalogue does not sit where that says it should: "
+             "measured against Gaia synthetic photometry on the Landolt system, "
+             "over twelve NSVS fields, it reads 0.468 mag fainter, and that is the "
+             "offset here. The colour term is the survey's own and is confirmed by "
+             "the same stars; the scatter quoted is how far the offset moves from "
+             "one NSVS field to the next, the survey solving its relative "
+             "photometry a field at a time.",
     ),
     conversion(
         'asas_g_to_ps1_g', 'ASAS-SN g to Pan-STARRS g', 'lcserver', 'g (SDSS)', 'g (PS1)',

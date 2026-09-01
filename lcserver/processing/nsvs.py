@@ -29,8 +29,10 @@ from ..surveys import survey_source, get_output_files
 from .utils import (SourceError, cleanup_paths, cached_votable_query,
                     quality_field, quality_level, log_bands, log_conversion,
                     plot_with_errors,
-                    assumed_color, rotse_to_v, v_to_g,
-                    ROTSE_TO_V_FORMULA, V_TO_G_FORMULA,
+                    assumed_color, rotse_to_v, rotse_to_r, v_to_g,
+                    ROTSE_TO_V_FORMULA, ROTSE_TO_V_ZP, ROTSE_TO_V_SIGMA,
+                    ROTSE_TO_R_FORMULA, ROTSE_TO_R_ZP, ROTSE_TO_R_SIGMA,
+                    V_TO_G_FORMULA,
                     QUALITY_STANDARD, QUALITY_RELAXED, QUALITY_PUBLISHED)
 
 
@@ -253,9 +255,14 @@ def _frame_times(log):
     # Lightcurve metadata
     votable_file='nsvs.vot',
     lc_bands=[
-        surveys.band('R', 'mag', 'magerr', surveys.BAND_NATIVE,
+        surveys.band('ROTSE', 'mag', 'magerr', surveys.BAND_NATIVE,
                      filter_column='filter', filter_value='R', color='#e377c2',
-                     note='unfiltered ROTSE-I, closest to R'),
+                     note='unfiltered ROTSE-I, as reported - an instrumental '
+                          'band, sitting half a magnitude below Cousins R'),
+        surveys.band('R (conv.)', 'mag_R', 'magerr', surveys.BAND_DERIVED,
+                     filter_column='filter', filter_value='R', color='#f2a0c8',
+                     note='the same band on Cousins R, which takes only its '
+                          'zero point and no colour at all'),
         surveys.band('V (conv.)', 'mag_V', 'magerr', surveys.BAND_DERIVED,
                      filter_column='filter', filter_value='R', color='#f7b6d2',
                      note="the survey's own colour term undone using an "
@@ -427,7 +434,8 @@ def target_nsvs(config, basepath=None, verbose=True, show=False):
     log_conversion(
         log, 'NSVS',
         'no conversion applied - the band is published as measured',
-        {'colour term': ('none', 'unfiltered ROTSE-I, 450-1000nm, closest to R'),
+        {'colour term': ('none', 'unfiltered ROTSE-I, 450-1000nm - the band '
+                          'Cousins R is nearest to, on a zero point of its own'),
          'magnitudes': 'stored as millimagnitudes, scaled here'},
         npoints=len(nsvs),
     )
@@ -439,23 +447,46 @@ def target_nsvs(config, basepath=None, verbose=True, show=False):
     B_minus_V, B_minus_V_origin = assumed_color(config, 'B_minus_V')
     g_minus_r, g_minus_r_origin = assumed_color(config, 'g_minus_r')
 
+    nsvs['mag_R'] = rotse_to_r(np.asarray(nsvs['mag'], dtype=float))
     nsvs['mag_V'] = rotse_to_v(np.asarray(nsvs['mag'], dtype=float), B_minus_V)
     nsvs['mag_g'] = v_to_g(nsvs['mag_V'], g_minus_r)
+
+    log_conversion(
+        log, 'NSVS',
+        ROTSE_TO_R_FORMULA,
+        {'zero point': (f"{-ROTSE_TO_R_ZP:+.3f}",
+                        'measured against Gaia synthetic photometry on the '
+                        'Landolt system, over twelve NSVS fields'),
+         'colour term': ('none',
+                         'the published band is Cousins R to within 0.04 mag '
+                         'per unit of (B - V), so only the zero point differs'),
+         'scatter between fields': ROTSE_TO_R_SIGMA},
+        npoints=len(nsvs),
+        note='taking the published magnitudes as R without this is what put '
+             'the NSVS point of a star redward of every other survey',
+    )
 
     log_conversion(
         log, 'NSVS',
         ROTSE_TO_V_FORMULA + ',  then  ' + V_TO_G_FORMULA,
         {'(B - V)': (B_minus_V, B_minus_V_origin),
          '(g - r)': (g_minus_r, g_minus_r_origin),
-         'definition': ('m_ROTSE = V - (B - V)/1.875',
-                        'Wozniak et al. 2004, how the survey set its zero point')},
+         'colour term': ('m_ROTSE = V - (B - V)/1.875',
+                         'Wozniak et al. 2004, how the survey defined its band'),
+         'zero point': (f"{-ROTSE_TO_V_ZP:+.3f}",
+                        'measured against Gaia synthetic photometry on the '
+                        'Landolt system - the delivered catalogue reads that '
+                        'much fainter than the definition alone would give'),
+         'scatter between fields': ROTSE_TO_V_SIGMA},
         npoints=len(nsvs),
         note='both colours are assumed constant; the native magnitudes are kept',
     )
 
     log_bands(log, 'NSVS', [
-        {'label': 'R', 'kind': 'native', 'npoints': len(nsvs),
-         'note': 'unfiltered, as reported'},
+        {'label': 'ROTSE', 'kind': 'native', 'npoints': len(nsvs),
+         'note': 'unfiltered and instrumental, as reported'},
+        {'label': 'R (conv.)', 'kind': 'derived', 'npoints': len(nsvs),
+         'note': 'its zero point taken off, putting it on Cousins R'},
         {'label': 'V (conv.)', 'kind': 'derived', 'npoints': len(nsvs),
          'note': "the survey's own colour term undone, putting it on V"},
         {'label': 'g (conv.)', 'kind': 'derived', 'npoints': len(nsvs),
@@ -472,7 +503,7 @@ def target_nsvs(config, basepath=None, verbose=True, show=False):
 
         ax.invert_yaxis()
         ax.grid(alpha=0.2)
-        ax.set_ylabel('R (unfiltered)')
+        ax.set_ylabel('m_ROTSE (unfiltered)')
         ax.set_xlabel('Time')
         ax.set_title(f"{config['target_name']} - NSVS")
 
