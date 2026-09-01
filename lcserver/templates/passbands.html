@@ -9,6 +9,7 @@
 
   {% load static %}
   <script src="{% static 'plot_theme.js' %}"></script>
+  <script src="{% static 'plot_resize.js' %}"></script>
 
   <style>
    /* A formula wraps between its terms and never inside one - hence a span
@@ -118,13 +119,16 @@
         Profile Service</a>, each curve normalised to its own peak
       </span>
     </div>
-    <div class="card-body">
+    <div class="card-body pb-0">
       <div class="text-body-secondary text-center py-5" id="passband-status">
         <div class="spinner-border spinner-border-sm" role="status"></div>
         Loading the transmission curves
       </div>
 
-      <div id="passband-plot" style="width: 100%; height: 420px; display: none;"></div>
+      <div id="passband-box" class="plotly-resizable" style="height: 420px; display: none;">
+        <div id="passband-plot" class="plotly-chart"></div>
+        <div class="plot-resize-handle" role="separator" title="Drag to resize the plot"></div>
+      </div>
     </div>
   </div>
 
@@ -381,13 +385,16 @@
        passbands = data;
 
        $('#passband-status').hide();
-       $('#passband-plot').show();
+       $('#passband-box').show();
 
        redraw();
      };
 
      $('#passband-stack').on('change', redraw);
      onThemeChange(function(){ plotlyRetheme('passband-plot'); });
+
+     // The plot may be dragged taller or shorter by its bottom edge
+     plotlyResizable('passband-plot');
 
      $.getJSON("{% url 'passbands_data' %}")
       .done(function(data){

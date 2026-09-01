@@ -9,6 +9,7 @@
 
 {% load static %}
 <script src="{% static 'plot_theme.js' %}"></script>
+<script src="{% static 'plot_resize.js' %}"></script>
 
 <style>
 .control-panel {
@@ -172,7 +173,10 @@
   </div>
 </div>
 
-<div id="plotly-container" style="width: 100%; height: 620px; display: none;"></div>
+<div id="plotly-box" class="plotly-resizable mb-4" style="height: 620px; display: none;">
+  <div id="plotly-container" class="plotly-chart"></div>
+  <div class="plot-resize-handle" role="separator" title="Drag to resize the plot"></div>
+</div>
 
 <script>
  let spectra = [];
@@ -573,7 +577,7 @@
         }));
 
          document.getElementById('control-panel').style.display = 'block';
-         document.getElementById('plotly-container').style.display = 'block';
+         document.getElementById('plotly-box').style.display = 'block';
 
          buildControls();
          redraw();
@@ -581,6 +585,9 @@
          // The plot keeps to the reader's theme if it changes with the page
          // open, without losing the zoom or anything else set since
          onThemeChange(() => plotlyRetheme('plotly-container'));
+
+         // The plot may be dragged taller or shorter by its bottom edge
+         plotlyResizable('plotly-container');
      })
      .catch(err => {
          document.getElementById('loading-indicator').style.display = 'none';

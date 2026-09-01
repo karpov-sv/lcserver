@@ -12,6 +12,7 @@
 
 {% load static %}
 <script src="{% static 'plot_theme.js' %}"></script>
+<script src="{% static 'plot_resize.js' %}"></script>
 
 <style>
 .control-panel {
@@ -201,7 +202,10 @@
 </div>
 
 <!-- Plot Container -->
-<div id="plotly-container" style="width: 100%; height: 600px; display: none;"></div>
+<div id="plotly-box" class="plotly-resizable" style="height: 600px; display: none;">
+  <div id="plotly-container" class="plotly-chart"></div>
+  <div class="plot-resize-handle" role="separator" title="Drag to resize the plot"></div>
+</div>
 
 <!-- Phase Folding Panel -->
 <div class="control-panel mt-3" id="phase-panel" style="display: none;">
@@ -296,7 +300,10 @@
   </div>
 
   <!-- Periodogram, shown once a fit has been run -->
-  <div id="periodogram-container" style="width: 100%; height: 300px; display: none;" class="mt-2"></div>
+  <div id="periodogram-box" class="plotly-resizable mt-2" style="height: 300px; display: none;">
+    <div id="periodogram-container" class="plotly-chart"></div>
+    <div class="plot-resize-handle" role="separator" title="Drag to resize the plot"></div>
+  </div>
 
   <div id="peaks-container" class="mt-2" style="display: none;">
     <small class="text-muted">Highest peaks:</small>
@@ -1096,13 +1103,13 @@ function plotPeriodogram(data) {
     const pg = data.periodogram;
 
     if (!pg || !pg.periods || !pg.periods.length) {
-        document.getElementById('periodogram-container').style.display = 'none';
+        document.getElementById('periodogram-box').style.display = 'none';
         return;
     }
 
     periodogramData = pg;
 
-    const container = document.getElementById('periodogram-container');
+    const container = document.getElementById('periodogram-box');
     container.style.display = 'block';
 
     const top = markTop(pg);
@@ -1601,7 +1608,7 @@ function loadLightcurveData() {
                 // Show controls, plot container, and initialize
                 document.getElementById('control-panel').style.display = 'block';
                 document.getElementById('phase-panel').style.display = 'block';
-                document.getElementById('plotly-container').style.display = 'block';
+                document.getElementById('plotly-box').style.display = 'block';
 
                 // Restore period and epoch from URL parameters if present
                 const urlPeriod = getUrlParameter('period');
@@ -1667,6 +1674,10 @@ document.addEventListener('DOMContentLoaded', function() {
         plotlyRetheme('plotly-container');
         plotlyRetheme('periodogram-container');
     });
+
+    // Both plots may be dragged taller or shorter by their bottom edge
+    plotlyResizable('plotly-container');
+    plotlyResizable('periodogram-container');
 });
 </script>
 
