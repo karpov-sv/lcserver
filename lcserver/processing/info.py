@@ -143,6 +143,18 @@ PS1_COLOURS = [('g', '#2ca02c'), ('r', '#d62728'), ('i', '#9467bd'),
                ('z', '#8c564b'), ('y', '#7f7f7f')]
 GAIA_COLOURS = [('G', '#333333'), ('BP', '#1f77b4'), ('RP', '#d62728')]
 
+# How much of the PSF has to fall on unmasked pixels before the flux fitted to
+# it means anything. A star brighter than Pan-STARRS saturates at has its core
+# masked away, and what is then fitted to the wings that survive scatters by
+# whole magnitudes while still being quoted to a thousandth of one - so this
+# takes out measurements that would otherwise arrive as the most precise on the
+# plot and be believed.
+PS1_QF_PERFECT = 0.95
+
+# Where Pan-STARRS saturates, near enough, for the log to say why a bright star
+# has nothing left after that cut
+PS1_SATURATION_MAG = 13.5
+
 
 def _plot_epoch_photometry(table, colours, path, title, show=False):
     """A look at the epoch photometry this step picked up along the way.
@@ -1411,8 +1423,32 @@ def target_info(config, basepath=None, verbose=True, show=False):
     # Apply quality cut
     ps1 = None
     if ps1_raw and len(ps1_raw):
-        ps1 = ps1_raw[ps1_raw['psfQfPerfect'] > 0.95]  # Quality cut
-        log(f"{len(ps1)} of {len(ps1_raw)} points after quality cut")
+        qf = np.asarray(ps1_raw['psfQfPerfect'], dtype=float)
+        ps1 = ps1_raw[qf > PS1_QF_PERFECT]
+
+        log(f"{len(ps1)} of {len(ps1_raw)} detections have more than "
+            f"{100*PS1_QF_PERFECT:.0f}% of the PSF on unmasked pixels")
+
+        # Told what it was, and what that usually means, rather than left as a
+        # count of nothing: the archive did answer, and it is worth knowing
+        # whether what it sent was rejected for being the wrong star's worth of
+        # pixels or for being too bright to have any of its own
+        if not len(ps1):
+            mag = np.nanmedian(
+                -2.5*np.log10(np.asarray(ps1_raw['psfFlux'], dtype=float)) + 8.90)
+
+            log(f"The median detection has {100*np.nanmedian(qf):.1f}%")
+
+            if np.isfinite(mag) and mag < PS1_SATURATION_MAG:
+                # The magnitude is fitted to the wings that were left, so it is
+                # not to be trusted either - only to be pointed at
+                log(f"What flux is left puts the star near {mag:.1f} mag, "
+                    f"brighter than the {PS1_SATURATION_MAG:.1f} or so "
+                    "Pan-STARRS saturates at: its core is masked, and none of "
+                    "these is a measurement of the star")
+            else:
+                log("The star's light is landing on masked pixels - a bad "
+                    "column, a chip edge, or a brighter neighbour")
 
     if ps1 and len(ps1):
         ps1.sort('obsTime')
@@ -1513,6 +1549,8 @@ def target_info(config, basepath=None, verbose=True, show=False):
             show=show)
         log("Pan-STARRS DR2 warp lightcurve written to file:ps1.png")
 
+    elif ps1_raw and len(ps1_raw):
+        log("Warning: No Pan-STARRS DR2 warp photometry survives the quality cut")
     else:
         log("Warning: No Pan-STARRS DR2 warp data found")
 
