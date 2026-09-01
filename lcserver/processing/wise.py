@@ -19,7 +19,9 @@ from stdpipe import plots
 from .. import surveys
 from ..surveys import survey_source, get_output_files
 from .utils import (SourceError, cleanup_paths, cached_votable_query,
-                    irsa_client, log_bands, log_conversion, plot_with_errors)
+                    irsa_client, log_bands, log_conversion, plot_with_errors,
+                    quality_field, quality_level,
+                    QUALITY_STANDARD, QUALITY_RELAXED, QUALITY_PUBLISHED)
 
 
 # The two IRSA tables that between them cover the whole mission, and the bands
@@ -49,15 +51,30 @@ WISE_PHASES = [
 # cone would start collecting the neighbours rather than the star.
 WISE_SR = 3.0
 
+# The cc_flags characters that condemn a measurement. Their case is their
+# meaning: uppercase says the detection is believed to be a spurious artifact -
+# a diffraction spike, a persistence latent, the halo of a bright neighbour, an
+# optical ghost - while the same letter in lowercase says only that a real
+# source sits where an artifact could be contaminating its photometry.
+WISE_SPURIOUS_FLAGS = 'DPHO'
+
+# What each level of filtering came to, for the log to say
+WISE_QUALITY_MEANS = {
+    QUALITY_STANDARD: 'bad frames, moonlit ones, and detections WISE '
+                      'believes are artifacts',
+    QUALITY_RELAXED: 'bad frames and moonlit ones',
+    QUALITY_PUBLISHED: 'nothing - every exposure as measured',
+}
+
 
 def _flag_char(column, i):
     """The i-th character of a per-band flag string, for every row.
 
-    The flags carry one character per band, but only as many as the table has:
-    four for the cryogenic survey, two for the reactivation. Reading them per
-    band rather than comparing the whole string keeps W1 when it is only W2
-    that is contaminated - and comparing against '0000' would reject every
-    NEOWISE row outright, its flags being two characters long.
+    The flags carry one character per band, but not always as many as the
+    table has bands: NEOWISE writes four characters of cc_flags and only two
+    of moon_masked, for the two bands it still measures. Reading them per band
+    rather than comparing the whole string keeps W1 when it is only W2 that is
+    flagged, and survives either length.
     """
     values = np.asarray(column).astype(str)
     return np.array([v[i] if len(v) > i else '0' for v in values])
@@ -88,7 +105,12 @@ def _frame_is_usable(table):
             'label': 'Search radius, arcsec',
             'initial': WISE_SR,
             'required': False,
-        }
+        },
+        'wise_quality': quality_field({
+            QUALITY_STANDARD: 'Drop what WISE believes to be artifacts',
+            QUALITY_RELAXED: 'Drop only bad frames and moonlit ones',
+            QUALITY_PUBLISHED: 'None - every exposure as measured',
+        }),
     },
     help_text='WISE and NEOWISE infrared epoch photometry',
     order=70,
@@ -146,6 +168,8 @@ def target_wise(config, basepath=None, verbose=True, show=False):
     wise_sr = config.get('wise_sr', WISE_SR)
     coords = SkyCoord(ra, dec, unit='deg')
 
+    quality = quality_level(config, 'wise')
+
     rows = []
     failures = []
 
@@ -188,9 +212,14 @@ def target_wise(config, basepath=None, verbose=True, show=False):
             continue
 
         mjd = np.asarray(data['mjd'], dtype=float)
-        frame = _frame_is_usable(data) & np.isfinite(mjd)
+        frame = np.isfinite(mjd)
 
-        log(f"{len(data)} exposures, {int(np.sum(~frame))} dropped on frame quality")
+        if quality != QUALITY_PUBLISHED:
+            frame &= _frame_is_usable(data)
+            log(f"{len(data)} exposures, "
+                f"{int(np.sum(~frame))} dropped on frame quality")
+        else:
+            log(f"{len(data)} exposures, none judged on frame quality")
 
         for i, band in enumerate(phase['bands']):
             magcol = phase['mag'].format(b=band.lower())
@@ -205,13 +234,28 @@ def target_wise(config, basepath=None, verbose=True, show=False):
             # A missing uncertainty means an upper limit rather than a detection
             idx = frame & np.isfinite(mag) & np.isfinite(err)
 
-            # Contamination and moon glare are flagged per band
-            if 'cc_flags' in data.colnames:
-                idx &= _flag_char(data['cc_flags'], i) == '0'
-            if 'moon_masked' in data.colnames:
+            # Artifacts and moon glare are flagged per band. cc_flags is read
+            # only for what it condemns outright, as in the multiepoch table it
+            # is the source-level flag copied onto every row - it is the same on
+            # all 23 epochs of a star as on all 105 of another - so it cannot
+            # tell a bad epoch from a good one, only remove a whole band. A
+            # bright star raises its own halo and carries a lowercase 'h'
+            # forever; cutting on that costs its entire W1 and W2 light curve.
+            spurious = np.zeros(len(data), dtype=bool)
+
+            if quality == QUALITY_STANDARD and 'cc_flags' in data.colnames:
+                spurious = np.isin(_flag_char(data['cc_flags'], i),
+                                   list(WISE_SPURIOUS_FLAGS))
+                idx &= ~spurious
+            if quality != QUALITY_PUBLISHED and 'moon_masked' in data.colnames:
                 idx &= _flag_char(data['moon_masked'], i) == '0'
 
-            log(f"  {band}: {int(np.sum(idx))} of {int(np.sum(frame))} usable")
+            # Named, because the flag is the source's own and takes the band
+            # entire when it is set - a silent zero would look like no data
+            told = (f", {int(np.sum(spurious & frame))} believed spurious"
+                    if np.any(spurious & frame) else '')
+
+            log(f"  {band}: {int(np.sum(idx))} of {int(np.sum(frame))} usable{told}")
 
             if not np.any(idx):
                 continue
@@ -240,7 +284,8 @@ def target_wise(config, basepath=None, verbose=True, show=False):
         {'colour term': ('none', 'profile-fit magnitudes on the WISE Vega scale'),
          'phases': ('cryogenic and reactivation combined',
                     'kept apart in the phase column, as the two reductions '
-                    'differ slightly')},
+                    'differ slightly'),
+         'filtering': (quality, WISE_QUALITY_MEANS[quality])},
         npoints=len(wise),
     )
 
