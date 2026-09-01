@@ -66,13 +66,25 @@ SED_SAME_SOURCE = 0.5
 # republishes someone else's: AllWISE carries the 2MASS magnitudes of whatever
 # it matched to, which are not AllWISE measurements and would otherwise be
 # drawn twice, once here and once from 2MASS proper.
+#
+# 'epoch' is when the catalogue's photometry was taken, to the year. What is
+# drawn as one SED was measured across a quarter of a century by five surveys
+# that never saw the star at the same time, and a variable was at a different
+# brightness in each of them - a 2MASS point sits a decade before a Pan-STARRS
+# one, and neither of them is where the star is now. The dates are the surveys'
+# own observing spans, not the release years, since it is when the light was
+# collected that matters here.
 SED_CATALOGUES = [
-    {'table': 'II/335/galex_ais', 'name': 'GALEX', 'colour': '#8e44ad'},
-    {'table': 'I/360/syntphot', 'name': 'Gaia-syntphot', 'colour': '#2980b9'},
-    {'table': 'II/349/ps1', 'name': 'Pan-STARRS', 'colour': '#16a085'},
-    {'table': 'II/246/out', 'name': '2MASS', 'colour': '#d35400'},
+    {'table': 'II/335/galex_ais', 'name': 'GALEX', 'colour': '#8e44ad',
+     'epoch': '2003-2013'},
+    {'table': 'I/360/syntphot', 'name': 'Gaia-syntphot', 'colour': '#2980b9',
+     'epoch': '2014-2017'},
+    {'table': 'II/349/ps1', 'name': 'Pan-STARRS', 'colour': '#16a085',
+     'epoch': '2010-2014'},
+    {'table': 'II/246/out', 'name': '2MASS', 'colour': '#d35400',
+     'epoch': '1997-2001'},
     {'table': 'II/328/allwise', 'name': 'AllWISE', 'colour': '#922b21',
-     'filters': ('WISE:',)},
+     'filters': ('WISE:',), 'epoch': '2010-2011'},
 ]
 
 # The colours run with the wavelength, violet to red, so that a point's colour
@@ -313,6 +325,22 @@ def _one_source(table, rows, ra, dec, sr, log, name):
             f" {sr:.1f} arcsec and are left out")
 
     return rows[together], float(separation[nearest])
+
+
+def _epoch_span(entries):
+    """The years the catalogues taken between them cover, as one range.
+
+    Nothing cleverer than the first year of the earliest and the last of the
+    latest: the point is the width of it, not which survey sits where.
+    """
+    years = [int(year)
+             for entry in entries
+             for year in entry['epoch'].split('-')]
+
+    if not years:
+        return None
+
+    return f"{min(years)}-{max(years)}"
 
 
 def _points(table, entry, ra, dec, sr, log, widths):
@@ -749,7 +777,9 @@ def target_sed(config, basepath=None, verbose=True, show=False):
 
     widths = _filter_widths(basepath, log, refresh_cache)
 
-    # The named few, which is what the SED normally means here
+    # The named few, which is what the SED normally means here, each with the
+    # years it was observing in - see SED_CATALOGUES for why that is worth
+    # saying
     log("\n---- The catalogues taken ----\n")
 
     found = []
@@ -758,16 +788,22 @@ def target_sed(config, basepath=None, verbose=True, show=False):
         got = _points(table, entry, ra, dec, sr, log, widths)
 
         if got is None:
-            log(f"  {entry['name']:12s} nothing")
+            log(f"  {entry['name']:14s} {entry['epoch']:10s} nothing")
             continue
 
         rows, separation = got
 
-        log(f"  {entry['name']:12s} {len(rows):2d} band(s),"
+        log(f"  {entry['name']:14s} {entry['epoch']:10s} {len(rows):2d} band(s),"
             f" {rows['wavelength'].min() / 1e4:.2f}-{rows['wavelength'].max() / 1e4:.2f} um,"
             f" {separation:.2f} arcsec away")
 
         found.append((entry, rows))
+
+    span = _epoch_span(entry for entry, _ in found)
+
+    if span:
+        log(f"\n  Measured across {span}, so what is drawn as one SED is not"
+            " one look at the star")
 
     # And everything else VizieR had there, gathered the same way. Kept
     # because the named few are a judgement, and one worth being able to look
