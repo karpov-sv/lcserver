@@ -9,11 +9,33 @@
 
   <p>
     This is a simple web-based tool for a quick-look of lightcurves for your object available in various archives.
+    You give it a name or a position, and it collects whatever photometry, spectra and catalogue data the surveys hold for it.
   </p>
 
   <p>
-    The <a href="{% url 'cutouts' %}">Cutouts</a> page is a standalone utility, open to everyone, for
-    previewing multi-wavelength images of any sky positions from a number of surveys.
+    It currently allows you to:
+  </p>
+
+  <ul>
+    <li>Resolve a target by name or by coordinates, and gather what SIMBAD, AAVSO VSX and Gaia DR3 know of it &mdash; identifiers, distance, kinematics, and the interstellar reddening along the line of sight</li>
+    <li>Acquire long-term lightcurves from twenty time-domain surveys, from Hipparcos and the photographic plates of DASCH and APPLAUSE to ZTF, TESS and NEOWISE</li>
+    <li>Keep every band as the survey published it, with conversions onto a common scale added as extra series rather than replacing anything, and say how strictly each source should judge its own measurements</li>
+    <li>Look at all of them together in an interactive viewer, with per-source offsets, and search for a period with a multiband Lomb-Scargle periodogram</li>
+    <li>Fetch archival spectra from SDSS, LAMOST, DESI, APOGEE, SPHEREx and the ESO archive, together with the Gaia XP and RVS ones, and view them on a single physical scale</li>
+    <li>Build a spectral energy distribution out of whatever VizieR catalogues cover the target, from the ultraviolet to the mid-infrared</li>
+    <li>Browse, preview and download everything that was written for a target</li>
+  </ul>
+
+  <p>
+    The <a href="{% url 'cutouts' %}">Cutouts</a> and <a href="{% url 'passbands' %}">Passbands</a> pages are
+    standalone utilities, open to everyone. The first previews multi-wavelength images of any sky position from
+    a number of surveys; the second draws the photometric passbands the conversions run between, and lets the
+    conversions themselves be calculated.
+  </p>
+
+  <p>
+    LCServer is being developed by Sergey Karpov. Its
+    <a href="https://github.com/karpov-sv/lcserver">source code</a> is available on GitHub.
   </p>
 
   <hr>
