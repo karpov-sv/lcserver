@@ -100,6 +100,79 @@
     </div>
   </div>
 
+  <!-- Magnitude to flux -->
+  <div class="card mb-4">
+    <div class="card-header d-flex justify-content-start flex-wrap">
+      <span>Magnitude to flux</span>
+
+      <span class="text-body-secondary small ms-auto me-0">
+        zero points from the
+        <a href="http://svo2.cab.inta-csic.es/theory/fps/" target="_blank" rel="noopener">SVO Filter
+        Profile Service</a>
+      </span>
+    </div>
+    <div class="card-body">
+
+      <p class="text-body-secondary small mb-3">
+        A magnitude is a ratio and nothing more, and the zero point is what it is a ratio to - the
+        flux of a star of zero magnitude in that band. On the Vega system that star is Vega, so the
+        number differs from filter to filter; the AB system is defined as a flux to begin with, and
+        is the same 3631 Jy everywhere. Choosing a filter sets the system its survey publishes on,
+        which may then be changed. Either field may be typed in, and the other follows.
+      </p>
+
+      <div class="text-body-secondary py-3" id="flux-status">
+        <div class="spinner-border spinner-border-sm" role="status"></div>
+        Loading the zero points
+      </div>
+
+      <div id="flux-body" style="display: none;">
+        <div class="row g-3 align-items-end">
+          <div class="col-md-4">
+            <label class="form-label" for="flux-filter">Filter</label>
+            <select class="form-select" id="flux-filter"></select>
+          </div>
+
+          <div class="col-6 col-md-2">
+            <label class="form-label" for="flux-system">System</label>
+            <select class="form-select" id="flux-system"
+                    title="Set to the system the chosen survey publishes its magnitudes on">
+              <option value="Vega">Vega</option>
+              <option value="AB">AB</option>
+            </select>
+          </div>
+
+          <div class="col-6 col-md-2">
+            <label class="form-label" for="flux-mag">Magnitude</label>
+            <input type="number" step="any" class="form-control" id="flux-mag" value="15">
+          </div>
+
+          <div class="col-6 col-md-2">
+            <label class="form-label" for="flux-value">Flux</label>
+            <input type="number" step="any" class="form-control" id="flux-value">
+          </div>
+
+          <div class="col-6 col-md-2">
+            <label class="form-label" for="flux-unit">Unit</label>
+            <select class="form-select" id="flux-unit">
+              <option value="Jy">Jy</option>
+              <option value="mJy" selected>mJy</option>
+              <option value="uJy">&micro;Jy</option>
+              <option value="flambda">erg/s/cm&sup2;/&Aring;</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="mt-3">
+          <span class="conversion-result" id="flux-result">&mdash;</span>
+        </div>
+
+        <div class="text-body-secondary small mt-2" id="flux-band"></div>
+      </div>
+
+    </div>
+  </div>
+
   <!-- Passbands -->
   <div class="card mb-4">
     <div class="card-header d-flex justify-content-start flex-wrap">
@@ -182,8 +255,15 @@
   {% endfor %}
 
   {{ conversions|json_script:"conversions-data" }}
+  {{ flux_constants|json_script:"flux-constants" }}
+  {{ magnitude_systems|json_script:"flux-systems" }}
 
   <script language="javascript">
+   // The plot and the flux calculator are two readings of one reply, so it is
+   // asked for once, at the end of this script, and each of them leaves here
+   // what to do with it - with the curves, or with the reason there are none
+   var passbandHandlers = [];
+
    // The relations are evaluated here exactly as the code that uses them does:
    // the magnitude that goes in, plus a polynomial in each colour
    $(function(){
@@ -396,16 +476,208 @@
      // The plot may be dragged taller or shorter by its bottom edge
      plotlyResizable('passband-plot');
 
+     passbandHandlers.push(function(data, error){
+       if(data)
+         draw(data);
+       else
+         $('#passband-status').text('The transmission curves could not be loaded' +
+                                    (error ? ': ' + error : ''));
+     });
+   });
+
+   // The bands themselves rather than the way between two of them: what a
+   // magnitude in one of them is as a flux, and back again.
+   $(function(){
+     var constants = JSON.parse($('#flux-constants').text());
+
+     // The system each survey publishes on, which the filter carries with it
+     var systems = JSON.parse($('#flux-systems').text());
+
+     // The scale the light curves here are drawn on, and so the band to open on
+     var PREFERRED = 'PAN-STARRS/PS1.g';
+
+     // How many of each unit make a Jansky. A flux per unit wavelength is not
+     // another unit of the same quantity but another variable, and converts
+     // through the pivot wavelength rather than by a factor, so it has none.
+     var UNITS = {'Jy': 1, 'mJy': 1e3, 'uJy': 1e6, 'flambda': null};
+
+     var filters = {};
+     var current = null;
+
+     // Which field the reader last typed in, and so which of the two the other
+     // follows when the filter or the units change underneath both of them
+     var driver = 'mag';
+
+     var number = function(selector){
+       var value = parseFloat($(selector).val());
+       return isNaN(value) ? null : value;
+     };
+
+     var digits = function(value, count){
+       var text = value.toPrecision(count);
+
+       // Trailing zeros claim a precision the rounding has not left, but only
+       // a plain decimal has them to lose - stripping them off an exponent
+       // would change the number itself
+       return (text.indexOf('.') < 0 || text.indexOf('e') >= 0) ? text :
+              text.replace(/0+$/, '').replace(/\.$/, '');
+     };
+
+     var show = function(value){
+       if(value === null || !isFinite(value))
+         return '\u2014';
+
+       var size = Math.abs(value);
+
+       return (size >= 1e-3 && size < 1e5) ? digits(value, 4) : value.toExponential(3);
+     };
+
+     var zeropoint = function(){
+       return $('#flux-system').val() == 'AB' ? constants.ab_zeropoint : current.zp;
+     };
+
+     // f_lambda = f_nu c / lambda^2, taken at the pivot wavelength, which is
+     // the one where the two are exactly each other's converse for a band of
+     // finite width rather than only for a single wavelength
+     var lambda2 = function(){
+       return current.lambda_pivot*current.lambda_pivot;
+     };
+
+     var flambda_of = function(fnu){
+       return fnu*constants.jansky*constants.speed_of_light/lambda2();
+     };
+
+     var fnu_of = function(flambda){
+       return flambda*lambda2()/(constants.jansky*constants.speed_of_light);
+     };
+
+     var compute = function(){
+       if(!current)
+         return;
+
+       var zp = zeropoint();
+       var unit = $('#flux-unit').val();
+       var fnu = null;   // in Jansky, whichever way round it was arrived at
+
+       if(driver == 'flux'){
+         var flux = number('#flux-value');
+
+         // A flux of zero or less is no magnitude at all, rather than a very
+         // faint one, and is left as nothing until the reader finishes typing
+         if(flux !== null && flux > 0)
+           fnu = unit == 'flambda' ? fnu_of(flux) : flux/UNITS[unit];
+
+         $('#flux-mag').val(fnu === null ? '' : (-2.5*Math.log10(fnu/zp)).toFixed(3));
+       } else {
+         var mag = number('#flux-mag');
+
+         if(mag !== null)
+           fnu = zp*Math.pow(10, -0.4*mag);
+
+         $('#flux-value').val(fnu === null ? '' :
+                              digits(unit == 'flambda' ? flambda_of(fnu) : fnu*UNITS[unit], 6));
+       }
+
+       $('#flux-result').html(fnu === null ? '&mdash;' :
+         'f<sub>&nu;</sub> = ' + show(fnu*UNITS['mJy']) + ' mJy' +
+         '<span class="ms-4">f<sub>&lambda;</sub> = ' + show(flambda_of(fnu)) +
+         ' erg/s/cm&sup2;/&Aring;</span>');
+     };
+
+     var select = function(id){
+       current = filters[id];
+
+       $('#flux-filter').val(id);
+
+       // A band is read on the system its survey publishes in far more often
+       // than on the other, so choosing the filter chooses that too - and a
+       // reader wanting the other way round says so after, rather than having
+       // to notice each time that they were not asked
+       if(systems[current.family])
+         $('#flux-system').val(systems[current.family]);
+
+       // m_AB - m_Vega, which is what the two systems disagree by in this band
+       // - nothing much in the optical, most of two magnitudes by Ks
+       var offset = 2.5*Math.log10(constants.ab_zeropoint/current.zp);
+
+       $('#flux-band').html(
+         'Zero point ' + show(current.zp) + ' Jy on the Vega system, ' +
+         // Whole Angstrom, four significant figures being too few for the
+         // infrared - 21639 would be written as an exponent and read as none
+         'pivot wavelength ' + Math.round(current.lambda_pivot) + ' &Aring;, ' +
+         'effective width ' + Math.round(current.width_eff) + ' &Aring;. ' +
+         'In this band m<sub>AB</sub> &minus; m<sub>Vega</sub> = ' +
+         (offset >= 0 ? '+' : '&minus;') + Math.abs(offset).toFixed(3) + '.');
+
+       compute();
+     };
+
+     $('#flux-filter').on('change', function(){ select($(this).val()); });
+     $('#flux-system, #flux-unit').on('change', compute);
+     $('#flux-mag').on('input', function(){ driver = 'mag'; compute(); });
+     $('#flux-value').on('input', function(){ driver = 'flux'; compute(); });
+
+     passbandHandlers.push(function(data, error){
+       if(!data){
+         $('#flux-status').text('The zero points could not be loaded' +
+                                (error ? ': ' + error : ''));
+         return;
+       }
+
+       var select_box = $('#flux-filter').empty();
+
+       data.families.forEach(function(family){
+         var group = $('<optgroup/>').attr('label', family.name);
+
+         family.filters.forEach(function(filter){
+           // A filter the service gave a curve for but no zero point cannot be
+           // converted, and is left out rather than offered and then refused
+           if(!filter.zp)
+             return;
+
+           // Which family it came from, for the system that goes with it
+           filter.family = family.id;
+           filters[filter.id] = filter;
+
+           // The family in the option as well as on the group it sits in: a
+           // closed select shows only the option, and half of these are one
+           // letter that four surveys share
+           $('<option/>').val(filter.id)
+                         .text(family.name + ' ' + filter.label).appendTo(group);
+         });
+
+         if(group.children().length)
+           group.appendTo(select_box);
+       });
+
+       if(!select_box.children().length){
+         $('#flux-status').text('None of the filters came back with a zero point');
+         return;
+       }
+
+       $('#flux-status').hide();
+       $('#flux-body').show();
+
+       select(filters[PREFERRED] ? PREFERRED : select_box.find('option').first().val());
+     });
+   });
+
+   // And the one request both of them wait on. Registered last, so that it is
+   // the handlers already left above that it answers.
+   $(function(){
+     var announce = function(data, error){
+       passbandHandlers.forEach(function(handler){ handler(data, error); });
+     };
+
      $.getJSON("{% url 'passbands_data' %}")
       .done(function(data){
         if(data.families && data.families.length)
-          draw(data);
+          announce(data, null);
         else
-          $('#passband-status').text('The transmission curves could not be loaded' +
-                                     (data.error ? ': ' + data.error : ''));
+          announce(null, data.error || null);
       })
       .fail(function(){
-        $('#passband-status').text('The transmission curves could not be loaded');
+        announce(null, null);
       });
    });
   </script>

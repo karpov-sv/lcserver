@@ -16,7 +16,9 @@ here. The coefficients are in numpy.polyval order, highest power first.
 
 The transmission curves come from the SVO Filter Profile Service, and are
 cached here rather than fetched by the browser, both to keep the page fast and
-to ask the service once rather than once per visitor.
+to ask the service once rather than once per visitor. The same service says
+what a magnitude means as a flux in each of those bands, which is a second
+thing the page can then do, so the zero points are fetched with the curves.
 """
 
 from django.template.response import TemplateResponse
@@ -32,7 +34,8 @@ import numpy as np
 # here: the page is meant to say what the code does, and two copies of a
 # number are two chances to disagree
 from .processing.utils import (ROTSE_TO_V_ZP, ROTSE_TO_V_SIGMA,
-                              ROTSE_TO_R_ZP, ROTSE_TO_R_SIGMA)
+                              ROTSE_TO_R_ZP, ROTSE_TO_R_SIGMA,
+                              SPEED_OF_LIGHT, MICROJANSKY)
 
 
 # Where a relation is used, and so how much it is worth trusting
@@ -489,7 +492,7 @@ SVO_SERVICE_URL = 'http://svo2.cab.inta-csic.es/theory/fps/'
 
 # The curves change about as often as a survey is redefined, so they are kept
 # for a week; a staff user may ask for them again sooner
-PASSBAND_CACHE = 'passbands_curves'
+PASSBAND_CACHE = 'passbands_curves_and_zeropoints'
 PASSBAND_CACHE_AGE = 7 * 24 * 3600
 
 # Points per curve after thinning, and the fraction of the peak below which the
@@ -499,33 +502,121 @@ PASSBAND_FLOOR = 0.001
 
 PASSBAND_THREADS = 8
 
+# 'system' is the one the survey publishes its magnitudes on, and so the one
+# to read a magnitude in that band as unless told otherwise. It splits the
+# families almost by their age: the bands defined before there was a standard
+# flux to define them against are on Vega, from Johnson through 2MASS and WISE
+# to Gaia, which still delivers G in VEGAMAG; the surveys designed around SDSS
+# are AB, having been laid out in flux from the start. SDSS itself is not
+# quite - its u and z sit 0.04 and 0.02 off, which is the pair of relations at
+# the end of the table below.
 PASSBAND_FAMILIES = OrderedDict([
-    ('galex', {'name': 'GALEX', 'color': '#9467bd', 'filters': [
+    ('galex', {'name': 'GALEX', 'color': '#9467bd', 'system': 'AB', 'filters': [
         ('FUV', 'GALEX/GALEX.FUV'), ('NUV', 'GALEX/GALEX.NUV')]}),
-    ('johnson', {'name': 'Johnson-Cousins', 'color': '#1f77b4', 'filters': [
+    ('johnson', {'name': 'Johnson-Cousins', 'color': '#1f77b4', 'system': 'Vega', 'filters': [
         ('U', 'Generic/Johnson.U'), ('B', 'Generic/Johnson.B'), ('V', 'Generic/Johnson.V'),
         ('R', 'Generic/Cousins.R'), ('I', 'Generic/Cousins.I')]}),
-    ('sdss', {'name': 'SDSS', 'color': '#2ca02c', 'filters': [
+    ('sdss', {'name': 'SDSS', 'color': '#2ca02c', 'system': 'AB', 'filters': [
         ('u', 'SLOAN/SDSS.u'), ('g', 'SLOAN/SDSS.g'), ('r', 'SLOAN/SDSS.r'),
         ('i', 'SLOAN/SDSS.i'), ('z', 'SLOAN/SDSS.z')]}),
-    ('ps1', {'name': 'Pan-STARRS', 'color': '#ff7f0e', 'filters': [
+    ('ps1', {'name': 'Pan-STARRS', 'color': '#ff7f0e', 'system': 'AB', 'filters': [
         ('g', 'PAN-STARRS/PS1.g'), ('r', 'PAN-STARRS/PS1.r'), ('i', 'PAN-STARRS/PS1.i'),
         ('z', 'PAN-STARRS/PS1.z'), ('y', 'PAN-STARRS/PS1.y')]}),
-    ('skymapper', {'name': 'SkyMapper', 'color': '#e377c2', 'filters': [
+    ('skymapper', {'name': 'SkyMapper', 'color': '#e377c2', 'system': 'AB', 'filters': [
         ('u', 'SkyMapper/SkyMapper.u'), ('v', 'SkyMapper/SkyMapper.v'),
         ('g', 'SkyMapper/SkyMapper.g'), ('r', 'SkyMapper/SkyMapper.r'),
         ('i', 'SkyMapper/SkyMapper.i'), ('z', 'SkyMapper/SkyMapper.z')]}),
-    ('gaia', {'name': 'Gaia DR3', 'color': '#17becf', 'filters': [
+    ('gaia', {'name': 'Gaia DR3', 'color': '#17becf', 'system': 'Vega', 'filters': [
         ('BP', 'GAIA/GAIA3.Gbp'), ('G', 'GAIA/GAIA3.G'), ('RP', 'GAIA/GAIA3.Grp')]}),
-    ('2mass', {'name': '2MASS', 'color': '#d62728', 'filters': [
+    ('2mass', {'name': '2MASS', 'color': '#d62728', 'system': 'Vega', 'filters': [
         ('J', '2MASS/2MASS.J'), ('H', '2MASS/2MASS.H'), ('Ks', '2MASS/2MASS.Ks')]}),
-    ('vista', {'name': 'VISTA (VHS)', 'color': '#8c564b', 'filters': [
+    ('vista', {'name': 'VISTA (VHS)', 'color': '#8c564b', 'system': 'Vega', 'filters': [
         ('Z', 'Paranal/VISTA.Z'), ('Y', 'Paranal/VISTA.Y'), ('J', 'Paranal/VISTA.J'),
         ('H', 'Paranal/VISTA.H'), ('Ks', 'Paranal/VISTA.Ks')]}),
-    ('wise', {'name': 'WISE', 'color': '#bcbd22', 'filters': [
+    ('wise', {'name': 'WISE', 'color': '#bcbd22', 'system': 'Vega', 'filters': [
         ('W1', 'WISE/WISE.W1'), ('W2', 'WISE/WISE.W2'),
         ('W3', 'WISE/WISE.W3'), ('W4', 'WISE/WISE.W4')]}),
 ])
+
+
+# ---------------------------------------------------------------------------
+# What a magnitude means as a flux. A magnitude is a ratio and nothing else;
+# the zero point is what it is a ratio to - the flux of a star of zero
+# magnitude in that band, which on the Vega system is Vega itself and so is a
+# different number in every filter. SVO publishes one per filter, in Jansky,
+# beside the curve it belongs to. AB needs none: it is defined as a flux from
+# the start, the same everywhere.
+#
+# The SED does none of this. Its photometry comes from VizieR's SED service
+# already in Jansky, which is the whole reason for using that service, so the
+# table of zero points it would otherwise need is not kept anywhere here - and
+# would be the wrong table for this in any case, VizieR quoting them per
+# catalogue rather than per filter.
+# ---------------------------------------------------------------------------
+
+# The flux a zero-magnitude star has on the AB system, by its definition
+AB_ZEROPOINT = 3631.0
+
+# A Jansky in erg/s/cm2/Hz, from the microjansky the spectra are written in
+JANSKY = MICROJANSKY * 1e6
+
+# SVO indexes its curves by filter id, but its zero points only by facility or
+# by photometric system, so the metadata is asked for a family at a time and
+# the filters wanted are picked out of the reply. The generic Johnson and
+# Cousins curves belong to no facility at all, hence the two systems.
+SVO_META_QUERIES = (
+    {'Facility': 'GALEX'},
+    {'PhotSystem': 'Johnson'},
+    {'PhotSystem': 'Cousins'},
+    {'Facility': 'SLOAN'},
+    {'Facility': 'PAN-STARRS'},
+    {'Facility': 'SkyMapper'},
+    {'Facility': 'GAIA'},
+    {'Facility': '2MASS'},
+    {'Facility': 'Paranal'},
+    {'Facility': 'WISE'},
+)
+
+
+def fetch_filter_meta(query):
+    """What SVO knows about the filters one query names, keyed by filter id.
+
+    Only what a flux needs: the zero point, the pivot wavelength - the one at
+    which a flux per unit frequency and one per unit wavelength convert into
+    each other exactly - and how wide the band is.
+
+    A row quoted on anything but the Vega system in Jansky is left out rather
+    than read as though it were, the calculator having no way to tell.
+    """
+    from astroquery.svo_fps import SvoFps
+
+    table = SvoFps.data_from_svo(query=dict(query))
+
+    meta = {}
+
+    for row in table:
+        try:
+            if (str(row['MagSys']).strip() != 'Vega'
+                    or str(row['ZeroPointUnit']).strip() != 'Jy'):
+                continue
+
+            zp = float(row['ZeroPoint'])
+            pivot = float(row['WavelengthPivot'])
+            width = float(row['WidthEff'])
+            name = str(row['filterID']).strip()
+        except (KeyError, TypeError, ValueError):
+            continue
+
+        if not all(np.isfinite(_) and _ > 0 for _ in (zp, pivot, width)):
+            continue
+
+        meta[name] = {
+            'zp': round(zp, 2),
+            'lambda_pivot': round(pivot, 2),   # Angstrom, as SVO quotes it
+            'width_eff': round(width, 2),
+        }
+
+    return meta
 
 
 def fetch_passband(filter_id):
@@ -607,8 +698,26 @@ def get_passbands(refresh=False):
         except Exception:
             return None
 
+    def fetch_meta(query):
+        # A family whose zero points cannot be had is one the calculator will
+        # not offer; the curves of it are still worth drawing
+        try:
+            return fetch_filter_meta(query)
+        except Exception:
+            return {}
+
+    # Both maps submitted before either is read, so that the curves and the
+    # metadata are asked for together rather than one set after the other
     with ThreadPoolExecutor(PASSBAND_THREADS) as pool:
-        curves = list(pool.map(fetch, wanted))
+        curves = pool.map(fetch, wanted)
+        metas = pool.map(fetch_meta, SVO_META_QUERIES)
+
+        curves, metas = list(curves), list(metas)
+
+    meta = {}
+
+    for this in metas:
+        meta.update(this)
 
     families = []
 
@@ -617,7 +726,8 @@ def get_passbands(refresh=False):
 
         for (_, job_family, label, filter_id), curve in zip(wanted, curves):
             if job_family == family_id and curve is not None:
-                filters.append(dict(curve, id=filter_id, label=label))
+                filters.append(dict(curve, id=filter_id, label=label,
+                                    **meta.get(filter_id, {})))
 
         if filters:
             families.append({
@@ -719,6 +829,20 @@ def passbands(request):
         'groups': groups,
         # The same relations, for the calculator in the page to evaluate
         'conversions': [conv for group in groups for conv in group['conversions']],
+        # And what the flux calculator needs beyond the zero points, which
+        # arrive with the curves - written here rather than in the page, so
+        # that it works in the units the spectra are written in
+        'flux_constants': {
+            'ab_zeropoint': AB_ZEROPOINT,
+            'jansky': JANSKY,
+            'speed_of_light': SPEED_OF_LIGHT,
+        },
+        # Which system each family's magnitudes are usually on. Rendered with
+        # the page rather than sent with the curves: it is a convention and
+        # not a measurement, so it has no business being a week stale in the
+        # cache the service's answers are kept in.
+        'magnitude_systems': {fid: family['system']
+                              for fid, family in PASSBAND_FAMILIES.items()},
     }
 
     return TemplateResponse(request, 'passbands.html', context=context)
