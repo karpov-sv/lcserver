@@ -88,6 +88,23 @@
     margin-right: 0.5rem;
 }
 
+.panel-toggle {
+    cursor: pointer;
+    user-select: none;
+}
+
+.panel-toggle .fa {
+    color: var(--bs-secondary-color);
+    font-size: 0.8em;
+    margin-right: 0.25rem;
+    transition: transform 0.2s ease;
+}
+
+/* Bootstrap puts .collapsed on the toggle whenever its target is folded away */
+.panel-toggle.collapsed .fa {
+    transform: rotate(-90deg);
+}
+
 #loading-indicator {
     padding: 1rem;
     background-color: var(--bs-light);
@@ -182,9 +199,13 @@
 
 <!-- Control Panel -->
 <div class="control-panel" id="control-panel" style="display: none;">
-  <h5 class="mb-3">Data Sources</h5>
+  <h5 class="mb-3 panel-toggle" data-bs-toggle="collapse" data-bs-target="#source-controls"
+      role="button" aria-expanded="true" aria-controls="source-controls"
+      title="Click to fold the list of sources away">
+    <i class="fa fa-caret-down"></i> Data Sources
+  </h5>
 
-  <div id="source-controls">
+  <div class="collapse show" id="source-controls">
     <!-- Populated by JavaScript -->
   </div>
 
@@ -195,8 +216,12 @@
     <button class="btn btn-sm btn-outline-primary me-2" onclick="enableAll()">
       <i class="fa fa-check-square-o"></i> Enable All
     </button>
-    <button class="btn btn-sm btn-outline-primary" onclick="disableAll()">
+    <button class="btn btn-sm btn-outline-primary me-2" onclick="disableAll()">
       <i class="fa fa-square-o"></i> Disable All
+    </button>
+    <button class="btn btn-sm btn-outline-primary pull-right" onclick="showStatistics()"
+            title="Mean, median and scatter of every displayed source, over the points currently in view">
+      <i class="fa fa-calculator"></i> Statistics
     </button>
   </div>
 </div>
@@ -308,6 +333,40 @@
   <div id="peaks-container" class="mt-2" style="display: none;">
     <small class="text-muted">Highest peaks:</small>
     <div id="peaks-list" class="d-flex flex-wrap gap-1 mt-1"></div>
+  </div>
+</div>
+
+<!-- Statistics of whatever is currently on display -->
+<div class="modal fade" id="stats-modal" tabindex="-1" aria-labelledby="stats-modal-title" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="stats-modal-title">Statistics of Displayed Points</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <p class="text-muted small mb-2" id="stats-range"></p>
+        <div class="table-responsive">
+          <table class="table table-sm align-middle mb-0">
+            <thead>
+              <tr>
+                <th>Source</th>
+                <th class="text-end">N</th>
+                <th class="text-end">Mean</th>
+                <th class="text-end">Median</th>
+                <th class="text-end">Std</th>
+                <th class="text-end">Std of mean</th>
+              </tr>
+            </thead>
+            <tbody id="stats-body"></tbody>
+          </table>
+        </div>
+        <p class="text-muted small mt-3 mb-0" id="stats-note"></p>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Close</button>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -1479,6 +1538,189 @@ function disableAll() {
         document.getElementById(`toggle-${index}`).checked = false;
     });
     updatePlot();
+}
+
+// ------------------------------------------------------------------ statistics
+
+// Axis ranges and x values come as numbers, as Date objects, or as the date
+// strings Plotly writes ('YYYY-MM-DD HH:MM:SS.sss', always UTC). Everything is
+// compared as a number, so bring them all to one.
+function axisValue(v) {
+    if (v instanceof Date)
+        return v.getTime();
+
+    if (typeof v === 'number')
+        return v;
+
+    const utc = Date.parse(String(v).replace(' ', 'T') + 'Z');
+
+    return isNaN(utc) ? Date.parse(v) : utc;
+}
+
+// Mean, median and scatter of one set of values
+function summarizeValues(values) {
+    const n = values.length;
+
+    let sum = 0;
+    for (const v of values)
+        sum += v;
+    const mean = sum / n;
+
+    const sorted = [...values].sort((a, b) => a - b);
+    const mid = Math.floor(n / 2);
+    const median = n % 2 ? sorted[mid] : 0.5 * (sorted[mid - 1] + sorted[mid]);
+
+    // The scatter of the points, not of the mean - hence n - 1, and hence the
+    // second column, which is what the mean itself is known to
+    let sum2 = 0;
+    for (const v of values)
+        sum2 += (v - mean) * (v - mean);
+    const std = n > 1 ? Math.sqrt(sum2 / (n - 1)) : NaN;
+
+    return {n: n, mean: mean, median: median, std: std, stdMean: std / Math.sqrt(n)};
+}
+
+function formatStat(v) {
+    if (v === undefined || v === null || !isFinite(v))
+        return '&mdash;';
+
+    if (v !== 0 && Math.abs(v) < 1e-4)
+        return v.toExponential(2);
+
+    return v.toFixed(4);
+}
+
+// The part of the axes one is actually looking at, as numbers
+function displayedRange(axis) {
+    const range = axis.range.map(axisValue);
+
+    // Magnitudes run the other way, so the ends are not in order
+    return {min: Math.min(range[0], range[1]), max: Math.max(range[0], range[1])};
+}
+
+// How the x range is best named, which depends on what the axis is showing
+function rangeDescription(x) {
+    if (phasePeriod > 0)
+        return 'Phase ' + x.min.toFixed(4) + ' to ' + x.max.toFixed(4);
+
+    if (timeAxisMode === 'mjd')
+        return 'MJD ' + x.min.toFixed(4) + ' to ' + x.max.toFixed(4);
+
+    const iso = (ms) => new Date(ms).toISOString().replace('T', ' ').slice(0, 19);
+
+    return iso(x.min) + ' to ' + iso(x.max) + ' UT';
+}
+
+// Statistics of every displayed source over the points currently in view -
+// what is left after the error filters, the visibility switches and the zoom.
+// Taken from the traces themselves rather than from the data behind them, so
+// that what is counted is exactly what is on the screen.
+function showStatistics() {
+    const plotDiv = document.getElementById('plotly-container');
+    const body = document.getElementById('stats-body');
+    const rangeText = document.getElementById('stats-range');
+    const note = document.getElementById('stats-note');
+
+    body.innerHTML = '';
+    note.innerHTML = '';
+
+    const layout = plotDiv._fullLayout || plotDiv.layout;
+    const traces = plotInitialized && plotDiv.data ? plotDiv.data : [];
+
+    if (!traces.length || !layout || !layout.xaxis || !layout.xaxis.range) {
+        rangeText.textContent = '';
+        body.innerHTML = '<tr><td colspan="6" class="text-muted">'
+                       + 'No sources are being displayed.</td></tr>';
+        bootstrap.Modal.getOrCreateInstance(document.getElementById('stats-modal')).show();
+        return;
+    }
+
+    const x = displayedRange(layout.xaxis);
+    const y = displayedRange(layout.yaxis);
+    const valueLabel = isMagnitudeMode ? 'Magnitude' : 'Normalized flux';
+
+    rangeText.innerHTML = rangeDescription(x) + '<br>'
+                        + valueLabel + ' ' + formatStat(y.min) + ' to ' + formatStat(y.max);
+
+    // The traces were pushed in the order the visible series come in, which is
+    // what ties each of them back to its offset
+    const visible = lightcurveData
+          .map((series, index) => index)
+          .filter(index => seriesState[index].visible);
+
+    let anyOffset = false;
+    let total = 0;
+    let empty = 0;
+
+    traces.forEach((trace, i) => {
+        const state = seriesState[visible[i]];
+        const values = [];
+
+        for (let j = 0; j < trace.x.length; j++) {
+            const xv = axisValue(trace.x[j]);
+            const yv = trace.y[j];
+
+            if (xv >= x.min && xv <= x.max && yv >= y.min && yv <= y.max)
+                values.push(yv);
+        }
+
+        // A source zoomed past has nothing to say, and a row of dashes for it
+        // only pushes the ones that do have something off the screen
+        if (!values.length) {
+            empty++;
+            return;
+        }
+
+        total += values.length;
+
+        const offset = state ? state.offset : 0;
+        if (offset)
+            anyOffset = true;
+
+        const color = (trace.marker && trace.marker.color) || '#888';
+        const swatch = '<span style="display: inline-block; width: 0.8em; height: 0.8em;'
+                     + ' border-radius: 2px; margin-right: 0.4em;'
+                     + ' background-color: ' + color + ';"></span>';
+        const offsetNote = offset
+              ? ' <small class="text-muted">(offset ' + (offset > 0 ? '+' : '')
+                + offset + ')</small>'
+              : '';
+
+        const stats = summarizeValues(values);
+        const row = document.createElement('tr');
+
+        row.innerHTML = '<td>' + swatch + trace.name + offsetNote + '</td>'
+                      + '<td class="text-end">' + stats.n + '</td>'
+                      + '<td class="text-end">' + formatStat(stats.mean) + '</td>'
+                      + '<td class="text-end">' + formatStat(stats.median) + '</td>'
+                      + '<td class="text-end">' + formatStat(stats.std) + '</td>'
+                      + '<td class="text-end">' + formatStat(stats.stdMean) + '</td>';
+
+        body.appendChild(row);
+    });
+
+    let notes = [total + ' point' + (total === 1 ? '' : 's') + ' in view.'];
+
+    // Only worth saying when there is something listed to contrast it with
+    if (empty && body.children.length)
+        notes.push(empty === 1
+                   ? 'One source has nothing in view, and is not listed.'
+                   : empty + ' sources have nothing in view, and are not listed.');
+
+    if (anyOffset)
+        notes.push('Values are as plotted, with the offsets applied.');
+
+    if (phasePeriod > 0)
+        notes.push('Folded: the points wrapped outside phase 0 to 1 are shown '
+                 + 'twice, and counted twice with them.');
+
+    if (!body.children.length)
+        body.innerHTML = '<tr><td colspan="6" class="text-muted">'
+                       + 'None of the displayed sources has a point in view.</td></tr>';
+
+    note.textContent = notes.join(' ');
+
+    bootstrap.Modal.getOrCreateInstance(document.getElementById('stats-modal')).show();
 }
 
 // Switch display mode while preserving period/epoch
