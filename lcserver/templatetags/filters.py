@@ -133,7 +133,7 @@ def show_table(table, maxrows=100):
 
         for col in table.itercols():
             if col.info.dtype.kind == 'f':
-                if col.name in ['ra', 'dec', 'RAJ2000', 'DEJ2000']:
+                if col.name in ['ra', 'dec', 'RAJ2000', 'DEJ2000', 'mjd']:
                     col.info.format = '.5f'
                 elif col.name in ['x', 'y']:
                     col.info.format = '.2f'
