@@ -32,7 +32,7 @@
    params = {
      title: title,
      message: body,
-     size: 'large',
+     size: 'xl',
      onEscape: function() {},
    };
 
@@ -73,6 +73,8 @@
      params.buttons = buttons;
 
    var dialog = bootbox.dialog(params);
+
+   dialog.find('.modal-dialog').addClass('modal-fullscreen-xl-down');
 
    // FIXME: prevent updating already created overlays?..
    if(typeof overlay_stdview_images === 'function')
