@@ -20,3 +20,7 @@ plotly
 lxml
 nifty_ls
 sparclclient
+dynesty
+corner
+extinction
+h5py

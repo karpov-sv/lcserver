@@ -155,6 +155,11 @@ LOGOUT_REDIRECT_URL = 'index'
 # Paths for lcserver
 TARGETS_PATH = config('TARGETS_PATH', default='targets/')
 
+# Where the model atmosphere cubes the SED fitter interpolates are kept. Unset,
+# they are looked for wherever astroARIADNE was installed, which is where they
+# come with it.
+SEDFIT_GRIDS = config('SEDFIT_GRIDS', default='')
+
 # Messages
 from django.contrib.messages import constants as messages
 

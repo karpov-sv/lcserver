@@ -13,7 +13,9 @@ in one place.
 
 Alongside the light curves it collects what else is on record for the same
 position: archival spectra, a spectral energy distribution built from the
-catalogues, and what Gaia and SIMBAD know of the star itself.
+catalogues, and what Gaia and SIMBAD know of the star itself. A photosphere
+can be fitted to that distribution, from the spectral viewer, against as many
+model atmosphere grids as are worth asking.
 
 ## Data sources
 
@@ -74,6 +76,38 @@ the band it was measured in and a note of where on the sky it was measured —
 GALEX and AllWISE do not centroid alike, and a point several arcsec away may
 belong to something else.
 
+## Fitting a photosphere
+
+From the spectral viewer, the distribution the `sed` step built can be fitted
+with one model atmosphere: interpolated from a grid at (Teff, log g, [Fe/H]),
+reddened by A_V, and diluted by (R/d)². Nested sampling gives the posterior,
+and it is kept as whole rows rather than as a parameter at a time, so the
+temperature/extinction ridge that dominates a reddened star survives into the
+answer instead of being averaged flat.
+
+Which points are fitted is yours to say: a single Pan-STARRS band can be
+dropped without dropping the survey, and a measurement the SED step cannot
+place — a magnitude off a paper, say — can be typed in by hand.
+
+Sixteen grids are available, several at once; BT-Settl, TLUSTY, Phoenix,
+Castelli & Kurucz, Kurucz, BOSZ and Koester are on the form. They are not
+averaged. Two grids that both cover the regime disagree by an amount that is
+the systematic from the atmosphere physics, and that is reported as it stands.
+
+Each run is written to `targets/{id}/sedfit/{timestamp}/` and stays there —
+what was asked as well as what came back, so a run can be compared with the one
+before it. Every run leaves its log, the SED with the model and the residuals
+against it, a corner plot per grid, and the parameters of all the grids drawn
+over each other.
+
+Two numbers come out beside the parameters and are worth as much as they are:
+the **jitter**, the fractional model inadequacy the fit needed, which says how
+far the photometry is from anything one photosphere explains; and the
+**shrinkage**, how much narrower the temperature posterior is than its prior,
+below which the answer is largely the prior rather than the data — which for a
+reddened star with no ultraviolet is what happens, and is worth saying rather
+than quoting a number.
+
 ## Quality filtering
 
 Many sources take a **quality level**, on their own form:
@@ -111,7 +145,7 @@ them.
 | --- | --- |
 | `/targets/{id}/` | the target: every source, its form, its log and its plots |
 | `/targets/{id}/lightcurve/` | interactive viewer — series toggled and offset, folded, and a Lomb-Scargle period search that can look underneath a slow trend |
-| `/targets/{id}/spectrum/` | spectral viewer, on the physical scale, with the lines marked that fall inside the range on show |
+| `/targets/{id}/spectrum/` | spectral viewer, on the physical scale, with the lines marked that fall inside the range on show — and the photosphere fit, its runs and their figures |
 | `/targets/{id}/files/` | file browser over the target directory, previewing FITS, images and tables |
 | `/cutouts/` | multi-wavelength cutouts of any position, resolved on the fly — no target, no worker, no login |
 | `/passbands/` | the photometric conversions written out and calculable, over the transmission curves they run between |
@@ -124,6 +158,9 @@ Plots follow the theme the reader is in.
 - Python 3.11
 - Redis on `localhost`, database `1` — Celery's broker, result backend and cache
 - The packages in `requirements.txt`
+- For the photosphere fit, `astroARIADNE`, which is not on PyPI and is
+  installed from its repository. The model grids and pyphot's filter profiles
+  come with it, and nothing else of it is used — the cubes are read directly.
 - Optionally `dustmaps`, with `dustmaps.edenhofer2023.fetch()` and
   `dustmaps.bayestar.fetch()`, for extinction resolved in distance
 
@@ -134,6 +171,17 @@ pip install -r requirements.txt
 python manage.py migrate
 python manage.py createsuperuser
 ```
+
+For the photosphere fit, the model grids as well:
+
+```sh
+pip install git+https://github.com/jvines/astroARIADNE.git
+```
+
+That is 46 MB of HDF5 cubes, installed beside the package, and they are found
+there without being told. Point `SEDFIT_GRIDS` at them if you keep them
+somewhere else. Without the package the rest of the application is unaffected;
+the fit is the only thing that asks for it.
 
 ## Running
 
@@ -161,6 +209,7 @@ Read from the environment or a `.env` file, via `python-decouple`:
 | `SECRET_KEY` | Django secret. Set it for anything but local use. |
 | `DEBUG` | default `False` |
 | `TARGETS_PATH` | where per-target data is written, default `targets/` |
+| `SEDFIT_GRIDS` | where the model atmosphere cubes are; unset, they are looked for wherever `astroARIADNE` was installed |
 | `CELERY_CONCURRENCY` | how many sources are acquired at once, default `4` |
 
 The sources of one target are acquired in parallel, so `CELERY_CONCURRENCY` is
@@ -221,16 +270,18 @@ stack warns about it.
 ```
 lcserver/
 ├── processing/     one module per survey, each registering itself
+│   └── sedfit.py   the photosphere fit - grids, priors, sampling, figures
 ├── surveys.py      the registry - metadata, bands, form fields, layout
 ├── celery_tasks.py task generation, and the canvas a full run is built into
 ├── views.py        pages, file browser
 ├── views_lightcurve.py  the viewer, and the period search behind it
-├── views_spectrum.py    the spectral viewer
+├── views_spectrum.py    the spectral viewer, and the photosphere fit behind it
 ├── views_cutouts.py     cutouts of any position, outside the target loop
 ├── views_passbands.py   the conversions, and the passbands they run between
 ├── views_celery.py      the queue
 └── templates/
 targets/{id}/       per-target logs, plots, VOTables, and cache/
+targets/{id}/sedfit/{timestamp}/   one photosphere fit, as asked and as answered
 ```
 
 Adding a survey means writing `processing/xxx.py` with a `target_xxx()`

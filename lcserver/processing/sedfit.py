@@ -514,13 +514,13 @@ GRID_FILES = {
 def grids_dir():
     """Where the model cubes live.
 
-    Ours by configuration if SEDFIT_GRIDS says so, and otherwise wherever
-    astroARIADNE was installed - the package is a dependency for its grids and
-    for pyphot's filter profiles, and for nothing else.
+    Ours by configuration if the SEDFIT_GRIDS setting says so, and otherwise
+    wherever astroARIADNE was installed - the package is a dependency for its
+    grids and for pyphot's filter profiles, and for nothing else.
     """
-    import os
+    from django.conf import settings
 
-    configured = os.environ.get('SEDFIT_GRIDS')
+    configured = getattr(settings, 'SEDFIT_GRIDS', None)
     if configured:
         return configured
 
