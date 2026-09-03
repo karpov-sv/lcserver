@@ -5,6 +5,7 @@ Gaia DR3, Pan-STARRS DR2, and other catalogs.
 """
 
 import os
+import re
 from collections import namedtuple
 import numpy as np
 import requests
@@ -194,13 +195,41 @@ def _plot_epoch_photometry(table, colours, path, title, show=False):
         ax.set_title(title)
 
 
+def _names(row):
+    """The column names of a row, whether it is a table Row or a dict."""
+    return row.colnames if hasattr(row, 'colnames') else list(row)
+
+
+def _resolve(row, key):
+    """The name this row actually spells a column with, or None.
+
+    VizieR names some columns with brackets and slashes - [Fe/H], [alpha/Fe]-S
+    - and those survive a live query intact but are rewritten when the reply is
+    saved as a VOTable and read back again, [Fe/H] arriving as __Fe_H_. A name
+    that worked on the first run then finds nothing on every run after it,
+    silently, which is worse than failing. So the letters and digits are
+    compared and the punctuation ignored - keeping the case, since b_ and B_
+    are the lower and upper bound of the same quantity and must not collide.
+    """
+    names = _names(row)
+    if key in names:
+        return key
+
+    wanted = re.sub(r'[^0-9A-Za-z]', '', key)
+    for name in names:
+        if re.sub(r'[^0-9A-Za-z]', '', str(name)) == wanted:
+            return name
+
+    return None
+
+
 def _has(row, key):
     """Whether a row - a dict or a table row - carries a column at all.
 
     A table Row defines no membership test of its own, so `in` would fall back
     to iterating its values and compare the name against each of them.
     """
-    return key in (row.colnames if hasattr(row, 'colnames') else row)
+    return _resolve(row, key) is not None
 
 
 def _number(row, key):
@@ -209,10 +238,11 @@ def _number(row, key):
     A missing cell arrives masked rather than absent or NaN, so it answers to
     neither of the usual tests.
     """
-    if not _has(row, key):
+    name = _resolve(row, key)
+    if name is None:
         return None
 
-    value = row[key]
+    value = row[name]
 
     if value is None or value is np.ma.masked:
         return None
@@ -741,6 +771,10 @@ def target_info(config, basepath=None, verbose=True, show=False):
                                           'I/355/gaiadr3',
                                           extra=['_RAJ2000', '_DEJ2000', 'e_Gmag', 'e_BPmag', 'e_RPmag',
                                                  'A0', 'b_A0', 'B_A0', 'AG', 'b_AG', 'B_AG',
+                                                 'Teff', 'b_Teff', 'B_Teff',
+                                                 'logg', 'b_logg', 'B_logg',
+                                                 '[Fe/H]', 'b_[Fe/H]', 'B_[Fe/H]',
+                                                 'RUWE', 'Vbroad', 'VarFlag',
                                                  'Source', 'XPsamp', 'RVS'],
                                           get_distance=True, verbose=False)
             if cat and len(cat):
@@ -786,6 +820,26 @@ def target_info(config, basepath=None, verbose=True, show=False):
         if 'gaia_A0' not in config and 'A0' not in cat.colnames:
             log("Gaia extinction was not in the cached reply - "
                 "tick 'Ignore cache' to fetch it")
+
+        # GSP-Phot's parameters, and the astrometric quality beside them. Kept
+        # rather than printed here: they belong with the other modules'
+        # answers, further down, where the disagreement between them is the
+        # thing worth seeing.
+        for key, name in [('Teff', 'gaia_teff'), ('logg', 'gaia_logg'),
+                          ('[Fe/H]', 'gaia_feh'), ('RUWE', 'gaia_ruwe'),
+                          ('Vbroad', 'gaia_vbroad')]:
+            value = _number(star, key)
+            if value is None:
+                continue
+            config[name] = value
+            for bound, suffix in [(f'b_{key}', '_lo'), (f'B_{key}', '_hi')]:
+                edge = _number(star, bound)
+                if edge is not None:
+                    config[name + suffix] = edge
+
+        name = _resolve(star, 'VarFlag')
+        if name is not None and star[name] is not np.ma.masked:
+            config['gaia_varflag'] = str(star[name]).strip()
 
         # Kept for the sections below, which need the star found here
         if _number(star, 'Source') is not None:
@@ -991,6 +1045,207 @@ def target_info(config, basepath=None, verbose=True, show=False):
 
             log("RVS spectrum written to file:gaia_rvs.vot")
             log("RVS spectrum written to file:gaia_rvs.txt")
+
+    # Gaia DR3 astrophysical parameters
+    #
+    # Gaia does not publish one temperature but several, from modules that
+    # disagree by thousands of kelvin about the same star, and which of them is
+    # right depends on what the star turns out to be. GSP-Phot is the one
+    # nearly every source has, fitted from the BP/RP spectrum, the parallax and
+    # G together - but it is trained across the whole Hertzsprung-Russell
+    # diagram at once, and it is at its worst exactly where fitting a spectral
+    # energy distribution is hardest: a hot star behind dust, where temperature
+    # and reddening buy each other off and a reddened B star is hard to tell
+    # from an unreddened F one. ESP-HS is the module built for the hot stars
+    # and is the one to believe there; GSP-Spec works from the RVS spectrum, so
+    # it is spectroscopic rather than photometric, and is the one to believe
+    # for the bright cool ones.
+    #
+    # They are printed together and named, so that the disagreement is on the
+    # page instead of a single number being taken on trust. Two other modules
+    # are worth the same treatment: ESP-ELS says whether Gaia saw the star in
+    # emission, which for a Be star is the whole story and changes what any of
+    # the temperatures mean; and MSC fits two stars at once, so where it has an
+    # answer the single-star parameters above describe something that is not
+    # there.
+    ra = config.get('target_ra')
+    dec = config.get('target_dec')
+    cache_name = f"gaiadr3_params_{ra:.4f}_{dec:.4f}.vot"
+
+    log("\n---- Gaia DR3 astrophysical parameters ----\n")
+
+    def _span(row, key, fmt, lo_key=None, hi_key=None):
+        """A value with whatever interval the catalogue quotes for it.
+
+        Apsis reports some parameters with a confidence interval (b_ and B_
+        columns) and others with a symmetric error (e_), so both are accepted
+        and whichever is there is shown.
+        """
+        value = _number(row, key)
+        if value is None:
+            return None, ''
+
+        lo = _number(row, lo_key or f'b_{key}')
+        hi = _number(row, hi_key or f'B_{key}')
+        if lo is not None and hi is not None:
+            return value, f' [{fmt % lo} ... {fmt % hi}]'
+
+        err = _number(row, f'e_{key}')
+        if err is not None:
+            return value, f' +/- {fmt % err}'
+
+        return value, ''
+
+    # GSP-Phot came with the photometry above, having been read out of the main
+    # table; it is shown here so the modules stand side by side.
+    if config.get('gaia_teff') is not None:
+        lo, hi = config.get('gaia_teff_lo'), config.get('gaia_teff_hi')
+        span = f" [{lo:.0f} ... {hi:.0f}]" if lo and hi else ''
+        log(f"GSP-Phot Teff = {config['gaia_teff']:.0f}{span} K")
+        for key, label, fmt in [('gaia_logg', 'log g', '{:.2f}'),
+                                ('gaia_feh', '[Fe/H]', '{:+.2f}')]:
+            if config.get(key) is not None:
+                lo, hi = config.get(key + '_lo'), config.get(key + '_hi')
+                span = (f" [{lo:.2f} ... {hi:.2f}]"
+                        if lo is not None and hi is not None else '')
+                log(f"GSP-Phot {label} = {fmt.format(config[key])}{span}")
+
+    with cached_votable_query(cache_name, basepath, log,
+                              'Gaia DR3 astrophysical parameters',
+                              refresh=refresh_cache) as cache:
+        if not cache.hit:
+            cat = catalogs.get_cat_vizier(
+                ra, dec, 5/3600, 'I/355/paramp',
+                extra=['_RAJ2000', '_DEJ2000',
+                       'Teff-HS', 'e_Teff-HS', 'logg-HS', 'e_logg-HS',
+                       'A0-HS', 'e_A0-HS', 'vsini-HS', 'e_vsini-HS',
+                       'Teff-S', 'b_Teff-S', 'B_Teff-S',
+                       'logg-S', 'b_logg-S', 'B_logg-S',
+                       '[Fe/H]-S', 'b_[Fe/H]-S', 'B_[Fe/H]-S',
+                       '[alpha/Fe]-S',
+                       'ClassELS', 'SpType-ELS', 'Teff-UCD', 'e_Teff-UCD',
+                       'Age-Flame', 'b_Age-Flame', 'B_Age-Flame',
+                       'Teff1-MSC', 'Teff2-MSC', 'logg1-MSC', 'logg2-MSC',
+                       'A0-MSC', 'Dist-MSC', 'Flag-MSC'],
+                get_distance=True, verbose=False)
+            if cat and len(cat):
+                cache.save(cat)
+            else:
+                cache.save_empty()
+                cat = None
+        else:
+            cat = cache.data
+
+    if cat:
+        params = cat[cat['_r'] == np.min(cat['_r'])][0]
+
+        # ESP-HS - the hot-star module, and the temperature to prefer for
+        # anything earlier than about A
+        teff_hs, span = _span(params, 'Teff-HS', '%.0f')
+        if teff_hs is not None:
+            log(f"ESP-HS Teff = {teff_hs:.0f}{span} K  (the hot-star module)")
+            config['gaia_teff_esphs'] = teff_hs
+
+        for key, label, fmt, name in [
+                ('logg-HS', 'ESP-HS log g', '%.2f', 'gaia_logg_esphs'),
+                ('A0-HS', 'ESP-HS A0', '%.3f', 'gaia_a0_esphs'),
+                ('vsini-HS', 'ESP-HS v sin i', '%.0f', 'gaia_vsini')]:
+            value, span = _span(params, key, fmt)
+            if value is None:
+                continue
+            unit = ' mag' if 'A0' in key else (' km/s' if 'vsini' in key else '')
+            log(f"{label} = {fmt % value}{span}{unit}")
+            config[name] = value
+
+        # GSP-Spec - from the RVS spectrum, so an actual spectroscopic
+        # measurement rather than a fit to colours
+        teff_s, span = _span(params, 'Teff-S', '%.0f')
+        if teff_s is not None:
+            log(f"GSP-Spec Teff = {teff_s:.0f}{span} K  (from the RVS spectrum)")
+            config['gaia_teff_gspspec'] = teff_s
+
+        for key, label, fmt, name in [
+                ('logg-S', 'GSP-Spec log g', '%.2f', 'gaia_logg_gspspec'),
+                ('[Fe/H]-S', 'GSP-Spec [Fe/H]', '%+.2f', 'gaia_feh_gspspec'),
+                ('[alpha/Fe]-S', 'GSP-Spec [alpha/Fe]', '%+.2f', None)]:
+            value, span = _span(params, key, fmt)
+            if value is None:
+                continue
+            log(f"{label} = {fmt % value}{span}")
+            if name:
+                config[name] = value
+
+        # ESP-ELS - whether Gaia saw the star in emission. For a Be star this
+        # is not a detail: the disc fills the Balmer lines and adds an infrared
+        # excess, so every temperature above was fitted to a spectrum the
+        # photosphere alone does not explain.
+        for key, label, name in [('ClassELS', 'ESP-ELS class', 'gaia_els_class'),
+                                 ('SpType-ELS', 'ESP-ELS spectral type',
+                                  'gaia_els_type')]:
+            name = _resolve(params, key)
+            if name is None or params[name] is np.ma.masked:
+                continue
+            value = str(params[name]).strip()
+            if not value:
+                continue
+            log(f"{label} = {value}")
+            config[name] = value
+
+        # Said rather than left to silence: where the star looks hot and the
+        # hot-star module has no answer for it, GSP-Phot is all Gaia offers -
+        # and GSP-Phot is the module least to be trusted in exactly that
+        # regime, so the reader should know that is what they are holding.
+        if teff_hs is None:
+            looks_hot = ((config.get('gaia_teff') or 0) > 10000
+                         or str(config.get('gaia_els_type', '')).upper()[:1]
+                         in ('O', 'B', 'A'))
+            if looks_hot:
+                log("ESP-HS has no answer for this source, so GSP-Phot above "
+                    "is the only temperature Gaia gives - and it is the "
+                    "weakest of the modules for a hot, reddened star")
+
+        # ESP-UCD, for the coolest things Gaia parametrises
+        teff_ucd, span = _span(params, 'Teff-UCD', '%.0f')
+        if teff_ucd is not None:
+            log(f"ESP-UCD Teff = {teff_ucd:.0f}{span} K  (ultracool dwarfs)")
+            config['gaia_teff_ucd'] = teff_ucd
+
+        age, span = _span(params, 'Age-Flame', '%.2f')
+        if age is not None:
+            log(f"FLAME age = {age:.2f}{span} Gyr")
+            config['gaia_age'] = age
+
+        # MSC fits two stars to the BP/RP spectrum. It is run on every source
+        # and always has an answer, so its presence is not a detection and the
+        # numbers are not evidence of a companion - what makes it worth
+        # printing is when it disagrees with the single-star modules badly
+        # enough to say that none of them has fitted the star properly. RUWE
+        # below is the independent check.
+        teff1 = _number(params, 'Teff1-MSC')
+        teff2 = _number(params, 'Teff2-MSC')
+        if teff1 is not None and teff2 is not None:
+            flag = (f", flags {int(_number(params, 'Flag-MSC'))}"
+                    if _number(params, 'Flag-MSC') is not None else '')
+            log(f"MSC two-star fit: Teff = {teff1:.0f} + {teff2:.0f} K{flag}"
+                f"  (fitted for every source - not a detection by itself)")
+            config['gaia_msc_teff1'] = teff1
+            config['gaia_msc_teff2'] = teff2
+
+    # What the numbers above are worth. RUWE is the astrometric fit quality:
+    # above about 1.4 the single-star astrometric solution did not work, which
+    # usually means an unresolved companion - and then the parallax, and every
+    # distance and radius that rests on it, is not to be trusted either.
+    ruwe = config.get('gaia_ruwe')
+    if ruwe is not None:
+        note = ("  - the single-star astrometric solution is poor, "
+                "so the parallax may be too" if ruwe > 1.4 else "")
+        log(f"RUWE = {ruwe:.2f}{note}")
+
+    if config.get('gaia_vbroad') is not None:
+        log(f"Line broadening = {config['gaia_vbroad']:.0f} km/s")
+
+    if config.get('gaia_varflag'):
+        log(f"Gaia photometric variability flag: {config['gaia_varflag']}")
 
     # Gaia DR3 distances by Bailer-Jones
     ra = config.get('target_ra')
