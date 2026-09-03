@@ -1217,10 +1217,10 @@
                  fitResult = run.result;
                  setFitStatus('');
                  showFitResult(run.result);
-                 // The points of the run that was opened, not of whatever the
-                 // form is set to now, so the residuals line up with the table
-                 syncPointsToRun(run.result);
-                 redraw();
+                 // Redrawn once the points are in: an old run records no
+                 // wavelength to draw its model at, and the point list is
+                 // what answers for it
+                 syncPointsToRun(run.result).then(redraw);
              } else {
                  fitResult = null;
                  setFitStatus(`Run ${runWhen(runId)} did not finish`, true);
@@ -1233,15 +1233,23 @@
          .catch(err => setFitStatus(err.message, true));
  }
 
- // Opening a run puts the form back to what that run was asked with, so the
- // point list and the residuals beside it describe the same thing
+ // Opening a run puts the form back to what that run was asked with: its SED
+ // file, and the points it set aside.
+ //
+ // The list itself is read again from that file rather than lifted out of the
+ // run. It is a form for the next fit, and a row carried over from a run
+ // brings that run's ``used`` with it - which is false for every point the run
+ // was told to leave out, and false is how the switch decides it cannot be
+ // turned back on. What the run actually fitted is in its log; what this list
+ // is for is asking the next question.
  function syncPointsToRun(result) {
+     fitExcluded = new Set((result.selection || {}).exclude || []);
+
      if (result.source) {
          document.getElementById('fit-source').value = result.source;
      }
-     fitExcluded = new Set((result.selection || {}).exclude || []);
-     fitPoints = result.points || fitPoints;
-     buildPointList();
+
+     return loadPoints();
  }
 
  // Deleting a run loses a fit that can be run again, but it is still a delete
