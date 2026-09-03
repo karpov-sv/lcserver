@@ -128,7 +128,7 @@ def show_table(table, maxrows=100):
     table = Table(table)
 
     try:
-        if len(table) > maxrows:
+        if maxrows and len(table) > maxrows:
             table = table[:maxrows]
 
         for col in table.itercols():

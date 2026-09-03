@@ -158,14 +158,21 @@
         Tabular data with {{ table|length }} row(s)
       </h3>
 
-      {% if table|length > 100 %}
+      {% if table|length > 100 and not request.GET.all %}
         <p class="text-muted">
           First 100 rows are shown below
+          (<a href="?all=1">show all</a>)
         </p>
       {% endif %}
 
       <!-- <div class="overflow-auto mb-2"> -->
-      <pre style="white-space: pre-wrap;">{{ table|show_table:100 }}</pre>
+      <pre style="white-space: pre-wrap;">
+        {% if request.GET.all %}
+          {{ table|show_table:0 }}
+        {% else %}
+          {{ table|show_table:100 }}
+        {% endif %}
+      </pre>
       <!-- </div> -->
 
     {% elif mode == 'image' %}
