@@ -1168,8 +1168,7 @@ function plotPeriodogram(data) {
 
     periodogramData = pg;
 
-    const container = document.getElementById('periodogram-box');
-    container.style.display = 'block';
+    document.getElementById('periodogram-box').style.display = 'block';
 
     const top = markTop(pg);
     const marks = foldedMarks(pg);
@@ -1217,8 +1216,9 @@ function plotPeriodogram(data) {
         showlegend: true
     }, {responsive: true, displaylogo: false});
 
-    // Clicking a peak folds the light curve at that period
-    container.on('plotly_click', function(ev) {
+    // Clicking a peak folds the light curve at that period. The handler goes on
+    // the plot itself, not the box around it - only the former is a Plotly graph
+    document.getElementById('periodogram-container').on('plotly_click', function(ev) {
         if (ev.points && ev.points.length)
             setPeriod(ev.points[0].x);
     });
