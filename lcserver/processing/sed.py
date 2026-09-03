@@ -984,7 +984,7 @@ def target_sed(config, basepath=None, verbose=True, show=False):
     if curated is not None:
         write_spectrum(curated[columns], basepath, 'sed')
         log(f"\n{len(curated)} points from the named catalogues written to file:sed.vot")
-        log(f"\n{len(curated)} points from the named catalogues written to file:sed.txt")
+        log(f"{len(curated)} points from the named catalogues written to file:sed.txt")
 
     if complete is not None:
         write_spectrum(complete[columns], basepath, 'sed_all')
