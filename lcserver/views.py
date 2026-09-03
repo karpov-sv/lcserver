@@ -117,6 +117,24 @@ def list_files(request, path='', base=settings.TARGETS_PATH):
                 traceback.print_exc()
                 pass
 
+        # JSON files
+        elif 'json' in context['mime']:
+            try:
+                with open(fullpath, 'r') as f:
+                    context['contents'] = f.read()
+
+                try:
+                    import json
+                    parsed = json.loads(context['contents'])
+
+                    context['contents'] = json.dumps(parsed, indent=4)
+                except:
+                    # Malformed JSON
+                    pass
+                context['mode'] = 'text'
+            except:
+                pass
+
         # Text files
         elif 'text' in context['mime']:
             try:
