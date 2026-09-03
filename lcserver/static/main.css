@@ -307,3 +307,16 @@ span.asteriskField {
     user-select: none !important;
     cursor: ns-resize !important;
 }
+
+
+/* Remove up/down buttons from number inputs */
+/* For Chrome/Edge and Safari */
+input[type="number"].number-plain::-webkit-outer-spin-button,
+input[type="number"].number-plain::-webkit-inner-spin-button {
+    appearance: none;
+}
+
+/* For Firefox */
+input[type="number"].number-plain {
+    appearance: textfield;
+}

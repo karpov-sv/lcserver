@@ -257,6 +257,54 @@ def get_survey_task(source_id):
     return _survey_tasks.get(source_id)
 
 
+# Fitting the photosphere is not acquisition: nothing is fetched, and the
+# answer depends on choices the user made rather than on what an archive
+# happens to hold. So it is not a survey source and has no button of its own -
+# it is started from the spectral viewer, which is where the photometry being
+# fitted is already on screen and can be selected from.
+#
+# It borrows the acquisition machinery all the same. A fit takes tens of
+# seconds, which is too long for a request, and the target's celery_id is the
+# right place to record it: a fit and an acquisition should not run at once,
+# the acquisition being liable to rewrite the very files the fit is reading.
+@shared_task(bind=True, acks_late=True, reject_on_worker_lost=True)
+def task_sed_fit(self, id, run_id, selection=None, options=None):
+    with TaskProcessContext(self, id) as ctx:
+        if ctx.cancelled:
+            return
+
+        target = ctx.target
+        config = target.config
+        config['target_name'] = target.name
+
+        outpath = os.path.join(ctx.basepath, 'sedfit', run_id)
+        os.makedirs(outpath, exist_ok=True)
+
+        log = partial(processing.print_to_file,
+                      logname=os.path.join(outpath, 'fit.log'))
+        log(clear=True)
+
+        try:
+            from .processing import sedfit
+
+            sedfit.target_sed_fit(config, basepath=ctx.basepath,
+                                  outpath=outpath, selection=selection,
+                                  options=options, verbose=log)
+            target.state = 'SED fitted'
+        except processing.SourceError as e:
+            # The fit could not be attempted and has said why - too few points,
+            # no SED yet, no grid covering the bands. Nothing a traceback adds.
+            log(f"\nError: {e}")
+            target.state = 'failed'
+        except BaseException:
+            import traceback
+
+            log("\nError: the fit did not finish\n", traceback.format_exc())
+            target.state = 'failed'
+
+        fix_config(config)
+
+
 @shared_task(bind=True)
 def task_finalize(self, id, steps=None):
     target = models.Target.objects.get(id=id)

@@ -6,6 +6,7 @@ from django.shortcuts import get_object_or_404
 
 import os
 import glob
+import re
 
 import numpy as np
 from astropy.table import Table
@@ -266,3 +267,357 @@ def load_spectrum_json(request, id):
         'telluric': [{'from': _[0], 'to': _[1]} for _ in TELLURIC_BANDS],
         'count': len(spectra),
     })
+
+
+# What a caller may set, and what it becomes. Everything else in a posted
+# options object is ignored rather than passed through: the fit reads its
+# options straight out of this dictionary, and an unchecked key would be a way
+# to reach into it from a request.
+FIT_OPTIONS = {
+    'grids': lambda v: [str(_) for _ in v][:6],
+    'teff_prior': lambda v: _prior(v),
+    'logg_prior': lambda v: _prior(v),
+    'av_max': lambda v: max(0.0, float(v)),
+    'distance': lambda v: float(v),
+    'distance_err': lambda v: float(v),
+    'nlive': lambda v: int(np.clip(int(v), 50, 4000)),
+    'err_floor': lambda v: float(np.clip(float(v), 0, 1)),
+    'err_unknown': lambda v: float(np.clip(float(v), 0, 1)),
+    'seed': lambda v: int(v),
+}
+
+# Priors arrive as ['uniform', low, high] and are rebuilt here rather than
+# eval'd or passed on: the kind has to be one the fitter knows, and the bounds
+# have to be numbers.
+PRIOR_KINDS = ('uniform', 'loguniform', 'normal', 'truncnorm', 'fixed')
+
+
+def _prior(value):
+    kind = str(value[0])
+    if kind not in PRIOR_KINDS:
+        raise ValueError(f'unknown prior {kind}')
+    return [kind] + [float(_) for _ in value[1:]]
+
+
+@login_required
+@require_http_methods(["POST"])
+def fit_sed(request, id):
+    """Start a photosphere fit over a chosen subset of the SED.
+
+    The client sends what to fit rather than the data - which points are in,
+    which grids to use, what to assume - and the points themselves are read
+    here from the same file the viewer drew them from.
+
+    A fit takes tens of seconds, so it goes through Celery like an
+    acquisition, and for the same reason it takes the target's single task
+    slot: a fit running while a source rewrites sed.vot would be reading a
+    file out from under itself.
+    """
+    import json
+    import datetime
+
+    from . import celery_tasks
+
+    target = get_object_or_404(models.Target, id=id)
+
+    if not target.can_edit(request.user):
+        return JsonResponse({'error': 'Forbidden'}, status=403)
+
+    if target.celery_id is not None:
+        return JsonResponse(
+            {'error': 'Something is already running for this target'},
+            status=409)
+
+    try:
+        data = json.loads(request.body or '{}')
+    except ValueError:
+        return JsonResponse({'error': 'Malformed request'}, status=400)
+
+    source = str(data.get('source') or 'sed.vot')
+    if source not in ('sed.vot', 'sed_all.vot'):
+        return JsonResponse({'error': 'Unknown SED file'}, status=400)
+
+    if not os.path.exists(os.path.join(target.path(), source)):
+        return JsonResponse({'error': f'{source} is not there yet'}, status=400)
+
+    selection = {'source': source}
+    for key in ('points', 'exclude'):
+        if data.get(key) is not None:
+            selection[key] = [str(_) for _ in data[key]]
+
+    options = {}
+    try:
+        for key, clean in FIT_OPTIONS.items():
+            if data.get(key) is not None:
+                options[key] = clean(data[key])
+    except (TypeError, ValueError, IndexError, KeyError) as e:
+        return JsonResponse({'error': f'Bad option: {e}'}, status=400)
+
+    # Named for when it ran, which is how a list of runs wants to be sorted,
+    # and settled here so the answer can carry it before the fit has started
+    run_id = datetime.datetime.now().strftime('%Y%m%d-%H%M%S')
+
+    # The id is recorded before the task is published, as everywhere else here:
+    # the task asks on entry whether it still has a celery_id, and a worker can
+    # reach that question before a save that came afterwards.
+    signature = celery_tasks.task_sed_fit.subtask(
+        args=[target.id, run_id], kwargs={'selection': selection,
+                                          'options': options})
+    target.celery_id = signature.freeze().id
+    target.state = 'fitting the SED'
+    target.save()
+
+    signature.apply_async()
+
+    return JsonResponse({'run_id': run_id, 'task_id': target.celery_id,
+                         'state_url': f'/targets/{target.id}/state'})
+
+
+# What a run may have drawn. Served through the target's own file view, which
+# already sanitises the path and checks the permission, rather than by
+# anything new here.
+FIGURE_TYPES = ('*.png', '*.jpg', '*.svg', '*.pdf')
+
+
+def _run_figures(target, run_id, path):
+    """Any figure a run left behind, as URLs the page can use directly."""
+    figures = []
+    for pattern in FIGURE_TYPES:
+        for figure in sorted(glob.glob(os.path.join(path, pattern))):
+            name = os.path.basename(figure)
+            figures.append({
+                'name': name,
+                'url': f'/targets/{target.id}/view/sedfit/{run_id}/{name}',
+            })
+
+    return figures
+
+
+@login_required
+@require_http_methods(["GET"])
+def sed_fits(request, id):
+    """The runs on disk: an index of them, or one of them in full.
+
+    Two shapes from one endpoint because the two uses differ. A list wants
+    enough to choose by and nothing more - the posteriors of a dozen runs are
+    megabytes, and the page only ever draws one at a time. Asking for a run by
+    name gets the whole of it, log included.
+    """
+    import json
+
+    target = get_object_or_404(models.Target, id=id)
+
+    if not target.can_view(request.user):
+        return JsonResponse({'error': 'Forbidden'}, status=403)
+
+    wanted = request.GET.get('run')
+    root = os.path.join(target.path(), 'sedfit')
+
+    def read(path):
+        result, log = None, None
+
+        if os.path.exists(os.path.join(path, 'fit.json')):
+            with open(os.path.join(path, 'fit.json')) as f:
+                try:
+                    result = json.load(f)
+                except ValueError:
+                    result = None
+
+        if os.path.exists(os.path.join(path, 'fit.log')):
+            with open(os.path.join(path, 'fit.log')) as f:
+                log = f.read()
+
+        return result, log
+
+    if wanted:
+        # Named by the caller, so it is checked rather than trusted: a run is
+        # a timestamp and nothing else, and anything else does not name a run.
+        if not re.fullmatch(r'[0-9]{8}-[0-9]{6}', wanted):
+            return JsonResponse({'error': 'Not a run name'}, status=400)
+
+        path = os.path.join(root, wanted)
+        if not os.path.isdir(path):
+            raise Http404
+
+        result, log = read(path)
+
+        return JsonResponse({'run_id': wanted, 'result': result, 'log': log,
+                             'figures': _run_figures(target, wanted, path)})
+
+    runs = []
+    for path in sorted(glob.glob(os.path.join(root, '*')), reverse=True):
+        if not os.path.isdir(path):
+            continue
+
+        run_id = os.path.basename(path)
+        result, log = read(path)
+
+        entry = {'run_id': run_id, 'finished': result is not None,
+                 'figures': len(_run_figures(target, run_id, path)),
+                 'has_log': log is not None}
+
+        # Enough to tell one run from another in a list, and to see at a
+        # glance which is worth opening
+        if result:
+            grids = result.get('grids') or {}
+            entry['source'] = result.get('source')
+            entry['grids'] = list(grids)
+            entry['points'] = sum(1 for p in result.get('points') or []
+                                  if p.get('used'))
+            first = next(iter(grids.values()), None)
+            if first:
+                entry['teff'] = first['teff']['median']
+                entry['jitter'] = first['jitter']['median']
+                entry['shrink'] = first.get('shrink')
+        elif log:
+            # A run that failed says so in its last line, which is the one
+            # worth putting in the list
+            lines = [_ for _ in log.strip().split('\n') if _.strip()]
+            entry['error'] = lines[-1][:200] if lines else None
+
+        runs.append(entry)
+
+    return JsonResponse({'runs': runs, 'count': len(runs)})
+
+
+@login_required
+@require_http_methods(["GET"])
+def sed_points(request, id):
+    """Every point of a SED file, and what a fit would do with each.
+
+    The same reading the fit itself does, so what the panel lists is what would
+    be fitted - including which points it would set aside, and why.
+    """
+    from .processing import sedfit
+
+    target = get_object_or_404(models.Target, id=id)
+
+    if not target.can_view(request.user):
+        return JsonResponse({'error': 'Forbidden'}, status=403)
+
+    source = request.GET.get('source') or 'sed.vot'
+    if source not in ('sed.vot', 'sed_all.vot'):
+        return JsonResponse({'error': 'Unknown SED file'}, status=400)
+
+    path = os.path.join(target.path(), source)
+    if not os.path.exists(path):
+        return JsonResponse({'error': f'{source} is not there yet',
+                             'points': [], 'bands': []}, status=200)
+
+    extra = sedfit.read_extra_points(target.path())
+    points = sedfit.read_sed_points(path, extra=extra)
+
+    return JsonResponse({
+        'source': source,
+        'points': points,
+        # What may be added by hand, for the picker
+        'bands': sedfit.known_bands(),
+        'added': [str(_) for _ in extra['comment']] if extra is not None else [],
+    })
+
+
+@login_required
+@require_http_methods(["POST"])
+def edit_sed_points(request, id):
+    """Add a measurement neither SED file has, or take one back out.
+
+    Kept in a file of its own beside them, so that re-running the SED step -
+    which rewrites what it fetched - does not silently drop what somebody
+    entered deliberately.
+    """
+    import json
+
+    from .processing import sedfit
+    from .processing.utils import SourceError
+
+    target = get_object_or_404(models.Target, id=id)
+
+    if not target.can_edit(request.user):
+        return JsonResponse({'error': 'Forbidden'}, status=403)
+
+    try:
+        data = json.loads(request.body or '{}')
+    except ValueError:
+        return JsonResponse({'error': 'Malformed request'}, status=400)
+
+    action = data.get('action')
+    band = str(data.get('band') or '')
+
+    try:
+        if action == 'remove':
+            sedfit.remove_extra_point(target.path(), band)
+        elif action == 'add':
+            unit = data.get('unit') or 'mag'
+            if unit not in ('mag', 'flux'):
+                return JsonResponse({'error': 'Neither a magnitude nor a flux'},
+                                    status=400)
+            sedfit.add_extra_point(target.path(), band,
+                                   float(data['value']),
+                                   float(data['error']) if data.get('error') else None,
+                                   unit=unit)
+        else:
+            return JsonResponse({'error': 'Unknown action'}, status=400)
+    except SourceError as e:
+        return JsonResponse({'error': str(e)}, status=400)
+    except (TypeError, ValueError, KeyError) as e:
+        return JsonResponse({'error': f'Bad value: {e}'}, status=400)
+
+    extra = sedfit.read_extra_points(target.path())
+
+    return JsonResponse({
+        'added': ([{'band': str(r['comment']).rpartition(' ')[2],
+                    'wavelength': float(r['wavelength']),
+                    'flux': float(r['flux']),
+                    'flux_error': (float(r['flux_error'])
+                                   if np.isfinite(r['flux_error']) else None)}
+                   for r in extra] if extra is not None else []),
+    })
+
+
+@login_required
+@require_http_methods(["POST"])
+def delete_sed_fits(request, id):
+    """Throw away one run, or all of them.
+
+    A run is a directory of a fit that has already happened, so removing it
+    loses nothing that cannot be fitted again - but it is still a delete, and
+    it is refused while something is running, since the run being written is
+    the one most likely to be asked for by mistake.
+    """
+    import json
+    import shutil
+
+    target = get_object_or_404(models.Target, id=id)
+
+    if not target.can_edit(request.user):
+        return JsonResponse({'error': 'Forbidden'}, status=403)
+
+    if target.celery_id is not None:
+        return JsonResponse(
+            {'error': 'Something is running for this target - wait for it'},
+            status=409)
+
+    try:
+        data = json.loads(request.body or '{}')
+    except ValueError:
+        return JsonResponse({'error': 'Malformed request'}, status=400)
+
+    root = os.path.join(target.path(), 'sedfit')
+
+    if data.get('all'):
+        shutil.rmtree(root, ignore_errors=True)
+        return JsonResponse({'deleted': 'all'})
+
+    run = str(data.get('run') or '')
+    # Checked rather than trusted, as everywhere a run is named: a run is a
+    # timestamp, and anything else does not name one
+    if not re.fullmatch(r'[0-9]{8}-[0-9]{6}', run):
+        return JsonResponse({'error': 'Not a run name'}, status=400)
+
+    path = os.path.join(root, run)
+    if not os.path.isdir(path):
+        raise Http404
+
+    shutil.rmtree(path)
+
+    return JsonResponse({'deleted': run})

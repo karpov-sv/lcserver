@@ -8,6 +8,7 @@
 <script src="https://cdn.plot.ly/plotly-3.7.0.min.js" charset="utf-8"></script>
 
 {% load static %}
+{% include "popup_image.html" %}
 <script src="{% static 'plot_theme.js' %}"></script>
 <script src="{% static 'plot_resize.js' %}"></script>
 
@@ -110,6 +111,7 @@
   <strong>Error loading spectra:</strong> <span id="error-text"></span>
 </div>
 
+<!-- Data sources -->
 <div class="control-panel" id="control-panel" style="display: none;">
   <div class="d-flex flex-wrap align-items-center gap-3 mb-3">
     <h5 class="mb-0">Display</h5>
@@ -173,9 +175,125 @@
   </div>
 </div>
 
+<!-- Spectrum -->
 <div id="plotly-box" class="plotly-resizable mb-4" style="height: 620px; display: none;">
   <div id="plotly-container" class="plotly-chart"></div>
   <div class="plot-resize-handle" role="separator" title="Drag to resize the plot"></div>
+</div>
+
+<!-- Model grids -->
+<div class="control-panel" id="fit-panel" style="display: none;">
+  <div class="d-flex flex-wrap align-items-center gap-3 mb-3">
+    <h5 class="mb-0">Fit a photosphere</h5>
+    <span class="spectrum-info">
+      One model atmosphere, reddened and put at a distance, against the points ticked below
+    </span>
+    <button class="btn btn-sm btn-outline-secondary ms-auto" type="button"
+            data-bs-toggle="collapse" data-bs-target="#fit-body">
+      <i class="fa fa-sliders"></i> Show / hide
+    </button>
+  </div>
+
+  <div class="collapse" id="fit-body">
+    <div class="row g-3">
+      <div class="col-lg-7">
+        <div class="d-flex flex-wrap align-items-center gap-3 mb-2">
+          <div>
+            <label class="control-label" for="fit-source">Points from</label>
+            <select id="fit-source" class="form-select form-select-sm d-inline-block w-auto">
+              <option value="sed.vot">sed.vot &mdash; one catalogue per band</option>
+              <option value="sed_all.vot">sed_all.vot &mdash; every catalogue at the position</option>
+            </select>
+          </div>
+          <button class="btn btn-sm btn-outline-primary" onclick="selectAllPoints(true)">All</button>
+          <button class="btn btn-sm btn-outline-primary" onclick="selectAllPoints(false)">None</button>
+          <span class="spectrum-info" id="fit-point-count"></span>
+        </div>
+
+        <div id="fit-points" style="max-height: 340px; overflow-y: auto;"></div>
+
+        <div class="d-flex flex-wrap align-items-end gap-2 mt-2">
+          <div>
+            <label class="control-label" for="add-band">Add a point</label>
+            <select id="add-band" class="form-select form-select-sm d-inline-block w-auto"></select>
+          </div>
+          <input type="number" step="any" id="add-value" class="form-control form-control-sm size-control number-plain me-0" placeholder="value">
+          <label class="control-label me-0 mb-1" for="add-error">&pm;</label>
+          <input type="number" step="any" id="add-error" class="form-control form-control-sm size-control number-plain" placeholder="error">
+          <select id="add-unit" class="form-select form-select-sm d-inline-block w-auto">
+            <option value="mag">magnitude</option>
+            <option value="flux">flux, erg/s/cm2/A</option>
+          </select>
+          <button class="btn btn-sm btn-outline-primary" onclick="addPoint()">
+            <i class="fa fa-plus"></i> Add
+          </button>
+        </div>
+      </div>
+
+      <div class="col-lg-5">
+        <div class="mb-2">
+          <label class="control-label">Model grids</label>
+          <div id="fit-grids" class="d-flex flex-wrap gap-2"></div>
+        </div>
+
+        <div class="d-flex flex-wrap align-items-end gap-2 mb-2">
+          <div>
+            <label class="control-label" for="fit-teff-lo">Teff prior, K</label><br>
+            <input type="number" id="fit-teff-lo" class="form-control form-control-sm d-inline-block number-plain" style="width:80px" value="2000">
+            <input type="number" id="fit-teff-hi" class="form-control form-control-sm d-inline-block number-plain" style="width:80px" value="70000">
+          </div>
+          <div>
+            <label class="control-label" for="fit-logg-lo">log g</label><br>
+            <input type="number" step="0.1" id="fit-logg-lo" class="form-control form-control-sm d-inline-block" style="width:65px" value="1.0">
+            <input type="number" step="0.1" id="fit-logg-hi" class="form-control form-control-sm d-inline-block" style="width:65px" value="5.5">
+          </div>
+          <div>
+            <label class="control-label" for="fit-nlive">live points</label><br>
+            <input type="number" step="500" id="fit-nlive" class="form-control form-control-sm d-inline-block" style="width:75px" value="500">
+          </div>
+        </div>
+
+        <div class="d-flex flex-wrap align-items-center gap-2 mb-3">
+          <button class="btn btn-sm btn-primary" id="fit-run" onclick="runFit()">
+            <i class="fa fa-play"></i> Fit
+          </button>
+          <span id="fit-status" class="spectrum-info"></span>
+        </div>
+
+        <div id="fit-result"></div>
+      </div>
+    </div>
+
+    <div class="mt-3">
+      <div class="d-flex align-items-center gap-2 mb-2">
+        <h6 class="mb-0">Runs on disk</h6>
+        <span class="spectrum-info" id="fit-run-count"></span>
+        <button class="btn btn-sm btn-outline-secondary ms-auto" onclick="loadRuns()"
+                title="Re-read the run directory">
+          <i class="fa fa-refresh"></i>
+        </button>
+        <button class="btn btn-sm btn-outline-danger" onclick="deleteRuns()"
+                title="Delete every run of this target">
+          <i class="fa fa-trash"></i> All
+        </button>
+      </div>
+      <div id="fit-runs" style="max-height: 220px; overflow-y: auto;"></div>
+    </div>
+
+    <div id="fit-figures" class="mt-3 d-flex flex-wrap gap-3"></div>
+
+    <div class="mt-3" id="fit-log-box" style="display: none;">
+      <button class="btn btn-sm btn-outline-secondary" type="button"
+              data-bs-toggle="collapse" data-bs-target="#fit-log">
+        <i class="fa fa-file-text-o"></i> Log
+      </button>
+      <div class="collapse mt-2" id="fit-log">
+        <pre class="small text-body-secondary mb-0 p-2"
+             style="max-height: 300px; overflow: auto; background: var(--bs-body-bg)"
+             id="fit-log-text"></pre>
+      </div>
+    </div>
+  </div>
 </div>
 
 <script>
@@ -375,6 +493,9 @@
 
          traces.push(trace);
      });
+
+     // Whatever a fit produced, drawn over the points it was fitted to
+     fitTraces().forEach(trace => traces.push(trace));
 
      const shapes = [];
      const annotations = [];
@@ -579,6 +700,15 @@
          document.getElementById('control-panel').style.display = 'block';
          document.getElementById('plotly-box').style.display = 'block';
 
+         // Only where there is a SED to fit: the panel is meaningless for a
+         // target that has spectra but no catalogue photometry
+         if (spectra.some(s => s.source_id === 'sed')) {
+             document.getElementById('fit-panel').style.display = 'block';
+             buildGridPicker();
+             loadPoints();
+             loadRuns();
+         }
+
          buildControls();
          redraw();
 
@@ -594,6 +724,571 @@
          document.getElementById('error-text').textContent = err.message;
          document.getElementById('error-message').style.display = 'block';
      });
+ // ---------------------------------------------------------------- fitting
+
+ // The points of whichever SED file is chosen, as the fitter reads them - so
+ // what is listed here is what would be fitted, including what it would set
+ // aside and why.
+ let fitPoints = [];
+ let fitBands = [];
+ // Points the user has turned off by hand. Kept as the comment that names each
+ // measurement rather than as an index: the list is reread whenever the source
+ // changes, and an index would then mean a different point.
+ let fitExcluded = new Set();
+ let fitResult = null;
+ let fitPoll = null;
+
+ const GRIDS = [
+     ['btsettl', 'BT-Settl', '400 - 70000 K'],
+     ['tlusty', 'TLUSTY', '15000 - 55000 K, the hot-star models'],
+     ['phoenix', 'Phoenix v2', '2300 - 12000 K'],
+     ['ck04', 'Castelli & Kurucz', '3500 - 12000 K'],
+     ['kurucz', 'Kurucz', '3500 - 12000 K'],
+     ['bosz', 'BOSZ', '2800 - 16000 K'],
+     ['koester', 'Koester', 'white dwarfs'],
+ ];
+
+ function loadPoints() {
+     const source = document.getElementById('fit-source').value;
+
+     return fetch(`/targets/{{ target_id }}/sed_points/?source=${source}`)
+         .then(r => r.json())
+         .then(data => {
+             if (data.error) throw new Error(data.error);
+             fitPoints = data.points || [];
+             fitBands = data.bands || [];
+             buildPointList();
+             buildBandPicker();
+         })
+         .catch(err => {
+             document.getElementById('fit-points').innerHTML =
+                 `<div class="alert alert-warning py-1 px-2 mb-0">${err.message}</div>`;
+         });
+ }
+
+ // A point is fitted when the reader would use it and the user has not turned
+ // it off. The reader's own reasons - a band no grid models, a second
+ // catalogue for a band already taken - are shown but not overridable here:
+ // they are properties of the data rather than choices.
+ function pointIsOn(point) {
+     return point.used && !fitExcluded.has(point.id);
+ }
+
+ function buildPointList() {
+     const host = document.getElementById('fit-points');
+     host.innerHTML = '';
+
+     fitPoints.forEach(point => {
+         const row = document.createElement('div');
+         row.className = 'spectrum-control py-1';
+
+         const residual = fitResidual(point.band);
+         const wavelength = point.wave_um ? point.wave_um.toFixed(3) + ' um' : '';
+         const added = point.id.startsWith('added ');
+
+         row.innerHTML = `
+           <div class="form-check form-switch me-2">
+             <input class="form-check-input" type="checkbox"
+                    ${pointIsOn(point) ? 'checked' : ''}
+                    ${point.used ? '' : 'disabled'}>
+           </div>
+           <label class="spectrum-label ${point.used ? '' : 'text-body-secondary'}">
+             ${added ? '<i class="fa fa-pencil me-1" title="added by hand"></i>' : ''}${point.id}
+           </label>
+           <span class="spectrum-info">${point.band || ''}</span>
+           <span class="spectrum-info">${wavelength}</span>
+           <span class="spectrum-info">${residual}</span>
+           ${added ? '<button class="btn btn-sm btn-outline-danger py-0 px-1"' +
+                     ' title="remove this point"><i class="fa fa-times"></i></button>' : ''}
+         `;
+
+         if (!point.used && point.note) {
+             row.title = point.note;
+         }
+
+         const box = row.querySelector('input[type="checkbox"]');
+         if (box) {
+             box.addEventListener('change', e => {
+                 if (e.target.checked) fitExcluded.delete(point.id);
+                 else fitExcluded.add(point.id);
+                 updatePointCount();
+             });
+         }
+
+         const drop = row.querySelector('button');
+         if (drop) {
+             drop.addEventListener('click', () => removePoint(point.id.slice(6)));
+         }
+
+         host.appendChild(row);
+     });
+
+     updatePointCount();
+ }
+
+ // After a fit, each band carries how far it sat from the model
+ function fitResidual(band) {
+     if (!fitResult || !band) return '';
+
+     for (const summary of Object.values(fitResult.grids || {})) {
+         for (const row of summary.residuals || []) {
+             if (row.band === band) {
+                 const sign = row.residual >= 0 ? '+' : '';
+                 const bad = Math.abs(row.residual) > 2 ? ' text-danger' : '';
+                 return `<span class="${bad}">${sign}${row.residual.toFixed(2)} &sigma;</span>`;
+             }
+         }
+     }
+     return '';
+ }
+
+ function updatePointCount() {
+     const on = fitPoints.filter(pointIsOn).length;
+     document.getElementById('fit-point-count').textContent =
+         `${on} of ${fitPoints.length} points will be fitted`;
+     document.getElementById('fit-run').disabled = on < 5;
+ }
+
+ function selectAllPoints(on) {
+     fitPoints.forEach(point => {
+         if (!point.used) return;
+         if (on) fitExcluded.delete(point.id);
+         else fitExcluded.add(point.id);
+     });
+     buildPointList();
+ }
+
+ function buildBandPicker() {
+     const picker = document.getElementById('add-band');
+     if (picker.options.length) return;
+
+     fitBands.forEach(band => {
+         const option = document.createElement('option');
+         option.value = band.band;
+         option.textContent = `${band.band} - ${(band.wavelength / 1e4).toFixed(3)} um, ${band.system}`;
+         picker.appendChild(option);
+     });
+ }
+
+ function editPoints(body) {
+     return fetch('/targets/{{ target_id }}/edit_sed_points/', {
+         method: 'POST',
+         headers: {'Content-Type': 'application/json',
+                   'X-CSRFToken': csrfToken()},
+         body: JSON.stringify(body),
+     }).then(r => r.json().then(data => {
+         if (!r.ok) throw new Error(data.error || r.statusText);
+         return data;
+     }));
+ }
+
+ function addPoint() {
+     const value = parseFloat(document.getElementById('add-value').value);
+     if (!isFinite(value)) {
+         setFitStatus('A point needs a value', true);
+         return;
+     }
+     const error = parseFloat(document.getElementById('add-error').value);
+
+     editPoints({
+         action: 'add',
+         band: document.getElementById('add-band').value,
+         value: value,
+         error: isFinite(error) ? error : null,
+         unit: document.getElementById('add-unit').value,
+     })
+     .then(() => { setFitStatus(''); loadPoints(); })
+     .catch(err => setFitStatus(err.message, true));
+ }
+
+ function removePoint(band) {
+     editPoints({action: 'remove', band: band})
+         .then(() => loadPoints())
+         .catch(err => setFitStatus(err.message, true));
+ }
+
+ function csrfToken() {
+     const match = document.cookie.match(/csrftoken=([^;]+)/);
+     return match ? match[1] : '';
+ }
+
+ function buildGridPicker() {
+     const host = document.getElementById('fit-grids');
+     host.innerHTML = '';
+
+     GRIDS.forEach(([id, label, range]) => {
+         const div = document.createElement('div');
+         div.className = 'form-check';
+         div.innerHTML = `
+           <input class="form-check-input" type="checkbox" id="grid-${id}"
+                  value="${id}" ${id === 'btsettl' ? 'checked' : ''}>
+           <label class="form-check-label" for="grid-${id}" title="${range}">${label}</label>
+         `;
+         host.appendChild(div);
+     });
+ }
+
+ function chosenGrids() {
+     return GRIDS.map(g => g[0])
+                 .filter(id => document.getElementById(`grid-${id}`).checked);
+ }
+
+ function setFitStatus(text, bad) {
+     const el = document.getElementById('fit-status');
+     el.textContent = text;
+     el.className = bad ? 'spectrum-info text-danger' : 'spectrum-info';
+ }
+
+ function runFit() {
+     const grids = chosenGrids();
+     if (!grids.length) {
+         setFitStatus('Choose at least one grid', true);
+         return;
+     }
+
+     fitRunning(true);
+     setFitStatus('Starting...');
+
+     fetch('/targets/{{ target_id }}/fit_sed/', {
+         method: 'POST',
+         headers: {'Content-Type': 'application/json',
+                   'X-CSRFToken': csrfToken()},
+         body: JSON.stringify({
+             source: document.getElementById('fit-source').value,
+             exclude: Array.from(fitExcluded),
+             grids: grids,
+             teff_prior: ['loguniform',
+                          parseFloat(document.getElementById('fit-teff-lo').value),
+                          parseFloat(document.getElementById('fit-teff-hi').value)],
+             logg_prior: ['uniform',
+                          parseFloat(document.getElementById('fit-logg-lo').value),
+                          parseFloat(document.getElementById('fit-logg-hi').value)],
+             nlive: parseInt(document.getElementById('fit-nlive').value, 10),
+         }),
+     })
+     .then(r => r.json().then(data => {
+         if (!r.ok) throw new Error(data.error || r.statusText);
+         return data;
+     }))
+     .then(data => {
+         setFitStatus('Fitting - this takes tens of seconds per grid');
+         waitForFit(data.run_id);
+     })
+     .catch(err => {
+         setFitStatus(err.message, true);
+         fitRunning(false);
+     });
+ }
+
+ // The button carries the state, as it does in the light curve viewer: there
+ // is no other sign on the page that a fit is under way, and it is tens of
+ // seconds before there is
+ const FIT_BUTTON_IDLE = '<i class="fa fa-play"></i> Fit';
+
+ function fitRunning(running) {
+     const button = document.getElementById('fit-run');
+     button.disabled = running;
+     button.innerHTML = running
+         ? '<i class="fa fa-spinner fa-spin"></i> Fitting...'
+         : FIT_BUTTON_IDLE;
+ }
+
+ // Polled on the target rather than on the task: the target is what carries a
+ // celery_id, and it is cleared whichever way the run ended.
+ function waitForFit(runId) {
+     if (fitPoll) clearInterval(fitPoll);
+
+     fitPoll = setInterval(() => {
+         fetch('/targets/{{ target_id }}/state')
+             .then(r => r.json())
+             .then(data => {
+                 if (data.celery_id) return;
+
+                 clearInterval(fitPoll);
+                 fitPoll = null;
+                 fitRunning(false);
+                 loadFitResult(runId);
+             })
+             .catch(() => {});
+     }, 3000);
+ }
+
+ function loadFitResult(runId) {
+     // The same path a historical run takes, so a fresh result and an opened
+     // one are shown by one piece of code rather than two
+     openFitRun(runId);
+ }
+
+ function showFitLog(log) {
+     document.getElementById('fit-log-box').style.display = log ? 'block' : 'none';
+     document.getElementById('fit-log-text').textContent = log || '';
+ }
+
+ function showFitResult(result) {
+     const rows = [];
+
+     Object.entries(result.grids).forEach(([grid, summary]) => {
+         const T = summary.teff, A = summary.Av, th = summary.theta_mas;
+         // Below about ninety per cent the temperature is largely the prior
+         // rather than the data, and saying so is worth more than the number
+         const weak = summary.shrink < 0.9;
+         rows.push(`
+           <tr>
+             <td>${grid}</td>
+             <td>${T.median.toFixed(0)} <span class="text-body-secondary">+${(T.hi-T.median).toFixed(0)}/-${(T.median-T.lo).toFixed(0)}</span></td>
+             <td>${A.median.toFixed(2)}</td>
+             <td>${th.median.toFixed(4)}</td>
+             <td>${summary.jitter.median.toFixed(3)}</td>
+             <td class="${weak ? 'text-warning' : ''}"
+                 title="How much narrower the temperature posterior is than its prior">
+               ${(100 * summary.shrink).toFixed(0)}%</td>
+           </tr>`);
+     });
+
+     const spread = result.spread && result.spread.teff
+         ? `<div class="spectrum-info mt-1" style="white-space: normal">Grids disagree by ${result.spread.teff.toFixed(0)} K,
+            which is the systematic from the atmosphere physics - not an error bar to average away.</div>`
+         : '';
+
+     document.getElementById('fit-result').innerHTML = `
+       <table class="table table-sm small mb-0">
+         <thead><tr>
+           <th>grid</th><th>Teff, K</th><th>Av</th><th>&theta;, mas</th>
+           <th title="The fractional model inadequacy the fit needed">jitter</th>
+           <th title="How much of the answer is the data rather than the prior">shrink</th>
+         </tr></thead>
+         <tbody>${rows.join('')}</tbody>
+       </table>${spread}`;
+ }
+
+ // The fitted model, as the flux it predicts in each band that was fitted.
+ // Diamonds rather than a curve: what the fit produced is a flux per band, and
+ // drawing a line through them would be claiming a spectrum it never computed.
+ // Where a fitted band's measurement is drawn. The run records it, but runs
+ // made before it did will not have it - so the point list, which is read
+ // fresh from the SED file, answers for them.
+ function drawnWavelength(residual) {
+     if (residual.wave_drawn_um) return residual.wave_drawn_um;
+
+     const point = fitPoints.find(p => p.band === residual.band && p.wave_drawn_um);
+     return point ? point.wave_drawn_um : residual.wave_um;
+ }
+
+ function fitTraces() {
+     if (!fitResult) return [];
+
+     const traces = [];
+     Object.entries(fitResult.grids).forEach(([grid, summary], n) => {
+         const residuals = summary.residuals || [];
+         if (!residuals.length) return;
+
+         traces.push({
+             // Drawn where the measurement is drawn, not where it was
+             // fitted: the fit uses the filter's pivot wavelength and the
+             // viewer plots the file's own effective wavelength, and the two
+             // are up to three per cent apart - enough to see.
+             x: residuals.map(r => drawnWavelength(r) * 1e4),
+             // The fit works in erg/s/cm2/um, because that is the unit the
+             // model grids are tabulated in; everything drawn here is per
+             // Angstrom. Without this the model sits four decades above the
+             // photometry it was fitted to, which is off the plot entirely.
+             y: residuals.map(r => r.model * 1e-4),
+             mode: 'markers',
+             type: 'scatter',
+             name: `${grid} model`,
+             marker: {symbol: 'diamond-open', size: 11,
+                      color: n ? '#c0392b' : '#8e44ad',
+                      line: {width: 2}},
+             hovertemplate: '%{x:.0f} A<br>%{y:.3e}<extra>' + grid + '</extra>',
+         });
+     });
+
+     return traces;
+ }
+
+ // ------------------------------------------------------------- runs on disk
+
+ // The index rather than the runs themselves: a dozen posteriors is megabytes
+ // and only one is ever drawn, so the whole of a run is fetched when it is
+ // opened.
+ function loadRuns(select) {
+     return fetch('/targets/{{ target_id }}/sed_fits/')
+         .then(r => r.json())
+         .then(data => {
+             buildRunList(data.runs || [], select);
+             document.getElementById('fit-run-count').textContent =
+                 data.count ? `${data.count} run${data.count > 1 ? 's' : ''}`
+                            : 'nothing fitted yet';
+         })
+         .catch(() => {});
+ }
+
+ let openRun = null;
+
+ function buildRunList(runs, select) {
+     const host = document.getElementById('fit-runs');
+     host.innerHTML = '';
+
+     runs.forEach(run => {
+         const row = document.createElement('div');
+         row.className = 'spectrum-control py-1';
+         if (run.run_id === (select || openRun)) {
+             row.style.outline = '2px solid var(--bs-primary)';
+         }
+
+         // A run that did not finish is worth keeping in the list - what it
+         // was and why it failed is the reason to look at its log
+         const summary = run.finished
+             ? `<span class="spectrum-info">${run.points} points</span>
+                <span class="spectrum-info">${(run.grids || []).join(', ')}</span>
+                <span class="spectrum-info">${run.teff ? run.teff.toFixed(0) + ' K' : ''}</span>
+                <span class="spectrum-info">jitter ${run.jitter ? run.jitter.toFixed(3) : '-'}</span>
+                <span class="spectrum-info ${run.shrink < 0.9 ? 'text-warning' : ''}">${
+                    run.shrink != null ? (100 * run.shrink).toFixed(0) + '%' : ''}</span>`
+             : `<span class="spectrum-info text-danger">${run.error || 'did not finish'}</span>`;
+
+         row.innerHTML = `
+           <label class="spectrum-label" style="cursor:pointer">${runWhen(run.run_id)}</label>
+           ${summary}
+           ${run.figures ? `<span class="spectrum-info"><i class="fa fa-picture-o"></i> ${run.figures}</span>` : ''}
+           <button class="btn btn-sm btn-outline-danger py-0 px-1 ms-2"
+                   title="Delete this run"><i class="fa fa-times"></i></button>
+         `;
+
+         // The row opens the run; the button inside it does not, or every
+         // delete would open what it is about to remove
+         row.addEventListener('click', () => openFitRun(run.run_id));
+         row.querySelector('button').addEventListener('click', event => {
+             event.stopPropagation();
+             deleteRuns(run.run_id);
+         });
+
+         host.appendChild(row);
+     });
+ }
+
+ // 20260903-132909 as something readable
+ function runWhen(runId) {
+     const m = /^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})$/.exec(runId);
+     return m ? `${m[1]}-${m[2]}-${m[3]} ${m[4]}:${m[5]}:${m[6]}` : runId;
+ }
+
+ function openFitRun(runId) {
+     return fetch(`/targets/{{ target_id }}/sed_fits/?run=${encodeURIComponent(runId)}`)
+         .then(r => r.json())
+         .then(run => {
+             if (run.error) throw new Error(run.error);
+
+             openRun = runId;
+             showFitLog(run.log);
+             showFitFigures(run.figures || []);
+
+             if (run.result) {
+                 fitResult = run.result;
+                 setFitStatus(`Run ${runWhen(runId)}`);
+                 showFitResult(run.result);
+                 // The points of the run that was opened, not of whatever the
+                 // form is set to now, so the residuals line up with the table
+                 syncPointsToRun(run.result);
+                 redraw();
+             } else {
+                 fitResult = null;
+                 setFitStatus(`Run ${runWhen(runId)} did not finish`, true);
+                 document.getElementById('fit-result').innerHTML = '';
+                 redraw();
+             }
+
+             loadRuns(runId);
+         })
+         .catch(err => setFitStatus(err.message, true));
+ }
+
+ // Opening a run puts the form back to what that run was asked with, so the
+ // point list and the residuals beside it describe the same thing
+ function syncPointsToRun(result) {
+     if (result.source) {
+         document.getElementById('fit-source').value = result.source;
+     }
+     fitExcluded = new Set((result.selection || {}).exclude || []);
+     fitPoints = result.points || fitPoints;
+     buildPointList();
+ }
+
+ function showFitFigures(figures) {
+     const host = document.getElementById('fit-figures');
+     host.innerHTML = '';
+
+     // The images of one run are one set, so the dialog gets all of them and
+     // the arrows step between them - a corner plot is worth comparing with
+     // the next grid's without closing anything
+     const images = figures.filter(f => !f.name.endsWith('.pdf'))
+                           .map(f => ({url: f.url, title: f.name}));
+
+     figures.forEach(figure => {
+         const box = document.createElement('figure');
+         box.className = 'figure mb-0';
+
+         if (figure.name.endsWith('.pdf')) {
+             // A PDF has no thumbnail worth making, so it is offered as a link
+             box.innerHTML = `<a href="${figure.url}" target="_blank"
+                                 class="btn btn-sm btn-outline-secondary">
+                                <i class="fa fa-file-pdf-o"></i> ${figure.name}</a>`;
+             host.appendChild(box);
+             return;
+         }
+
+         const at = images.findIndex(i => i.url === figure.url);
+         box.innerHTML = `
+           <img src="${figure.url}" title="${figure.name}"
+                class="figure-img img-fluid rounded mb-0"
+                style="max-height: 220px; cursor: zoom-in;
+                       border: 1px solid var(--bs-border-color)">
+           <figcaption class="figure-caption text-center mb-0">
+             <small><a href="${figure.url}">${figure.name}</a></small>
+           </figcaption>`;
+
+         box.querySelector('img').addEventListener('click', event =>
+             popupImage(event, figure.url, figure.name, true, '', {},
+                        images, at));
+
+         host.appendChild(box);
+     });
+ }
+
+ // Deleting a run loses a fit that can be run again, but it is still a delete
+ // and it is asked about first - as removing a file is elsewhere on the site
+ function deleteRuns(runId) {
+     const what = runId ? `the run of ${runWhen(runId)}`
+                        : 'every run of this target';
+     if (!confirm(`Delete ${what}? This cannot be undone.`)) return;
+
+     fetch('/targets/{{ target_id }}/delete_sed_fits/', {
+         method: 'POST',
+         headers: {'Content-Type': 'application/json',
+                   'X-CSRFToken': csrfToken()},
+         body: JSON.stringify(runId ? {run: runId} : {all: true}),
+     })
+     .then(r => r.json().then(data => {
+         if (!r.ok) throw new Error(data.error || r.statusText);
+         return data;
+     }))
+     .then(() => {
+         // Whatever was on screen may be what was just removed
+         if (!runId || runId === openRun) {
+             openRun = null;
+             fitResult = null;
+             document.getElementById('fit-result').innerHTML = '';
+             showFitLog(null);
+             showFitFigures([]);
+             setFitStatus('');
+             buildPointList();
+             redraw();
+         }
+         loadRuns();
+     })
+     .catch(err => setFitStatus(err.message, true));
+ }
+
 </script>
 
 {% endblock %}
