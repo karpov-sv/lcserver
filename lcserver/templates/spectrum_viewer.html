@@ -183,117 +183,124 @@
 
 <!-- Model grids -->
 <div class="control-panel" id="fit-panel" style="display: none;">
-  <div class="d-flex flex-wrap align-items-center gap-3 mb-3">
-    <h5 class="mb-0">Fit a photosphere</h5>
-    <span class="spectrum-info">
-      One model atmosphere, reddened and put at a distance, against the points ticked below
-    </span>
-    <button class="btn btn-sm btn-outline-secondary ms-auto" type="button"
-            data-bs-toggle="collapse" data-bs-target="#fit-body">
-      <i class="fa fa-sliders"></i> Show / hide
-    </button>
-  </div>
+  <h5 class="mb-3 panel-toggle" data-bs-toggle="collapse" data-bs-target="#fit-body"
+      role="button" aria-expanded="true" aria-controls="fit-body"
+      title="Click to fold the list of sources away">
+    <i class="fa fa-caret-down"></i> SED fitting with a photospheric model grid
+  </h5>
 
-  <div class="collapse" id="fit-body">
-    <div class="row g-3">
-      <div class="col-lg-7">
-        <div class="d-flex flex-wrap align-items-center gap-3 mb-2">
-          <div>
-            <label class="control-label" for="fit-source">Points from</label>
-            <select id="fit-source" class="form-select form-select-sm d-inline-block w-auto">
-              <option value="sed.vot">sed.vot &mdash; one catalogue per band</option>
-              <option value="sed_all.vot">sed_all.vot &mdash; every catalogue at the position</option>
-            </select>
-          </div>
-          <button class="btn btn-sm btn-outline-primary" onclick="selectAllPoints(true)">All</button>
-          <button class="btn btn-sm btn-outline-primary" onclick="selectAllPoints(false)">None</button>
-          <span class="spectrum-info" id="fit-point-count"></span>
-        </div>
+  <div class="collapse show" id="fit-body">
+    <!-- <span class="spectrum-info">
+    One model atmosphere, reddened and put at a distance, against the points ticked below
+    </span> -->
 
-        <div id="fit-points" style="max-height: 340px; overflow-y: auto;"></div>
-
-        <div class="d-flex flex-wrap align-items-end gap-2 mt-2">
-          <div>
-            <label class="control-label" for="add-band">Add a point</label>
-            <select id="add-band" class="form-select form-select-sm d-inline-block w-auto"></select>
-          </div>
-          <input type="number" step="any" id="add-value" class="form-control form-control-sm size-control number-plain me-0" placeholder="value">
-          <label class="control-label me-0 mb-1" for="add-error">&pm;</label>
-          <input type="number" step="any" id="add-error" class="form-control form-control-sm size-control number-plain" placeholder="error">
-          <select id="add-unit" class="form-select form-select-sm d-inline-block w-auto">
-            <option value="mag">magnitude</option>
-            <option value="flux">flux, erg/s/cm2/A</option>
+    <div>
+      <div class="d-flex flex-wrap align-items-center gap-3 mb-2">
+        <div>
+          <label class="control-label" for="fit-source">Points from</label>
+          <select id="fit-source" class="form-select form-select-sm d-inline-block w-auto">
+            <option value="sed.vot">sed.vot &mdash; one catalogue per band</option>
+            <option value="sed_all.vot">sed_all.vot &mdash; every catalogue at the position</option>
           </select>
-          <button class="btn btn-sm btn-outline-primary" onclick="addPoint()">
-            <i class="fa fa-plus"></i> Add
-          </button>
         </div>
+        <button class="btn btn-sm btn-outline-primary" onclick="selectAllPoints(true)">All</button>
+        <button class="btn btn-sm btn-outline-primary" onclick="selectAllPoints(false)">None</button>
+        <span class="spectrum-info" id="fit-point-count"></span>
       </div>
 
-      <div class="col-lg-5">
-        <div class="mb-2">
-          <label class="control-label">Model grids</label>
-          <div id="fit-grids" class="d-flex flex-wrap gap-2"></div>
-        </div>
+      <div id="fit-points" style="max-height: 340px; overflow-y: auto;"></div>
 
-        <div class="d-flex flex-wrap align-items-end gap-2 mb-2">
-          <div>
-            <label class="control-label" for="fit-teff-lo">Teff prior, K</label><br>
-            <input type="number" id="fit-teff-lo" class="form-control form-control-sm d-inline-block number-plain" style="width:80px" value="2000">
-            <input type="number" id="fit-teff-hi" class="form-control form-control-sm d-inline-block number-plain" style="width:80px" value="70000">
-          </div>
-          <div>
-            <label class="control-label" for="fit-logg-lo">log g</label><br>
-            <input type="number" step="0.1" id="fit-logg-lo" class="form-control form-control-sm d-inline-block" style="width:65px" value="1.0">
-            <input type="number" step="0.1" id="fit-logg-hi" class="form-control form-control-sm d-inline-block" style="width:65px" value="5.5">
-          </div>
-          <div>
-            <label class="control-label" for="fit-nlive">live points</label><br>
-            <input type="number" step="500" id="fit-nlive" class="form-control form-control-sm d-inline-block" style="width:75px" value="500">
-          </div>
+      <div class="d-flex flex-wrap align-items-end gap-2 mt-2">
+        <div>
+          <label class="control-label" for="add-band">Add a point</label>
+          <select id="add-band" class="form-select form-select-sm d-inline-block w-auto"></select>
         </div>
-
-        <div class="d-flex flex-wrap align-items-center gap-2 mb-3">
-          <button class="btn btn-sm btn-primary" id="fit-run" onclick="runFit()">
-            <i class="fa fa-play"></i> Fit
-          </button>
-          <span id="fit-status" class="spectrum-info"></span>
-        </div>
-
-        <div id="fit-result"></div>
+        <input type="number" step="any" id="add-value" class="form-control form-control-sm size-control number-plain me-0" placeholder="value">
+        <label class="control-label me-0 mb-1" for="add-error">&pm;</label>
+        <input type="number" step="any" id="add-error" class="form-control form-control-sm size-control number-plain" placeholder="error">
+        <select id="add-unit" class="form-select form-select-sm d-inline-block w-auto">
+          <option value="mag">magnitude</option>
+          <option value="flux">flux, erg/s/cm2/A</option>
+        </select>
+        <button class="btn btn-sm btn-outline-primary" onclick="addPoint()">
+          <i class="fa fa-plus"></i> Add
+        </button>
       </div>
     </div>
 
     <div class="mt-3">
       <div class="d-flex align-items-center gap-2 mb-2">
-        <h6 class="mb-0">Runs on disk</h6>
+        <h6 class="mb-0">Previous runs</h6>
         <span class="spectrum-info" id="fit-run-count"></span>
         <button class="btn btn-sm btn-outline-secondary ms-auto" onclick="loadRuns()"
-                title="Re-read the run directory">
+              title="Re-read the run directory">
           <i class="fa fa-refresh"></i>
         </button>
         <button class="btn btn-sm btn-outline-danger" onclick="deleteRuns()"
                 title="Delete every run of this target">
-          <i class="fa fa-trash"></i> All
+          <i class="fa fa-trash-o"></i> All
         </button>
       </div>
-      <div id="fit-runs" style="max-height: 220px; overflow-y: auto;"></div>
+      <div class="list-group" id="fit-runs" style="max-height: 260px; overflow-y: auto;"></div>
     </div>
 
-    <div id="fit-figures" class="mt-3 d-flex flex-wrap gap-3"></div>
+    <div class="ms-0 me-0">
+      <hr>
+    </div>
+  </div>
 
-    <div class="mt-3" id="fit-log-box" style="display: none;">
-      <button class="btn btn-sm btn-outline-secondary" type="button"
-              data-bs-toggle="collapse" data-bs-target="#fit-log">
-        <i class="fa fa-file-text-o"></i> Log
-      </button>
-      <div class="collapse mt-2" id="fit-log">
-        <pre class="small text-body-secondary mb-0 p-2"
-             style="max-height: 300px; overflow: auto; background: var(--bs-body-bg)"
-             id="fit-log-text"></pre>
+  <div>
+    <div class="mt-3">
+      <div class="mb-2">
+        <label class="control-label">Model grids</label>
+        <div id="fit-grids" class="d-flex flex-wrap gap-2"></div>
+      </div>
+
+      <div class="d-flex flex-wrap align-items-end gap-2 mb-2">
+        <div class="me-2">
+          <label class="control-label" for="fit-teff-lo">Teff prior, K</label><br>
+          <input type="number" id="fit-teff-lo" class="form-control form-control-sm d-inline-block number-plain w-auto" style="max-width:6rem" value="2000">
+          &mldr;
+          <input type="number" id="fit-teff-hi" class="form-control form-control-sm d-inline-block number-plain w-auto" style="max-width:6rem" value="70000">
+        </div>
+        <div class="me-2">
+          <label class="control-label" for="fit-logg-lo">log g</label><br>
+          <input type="number" step="0.1" id="fit-logg-lo" class="form-control form-control-sm d-inline-block" style="width:65px" value="1.0">
+          &mldr;
+          <input type="number" step="0.1" id="fit-logg-hi" class="form-control form-control-sm d-inline-block" style="width:65px" value="5.5">
+        </div>
+        <div class="me-2">
+          <label class="control-label" for="fit-nlive">live points</label><br>
+          <input type="number" step="500" id="fit-nlive" class="form-control form-control-sm d-inline-block" style="width:75px" value="500">
+        </div>
+
+        <button class="btn btn-sm btn-primary" id="fit-run" onclick="runFit()">
+          <i class="fa fa-play"></i> Fit
+        </button>
+        <span id="fit-status" class="spectrum-info"></span>
       </div>
     </div>
   </div>
+
+</div>
+
+{% comment %}
+  The run that is open, shown the way the target page shows a processing step:
+  on the page rather than in the grey panel of the controls that asked for it,
+  and staying put when those are folded away.
+{% endcomment %}
+<div id="fit-results" style="display: none;">
+  <hr>
+  <h3 class="mb-2">Photospheric model fit at
+    <span id="fit-results-when"></span>
+    <!-- <small class="text-body-secondary fs-6" id="fit-results-when"></small> -->
+  </h3>
+
+  <div id="fit-result"></div>
+
+  <hr style="border-style: dotted">
+
+  <div id="fit-run-block"></div>
 </div>
 
 <script>
@@ -1019,9 +1026,25 @@
      openFitRun(runId);
  }
 
- function showFitLog(log) {
-     document.getElementById('fit-log-box').style.display = log ? 'block' : 'none';
-     document.getElementById('fit-log-text').textContent = log || '';
+ // The log and the figures of a run arrive already drawn, from the same
+ // template blocks the target page is built of - so this only has to put them
+ // on the page and take the figure clicks over.
+ function showFitRun(html, figures) {
+     const host = document.getElementById('fit-run-block');
+     host.innerHTML = html || '';
+
+     // The images of one run are one set, so the dialog gets all of them and
+     // the arrows step between them - a corner plot is worth comparing with
+     // the next grid's without closing anything
+     const images = (figures || []).filter(f => !f.is_pdf)
+                                   .map(f => ({url: f.url, title: f.name}));
+
+     host.querySelectorAll('img').forEach((img, at) => {
+         img.style.cursor = 'zoom-in';
+         img.addEventListener('click', event =>
+             popupImage(event, images[at].url, images[at].title, true, '', {},
+                        images, at));
+     });
  }
 
  function showFitResult(result) {
@@ -1036,7 +1059,7 @@
            <tr>
              <td>${grid}</td>
              <td>${T.median.toFixed(0)} <span class="text-body-secondary">+${(T.hi-T.median).toFixed(0)}/-${(T.median-T.lo).toFixed(0)}</span></td>
-             <td>${A.median.toFixed(2)}</td>
+             <td>${A.median.toFixed(2)}  <span class="text-body-secondary">+${(A.hi-A.median).toFixed(2)}/-${(A.median-A.lo).toFixed(2)}</span></td>
              <td>${th.median.toFixed(4)}</td>
              <td>${summary.jitter.median.toFixed(3)}</td>
              <td class="${weak ? 'text-warning' : ''}"
@@ -1051,7 +1074,7 @@
          : '';
 
      document.getElementById('fit-result').innerHTML = `
-       <table class="table table-sm small mb-0">
+       <table class="table table-sm mb-0 w-100">
          <thead><tr>
            <th>grid</th><th>Teff, K</th><th>Av</th><th>&theta;, mas</th>
            <th title="The fractional model inadequacy the fit needed">jitter</th>
@@ -1130,29 +1153,34 @@
      host.innerHTML = '';
 
      runs.forEach(run => {
+         // The shape the target page keeps its cached replies in, down to the
+         // trash button on the right of each row
          const row = document.createElement('div');
-         row.className = 'spectrum-control py-1';
-         if (run.run_id === (select || openRun)) {
-             row.style.outline = '2px solid var(--bs-primary)';
-         }
+         row.className = 'list-group-item list-group-item-action'
+                       + ' d-flex align-items-center py-1'
+                       + (run.run_id === (select || openRun) ? ' list-group-item-primary' : '');
+         row.style.cursor = 'pointer';
 
          // A run that did not finish is worth keeping in the list - what it
          // was and why it failed is the reason to look at its log
          const summary = run.finished
-             ? `<span class="spectrum-info">${run.points} points</span>
-                <span class="spectrum-info">${(run.grids || []).join(', ')}</span>
-                <span class="spectrum-info">${run.teff ? run.teff.toFixed(0) + ' K' : ''}</span>
-                <span class="spectrum-info">jitter ${run.jitter ? run.jitter.toFixed(3) : '-'}</span>
-                <span class="spectrum-info ${run.shrink < 0.9 ? 'text-warning' : ''}">${
+             ? `<span class="small me-3">${run.points} points</span>
+                <span class="small me-3">${(run.grids || []).join(', ')}</span>
+                <span class="small me-3">${run.teff ? run.teff.toFixed(0) + ' K' : ''}</span>
+                <span class="small me-3">jitter ${run.jitter ? run.jitter.toFixed(3) : '-'}</span>
+                <span class="small me-3 ${run.shrink < 0.9 ? 'text-warning' : ''}">${
                     run.shrink != null ? (100 * run.shrink).toFixed(0) + '%' : ''}</span>`
-             : `<span class="spectrum-info text-danger">${run.error || 'did not finish'}</span>`;
+             : `<span class="small text-danger">${run.error || 'did not finish'}</span>`;
 
          row.innerHTML = `
-           <label class="spectrum-label" style="cursor:pointer">${runWhen(run.run_id)}</label>
-           ${summary}
-           ${run.figures ? `<span class="spectrum-info"><i class="fa fa-picture-o"></i> ${run.figures}</span>` : ''}
-           <button class="btn btn-sm btn-outline-danger py-0 px-1 ms-2"
-                   title="Delete this run"><i class="fa fa-times"></i></button>
+           <span class="fw-bold" style="min-width: 11em">${runWhen(run.run_id)}</span>
+           <span class="ms-auto d-flex align-items-center">
+             ${summary}
+             <span class="small me-2">${
+                 run.figures ? `<i class="fa fa-picture-o"></i> ${run.figures}` : ''}</span>
+             <button class="btn btn-sm btn-outline-danger p-0 ps-1 pe-1"
+                     title="Delete this run"><i class="fa fa-trash-o"></i></button>
+           </span>
          `;
 
          // The row opens the run; the button inside it does not, or every
@@ -1180,12 +1208,14 @@
              if (run.error) throw new Error(run.error);
 
              openRun = runId;
-             showFitLog(run.log);
-             showFitFigures(run.figures || []);
+             showFitRun(run.html, run.figures);
+             document.getElementById('fit-results').style.display = 'block';
+             document.getElementById('fit-results-when').textContent =
+                 runWhen(runId) + (run.result ? '' : ' - did not finish');
 
              if (run.result) {
                  fitResult = run.result;
-                 setFitStatus(`Run ${runWhen(runId)}`);
+                 setFitStatus('');
                  showFitResult(run.result);
                  // The points of the run that was opened, not of whatever the
                  // form is set to now, so the residuals line up with the table
@@ -1214,47 +1244,6 @@
      buildPointList();
  }
 
- function showFitFigures(figures) {
-     const host = document.getElementById('fit-figures');
-     host.innerHTML = '';
-
-     // The images of one run are one set, so the dialog gets all of them and
-     // the arrows step between them - a corner plot is worth comparing with
-     // the next grid's without closing anything
-     const images = figures.filter(f => !f.name.endsWith('.pdf'))
-                           .map(f => ({url: f.url, title: f.name}));
-
-     figures.forEach(figure => {
-         const box = document.createElement('figure');
-         box.className = 'figure mb-0';
-
-         if (figure.name.endsWith('.pdf')) {
-             // A PDF has no thumbnail worth making, so it is offered as a link
-             box.innerHTML = `<a href="${figure.url}" target="_blank"
-                                 class="btn btn-sm btn-outline-secondary">
-                                <i class="fa fa-file-pdf-o"></i> ${figure.name}</a>`;
-             host.appendChild(box);
-             return;
-         }
-
-         const at = images.findIndex(i => i.url === figure.url);
-         box.innerHTML = `
-           <img src="${figure.url}" title="${figure.name}"
-                class="figure-img img-fluid rounded mb-0"
-                style="max-height: 220px; cursor: zoom-in;
-                       border: 1px solid var(--bs-border-color)">
-           <figcaption class="figure-caption text-center mb-0">
-             <small><a href="${figure.url}">${figure.name}</a></small>
-           </figcaption>`;
-
-         box.querySelector('img').addEventListener('click', event =>
-             popupImage(event, figure.url, figure.name, true, '', {},
-                        images, at));
-
-         host.appendChild(box);
-     });
- }
-
  // Deleting a run loses a fit that can be run again, but it is still a delete
  // and it is asked about first - as removing a file is elsewhere on the site
  function deleteRuns(runId) {
@@ -1278,8 +1267,8 @@
              openRun = null;
              fitResult = null;
              document.getElementById('fit-result').innerHTML = '';
-             showFitLog(null);
-             showFitFigures([]);
+             document.getElementById('fit-results').style.display = 'none';
+             showFitRun('', []);
              setFitStatus('');
              buildPointList();
              redraw();

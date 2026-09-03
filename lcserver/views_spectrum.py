@@ -3,6 +3,7 @@ from django.template.response import TemplateResponse
 from django.contrib.auth.decorators import login_required
 from django.views.decorators.http import require_http_methods
 from django.shortcuts import get_object_or_404
+from django.template.loader import render_to_string
 
 import os
 import glob
@@ -387,7 +388,11 @@ def _run_figures(target, run_id, path):
             name = os.path.basename(figure)
             figures.append({
                 'name': name,
+                # Where the file is under the target, which is what the
+                # templates that draw a figure are given
+                'file': f'sedfit/{run_id}/{name}',
                 'url': f'/targets/{target.id}/view/sedfit/{run_id}/{name}',
+                'is_pdf': name.lower().endswith('.pdf'),
             })
 
     return figures
@@ -440,9 +445,20 @@ def sed_fits(request, id):
             raise Http404
 
         result, log = read(path)
+        figures = _run_figures(target, wanted, path)
 
-        return JsonResponse({'run_id': wanted, 'result': result, 'log': log,
-                             'figures': _run_figures(target, wanted, path)})
+        # The log and the figures arrive already drawn, from the same blocks
+        # the target page is built of - there is one way this site shows the
+        # output of a processing step, and a fit is one.
+        html = render_to_string('sed_fit_run.html', {
+            'target': target,
+            'log_file': os.path.join('sedfit', wanted, 'fit.log') if log else None,
+            'figures': figures,
+        })
+
+        # The log goes out drawn, inside the block, and not a second time raw
+        return JsonResponse({'run_id': wanted, 'result': result,
+                             'figures': figures, 'html': html})
 
     runs = []
     for path in sorted(glob.glob(os.path.join(root, '*')), reverse=True):

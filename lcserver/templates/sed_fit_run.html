@@ -1,0 +1,46 @@
+{% load tags %}
+
+{% comment %}
+  One run of the SED fit, laid out the way a processing step is on the target
+  page: the log on the left in full, its figures beside it as thumbnails. The
+  panel fetches this rendered rather than building it in JavaScript, so that
+  the two stay the same block as target_block_* change.
+{% endcomment %}
+
+<div class="row mb-2">
+  <div class="col-md">
+    {% if log_file %}
+      {% include "target_block_text.html" with file=log_file %}
+    {% else %}
+      <p class="text-body-secondary">This run left no log.</p>
+    {% endif %}
+  </div>
+
+  {% if figures %}
+    {% comment %}
+      Capped as on the target page: a column asks for the width its content
+      wants, and a run with several figures would take the whole row.
+    {% endcomment %}
+    <div class="col-md-auto" style="max-width: 520px">
+      <div class="row">
+        {% for figure in figures %}
+          <div class="col" style="min-width: 256px; max-width: 256px">
+            {% if figure.is_pdf %}
+              {# Nothing worth making a thumbnail of, so it is offered as a link #}
+              <a href="{% url 'target_view' target.id figure.file %}" target="_blank"
+                 class="btn btn-sm btn-outline-secondary mb-3">
+                <i class="fa fa-file-pdf-o"></i> {{ figure.name }}
+              </a>
+            {% else %}
+              {% comment %}
+                noclick: the panel binds the click itself, so that the dialog
+                opens on the whole set of a run and its arrows step between them
+              {% endcomment %}
+              {% include "target_block_image.html" with image=figure.file name=figure.name target=target noclick=1 only %}
+            {% endif %}
+          </div>
+        {% endfor %}
+      </div>
+    </div>
+  {% endif %}
+</div>

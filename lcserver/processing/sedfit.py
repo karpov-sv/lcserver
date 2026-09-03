@@ -375,8 +375,10 @@ def log_parameters(summary, log):
     """
     best = summary.get('best') or {}
 
-    log(f"\n  {'parameter':<12}{'plot row':>12}{'median':>12}"
-        f"{'-1 sigma':>12}{'+1 sigma':>12}{'3 sigma range':>26}")
+    # Kept inside 78 columns, which is what the log column of a target page is
+    # asked to hold: wider and the table wraps every row onto two
+    log(f"\n  {'parameter':<10}{'plot row':>11}{'median':>11}"
+        f"{'-1 sigma':>11}{'+1 sigma':>11}{'3 sigma range':>22}")
 
     for name in PARAMETERS + ('theta_mas', 'lum_lsun'):
         row = summary.get(name)
@@ -386,12 +388,12 @@ def log_parameters(summary, log):
         fmt = LABELS.get(name, (None, '{:.4g}'))[1]
         value = best.get(name)
 
-        log(f"  {name:<12}"
-            f"{(fmt.format(value) if value is not None else '-'):>12}"
-            f"{fmt.format(row['median']):>12}"
-            f"{fmt.format(row['median'] - row['lo']):>12}"
-            f"{fmt.format(row['hi'] - row['median']):>12}"
-            f"{fmt.format(row['lo3']) + ' ... ' + fmt.format(row['hi3']):>26}")
+        log(f"  {name:<10}"
+            f"{(fmt.format(value) if value is not None else '-'):>11}"
+            f"{fmt.format(row['median']):>11}"
+            f"{fmt.format(row['median'] - row['lo']):>11}"
+            f"{fmt.format(row['hi'] - row['median']):>11}"
+            f"{fmt.format(row['lo3']) + ' ... ' + fmt.format(row['hi3']):>22}")
 
 
 def best_row(result, grid):
