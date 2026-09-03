@@ -381,10 +381,16 @@ FIGURE_TYPES = ('*.png', '*.jpg', '*.svg', '*.pdf')
 
 
 def _run_figures(target, run_id, path):
-    """Any figure a run left behind, as URLs the page can use directly."""
+    """Any figure a run left behind, as URLs the page can use directly.
+
+    The SED first: it is the figure that says whether the fit fits, and the
+    posteriors are what one looks at afterwards to see how it got there.
+    """
     figures = []
     for pattern in FIGURE_TYPES:
-        for figure in sorted(glob.glob(os.path.join(path, pattern))):
+        for figure in sorted(glob.glob(os.path.join(path, pattern)),
+                             key=lambda f: (not os.path.basename(f).startswith('sed_'),
+                                            os.path.basename(f))):
             name = os.path.basename(figure)
             figures.append({
                 'name': name,

@@ -742,6 +742,11 @@ def target_sed_fit(config, basepath='.', outpath=None, selection=None,
     if options.get('figures', True):
         for run, grid in runs:
             try:
+                draw_sed(run, grid, summaries[grid.name], outpath)
+            except Exception as e:
+                log(f'SED plot for {grid.name} failed: {type(e).__name__}: {e}')
+
+            try:
                 draw_corner(run, outpath)
             except Exception as e:
                 log(f'corner plot for {grid.name} failed: {type(e).__name__}: {e}')
@@ -981,6 +986,118 @@ LABELS = {
 # colour whichever figure it appears in.
 GRID_COLOURS = ['#2980b9', '#c0392b', '#16a085', '#8e44ad', '#e67e22',
                 '#2c3e50', '#27ae60', '#d35400']
+
+
+# The grids are tabulated per micron. Everything else on this site - the SED
+# files, the spectral viewer - is per Angstrom, so that is what is drawn, and
+# a number read off a figure is the number read off the viewer beside it.
+PER_AA = 1e-4
+
+
+def draw_sed(run, grid, summary, path, name=None, colour=GRID_COLOURS[0]):
+    """The photometry, the model that fits it, and what is left over.
+
+    The model is drawn at the plot row - one place the posterior actually
+    goes - and not at the marginal medians, which on a curved degeneracy lie
+    off the ridge and fit nothing. Around it is what the rest of the posterior
+    allows, band by band, so a band the fit is free to place anywhere is
+    visibly that rather than a suspiciously good match.
+
+    Two error bars per point, because the fit sees two: the catalogue's, and
+    the catalogue's widened by the jitter the fit needed. The residual panel
+    is in units of the first, as the point list in the viewer is, with the
+    second drawn behind it as the envelope the fit was actually working to.
+    """
+    from stdpipe import plots
+
+    theta = np.array([summary['best'][p] for p in PARAMETERS])
+
+    order = np.argsort(np.asarray(run['wave_um']))
+    wave = np.asarray(run['wave_um'])[order]
+    bands = [run['bands'][i] for i in order]
+    flux = run['flux'][order] * PER_AA
+    err = run['flux_err'][order] * PER_AA
+    model = model_flux(theta, run['columns'], run['ext_unit'], grid)[order] * PER_AA
+
+    jitter = float(theta[PARAMETERS.index('jitter')])
+    widened = np.hypot(err, jitter * model)
+    residual = (flux - model) / err
+
+    # What the rest of the posterior would have drawn. Two hundred rows is
+    # enough for a 16-84 envelope and costs an interpolation each.
+    draws = run['samples']
+    if len(draws) > 200:
+        draws = draws[np.random.default_rng(0).choice(len(draws), 200,
+                                                      replace=False)]
+    cloud = np.array([model_flux(row, run['columns'], run['ext_unit'], grid)[order]
+                      for row in draws]) * PER_AA
+    lo, hi = np.nanpercentile(cloud, [16, 84], axis=0)
+
+    filename = os.path.join(path, f'sed_{name or run["grid"]}.png')
+
+    with plots.figure_saver(filename, figsize=(8, 6), tight_layout=False) as fig:
+        top, low = fig.subplots(2, 1, sharex=True,
+                                gridspec_kw={'height_ratios': [3, 1],
+                                             'hspace': 0.06})
+
+        # Per band rather than a shaded curve across them: what the fit
+        # produced is a flux in each filter, and a band drawn between them
+        # would be claiming a spectrum it never computed
+        top.vlines(wave, lo, hi, color=colour, alpha=0.35, lw=6,
+                   label='posterior, central 68%')
+        top.plot(wave, model, 'D', mfc='none', ms=9, mew=1.6, color=colour,
+                 ls='none', label=f'{run["grid"]} at the plot row')
+        # Behind the catalogue error and unlabelled: it is the same statement
+        # the residual panel makes, and it is made there with room to say it
+        top.errorbar(wave, flux, widened, fmt='none', ecolor='0.75',
+                     elinewidth=3, capsize=0)
+        top.errorbar(wave, flux, err, fmt='o', ms=4, color='k', ecolor='k',
+                     elinewidth=1, capsize=2, label='photometry')
+
+        top.set_xscale('log')
+        top.set_yscale('log')
+        top.set_ylabel(r'$F_\lambda$, erg s$^{-1}$ cm$^{-2}$ $\AA^{-1}$')
+        top.set_title(f"{run['grid']}: "
+                      rf"$T_{{\rm eff}}$ = {theta[0]:.0f} K, "
+                      rf"$A_V$ = {theta[5]:.2f}, "
+                      rf"$\chi^2$ = {summary['chi2']:.1f} on {len(bands)} bands",
+                      fontsize=10)
+        top.legend(fontsize=8.5, frameon=False)
+        top.grid(alpha=0.15)
+
+        # The band the fit was working to, which is why a three-sigma residual
+        # against the catalogue error is not necessarily a bad fit
+        envelope = jitter * model / err
+        low.axhspan(-1, 1, color='0.85', zorder=0)
+        low.vlines(wave, -envelope, envelope, color=colour, alpha=0.45, lw=2,
+                   zorder=1, label=f'jitter, {jitter:.1%} of the model')
+        low.axhline(0, color='0.4', lw=1, zorder=2)
+        low.plot(wave, residual, 'o', ms=4, color='k', zorder=3)
+
+        # Named where they are worth naming: every band labelled would be five
+        # Pan-STARRS labels on top of each other, and the ones worth reading
+        # are the ones the model misses
+        # Alternating heights, since two adjacent bands that both miss - the
+        # Pan-STARRS pair here - would otherwise write over each other; and
+        # turned inwards near the right edge, where a name would run off
+        turn = wave[0] * (wave[-1] / wave[0]) ** 0.75
+        for n, (w, r, band) in enumerate(zip(wave, residual, bands)):
+            if abs(r) >= 3:
+                left = w > turn
+                low.annotate(band, (w, r), fontsize=7, color='0.3',
+                             textcoords='offset points', va='center',
+                             ha='right' if left else 'left',
+                             xytext=(-5 if left else 5, 5 if n % 2 else -10))
+
+        low.legend(fontsize=7.5, frameon=False, loc='upper left')
+
+        low.set_xlabel(r'Wavelength, $\mu$m')
+        low.set_ylabel(r'Residual, $\sigma$', fontsize=9)
+        low.grid(alpha=0.15)
+        low.tick_params(labelsize=8)
+        top.tick_params(labelsize=8)
+
+    return filename
 
 
 def _spread(samples, column):
