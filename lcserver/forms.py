@@ -2,7 +2,8 @@ from django import forms
 
 from crispy_forms.helper import FormHelper
 from crispy_forms.layout import Layout, Field, Row, Column, Submit
-from crispy_forms.bootstrap import InlineField, PrependedText, InlineRadios
+from crispy_forms.bootstrap import (InlineField, PrependedText, InlineRadios,
+                                   InlineCheckboxes)
 
 from . import surveys
 from . import processing  # Import to trigger decorator registration
@@ -164,6 +165,28 @@ def create_survey_form(source_id, survey_config):
                     initial=field_config['initial'],
                     required=field_config['required']
                 )
+        elif field_config['type'] == 'multiple':
+            # Any number of a fixed set, as checkboxes rather than a list box:
+            # what is on and what is off is then readable without clicking, and
+            # a source whose set is short - which is why it is a set and not a
+            # free field - loses nothing to the room they take
+            fields[field_name] = forms.MultipleChoiceField(
+                label=field_config['label'],
+                choices=field_config['choices'],
+                initial=field_config['initial'],
+                required=field_config['required'],
+                widget=forms.CheckboxSelectMultiple
+            )
+        elif field_config['type'] == 'text':
+            fields[field_name] = forms.CharField(
+                label=field_config['label'],
+                initial=field_config.get('initial'),
+                required=field_config['required'],
+                widget=forms.TextInput(attrs={
+                    'placeholder': field_config.get('placeholder', ''),
+                    'title': field_config.get('help', ''),
+                })
+            )
         elif field_config['type'] == 'float':
             fields[field_name] = forms.FloatField(
                 label=field_config['label'],
@@ -205,6 +228,11 @@ def create_survey_form(source_id, survey_config):
             # ZTF's colour model reads better as radios side by side
             if source_id == 'ztf' and name == 'ztf_color_model':
                 content = InlineRadios(name, template='crispy_radioselect_inline.html')
+
+            # And so do checkboxes, for the same reason: a column of them would
+            # be taller than the whole of the rest of the row
+            elif isinstance(self.fields[name], forms.MultipleChoiceField):
+                content = InlineCheckboxes(name, template='crispy_radioselect_inline.html')
 
             # Text is given the room left over - a name or a title has no
             # length to speak of - while a number, a choice or a checkbox

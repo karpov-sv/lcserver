@@ -26,6 +26,7 @@ and each is matched to its own nearest source.
 
 import os
 import io
+import re
 import collections
 
 import numpy as np
@@ -98,6 +99,12 @@ SED_CATALOGUES = [
 # catalogues cover it, so counting through a list would colour Pan-STARRS one
 # way where GALEX was also found and another way where it was not, and neither
 # would match the plot written here.
+
+# Colours for catalogues named by hand on the form. They have no place in the
+# order above and so cannot take their colour from the wavelength, and are drawn
+# in these instead - deliberately unlike the five, so that a point the form
+# asked for is not read as one of the catalogues this file chose.
+SED_EXTRA_COLOURS = ['#34495e', '#b7950b', '#7d3c98', '#117864', '#6e2c00']
 
 # A Jansky in microjansky, the conversion out of f_nu being written for uJy
 SED_JY = 1e6
@@ -327,6 +334,76 @@ def _one_source(table, rows, ra, dec, sr, log, name):
     return rows[together], float(separation[nearest])
 
 
+def _catalogues(config, log, present):
+    """The catalogues to build the SED from, as the form left them.
+
+    The named few by default, less whatever it unticked, plus whatever it named
+    by hand - VizieR tables, as the reply itself spells them, which is what the
+    complete file carries against each of its points. So a catalogue seen there
+    and wanted in the SED is moved across by copying its name.
+
+    Unticking only ever leaves a catalogue out of the SED. It is still in the
+    reply and still written to the complete file below, so that what the form
+    settles is which photometry the SED is built from rather than which is kept.
+    """
+    chosen = config.get('sed_catalogues')
+    ticked = None if chosen is None else set(chosen)
+
+    taken = {_['table'] for _ in SED_CATALOGUES
+             if ticked is None or _['name'] in ticked}
+
+    named = [_ for _ in re.split(r'[,\s]+', config.get('sed_extra') or '') if _]
+
+    extra = []
+
+    for name in named:
+        # One of the named few, named here rather than ticked, comes back as
+        # itself: this file knows what it is called, what colour it is drawn in
+        # and which of its bands are its own, and there is no sense in taking
+        # it as a bare table instead
+        if any(name == _['table'] for _ in SED_CATALOGUES):
+            taken.add(name)
+            continue
+
+        # Anything else is known by its table name alone - no epoch, and no
+        # list of the bands it measured rather than republished, so it is taken
+        # exactly as it comes
+        if not any(name == _['table'] for _ in extra):
+            extra.append({
+                'table': name, 'name': name,
+                'colour': SED_EXTRA_COLOURS[len(extra) % len(SED_EXTRA_COLOURS)],
+            })
+
+    left = [_['name'] for _ in SED_CATALOGUES if _['table'] not in taken]
+
+    if left:
+        log(f"Leaving out {', '.join(left)} - unticked on the form, so their"
+            " photometry is in the complete file only")
+
+    if extra:
+        log(f"Also taking {', '.join(_['name'] for _ in extra)}, named on the"
+            " form")
+
+    # A name VizieR did not return is worth saying out loud. It is far more
+    # likely a table spelled wrong than a catalogue with nothing at this
+    # position, and spelled wrong it would otherwise be one more line of the
+    # list below saying nothing.
+    missing = [_['name'] for _ in extra if _['table'] not in present]
+
+    if missing:
+        log(f"\nWarning: {', '.join(missing)} - not among the catalogues the"
+            " reply carries. The names are\nVizieR's own, as file:sed_all.txt"
+            " gives them against each of its points.")
+
+    if left or extra:
+        log("")
+
+    # The few first and in the order their wavelengths run, whatever order the
+    # form named things in, so that the legend and the plot read as they always
+    # do and only the hand-named catalogues are somewhere new
+    return [_ for _ in SED_CATALOGUES if _['table'] in taken] + extra
+
+
 def _epoch_span(entries):
     """The years the catalogues taken between them cover, as one range.
 
@@ -335,7 +412,8 @@ def _epoch_span(entries):
     """
     years = [int(year)
              for entry in entries
-             for year in entry['epoch'].split('-')]
+             for year in (entry.get('epoch') or '').split('-')
+             if year]
 
     if not years:
         return None
@@ -713,6 +791,30 @@ def _gaia_xp(basepath, log):
             'initial': SED_SR,
             'required': False,
         },
+        # Which of the named catalogues to build the SED from. All of them by
+        # default - the list is a judgement about what is worth drawing, not
+        # about what is worth having - but a catalogue that has landed on a
+        # neighbour, or that a target has a reason to distrust, can be dropped
+        # here rather than by taking the whole SED on faith.
+        'sed_catalogues': {
+            'type': 'multiple',
+            'label': 'Catalogues',
+            'choices': [(_['name'], _['name']) for _ in SED_CATALOGUES],
+            'initial': [_['name'] for _ in SED_CATALOGUES],
+            'required': False,
+        },
+        # And anything else VizieR has here, for a target whose interest is in
+        # a survey nobody thought to name above. It is all in the complete file
+        # either way; naming one here is what moves it into the SED itself,
+        # where it is drawn, coloured and written beside the five.
+        'sed_extra': {
+            'type': 'text',
+            'label': 'Also include',
+            'required': False,
+            'placeholder': 'VizieR tables, e.g. II/319/gcs9 V/154/sdss16',
+            'help': 'Additional catalogues to build the SED from, named by'
+                    ' their VizieR tables as sed_all.txt gives them',
+        },
     },
     help_text='Broadband photometry from VizieR, 0.15 to 22 um',
     # Last of the spectral block: it is assembled out of other catalogues'
@@ -782,18 +884,24 @@ def target_sed(config, basepath=None, verbose=True, show=False):
     # saying
     log("\n---- The catalogues taken ----\n")
 
+    taken = _catalogues(config, log, everything)
+
     found = []
 
-    for entry in SED_CATALOGUES:
+    for entry in taken:
         got = _points(table, entry, ra, dec, sr, log, widths)
 
+        # A catalogue named on the form comes with no epoch, there being
+        # nothing here that knows when it was observing
+        epoch = entry.get('epoch') or '-'
+
         if got is None:
-            log(f"  {entry['name']:14s} {entry['epoch']:10s} nothing")
+            log(f"  {entry['name']:14s} {epoch:10s} nothing")
             continue
 
         rows, separation = got
 
-        log(f"  {entry['name']:14s} {entry['epoch']:10s} {len(rows):2d} band(s),"
+        log(f"  {entry['name']:14s} {epoch:10s} {len(rows):2d} band(s),"
             f" {rows['wavelength'].min() / 1e4:.2f}-{rows['wavelength'].max() / 1e4:.2f} um,"
             f" {separation:.2f} arcsec away")
 
@@ -814,10 +922,16 @@ def target_sed(config, basepath=None, verbose=True, show=False):
     rest = []
 
     for name in sorted(everything):
-        if any(name == _['table'] for _ in SED_CATALOGUES):
+        if any(name == _['table'] for _ in taken):
             continue
 
-        got = _points(table, {'table': name, 'name': name}, ra, dec, sr,
+        # A named catalogue that was unticked is still gathered as itself, so
+        # that what the complete file holds does not depend on which boxes are
+        # ticked - only the SED does
+        entry = next((_ for _ in SED_CATALOGUES if _['table'] == name),
+                     {'table': name, 'name': name})
+
+        got = _points(table, entry, ra, dec, sr,
                       lambda *args, **kwargs: None, widths)
 
         if got is not None:
