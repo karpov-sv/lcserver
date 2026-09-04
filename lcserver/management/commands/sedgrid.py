@@ -48,6 +48,13 @@ class Command(BaseCommand):
                  "one file, not the per-model originals")
 
         parser.add_argument(
+            '--scatter', dest='scatter', nargs='*', default=None,
+            metavar='GRID',
+            help='Rewrite grids stored as a lattice as the models they have, '
+                 'which recovers the band of parameter space a lattice with '
+                 'holes refuses. All of them if none are named.')
+
+        parser.add_argument(
             '--ingest-cdbs', dest='cdbs', default=None,
             help='An atlas in the layout STScI distributes them in - a '
                  'k93models or ck04models directory, a subdirectory per '
@@ -78,6 +85,9 @@ class Command(BaseCommand):
 
         if options['cdbs']:
             return self.ingest_cdbs(options)
+
+        if options['scatter'] is not None:
+            return self.scatter(options)
 
         if options['show'] or not options['split']:
             return self.show()
@@ -168,6 +178,42 @@ class Command(BaseCommand):
                               (10000., 4.0, 0.0), (10000., 3.0, -0.5)))
 
         self.written(name, cube, spectra, target)
+
+    # --------------------------------------------------------------- scatter
+
+    def scatter(self, options):
+        """Rewrite lattices as the models they hold.
+
+        Nothing is downloaded and nothing recomputed - the fluxes written out
+        are the ones read in, with the empty nodes dropped - so what this
+        changes is only how much of the grid can be reached. Both numbers are
+        printed per grid: what it gained, and how far the two ways of
+        interpolating differ where they overlap.
+        """
+        import shutil
+        import tempfile
+
+        from lcserver.ingest import scatter
+
+        registry = sedfit.grid_registry()
+        wanted = options['scatter'] or sorted(registry)
+        unknown = [_ for _ in wanted if _ not in registry]
+        if unknown:
+            raise CommandError(f"no grid called {', '.join(unknown)}")
+
+        for name in wanted:
+            path = registry[name]['path']
+
+            # The grid as it was, kept until the comparison has been made
+            with tempfile.NamedTemporaryFile(suffix='.h5', delete=False) as tmp:
+                before = tmp.name
+            shutil.copy2(path, before)
+
+            try:
+                if scatter.convert(path, verbose=self.stdout.write):
+                    scatter.compare(before, path, verbose=self.stdout.write)
+            finally:
+                os.unlink(before)
 
     # ------------------------------------------------------- where it all goes
 

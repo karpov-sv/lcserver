@@ -140,7 +140,9 @@ class Grid:
 
         if len(varies) >= 2:
             self._cube = cube
-            self._mesh = Delaunay((points - self._offset) / self._span)
+            scaled = (points - self._offset) / self._span
+            self._mesh = Delaunay(scaled)
+            self._compact = self._compactness(scaled)
             self._interp = None
         elif len(varies) == 1:
             order = np.argsort(points[:, 0])
@@ -150,6 +152,43 @@ class Grid:
             raise SourceError(f'{self.name} has one model and nothing to vary')
 
         return varies
+
+    # How many steps of the grid's own lattice a simplex may span before what
+    # it crosses is taken to be a gap rather than a gap-free neighbourhood.
+    # Two allows a simplex to step over a single missing model and refuses one
+    # that crosses further.
+    MESH_SPAN = 2.0
+
+    def _compactness(self, points):
+        """Which simplices join neighbours, and which bridge a gap.
+
+        A hull is convex and a grid of models is not: the temperatures a star
+        of a given gravity was computed at run out, and where they do the hull
+        carries on. Interpolating there is not extrapolating by a node, it is
+        answering where nothing was computed.
+
+        What counts as far is measured against the grid's own step, taken from
+        the values its axes actually have. Against the typical simplex instead
+        it would mean nothing on a grid with few models, where the typical
+        simplex already bridges: three of the ones here answer over their whole
+        box that way, which is most of it invented.
+        """
+        # The diagonal of one cell of the lattice the models sit on, in the
+        # same normalised axes the mesh was built in
+        steps = []
+        for column in range(points.shape[1]):
+            values = np.unique(points[:, column])
+            steps.append(np.median(np.diff(values)) if len(values) > 1 else 0.0)
+
+        cell = float(np.linalg.norm(steps))
+        if not cell > 0:
+            return np.ones(len(self._mesh.simplices), dtype=bool)
+
+        corners = self._mesh.points[self._mesh.simplices]
+        edges = np.linalg.norm(corners[:, :, None, :] - corners[:, None, :, :],
+                               axis=-1).max(axis=(1, 2))
+
+        return edges <= self.MESH_SPAN * cell
 
     # How far outside a simplex a point may be and still be taken as inside,
     # in axes normalised to their own span. Models on the edge of the hull -
@@ -163,7 +202,7 @@ class Grid:
         """Linear interpolation over the triangulated models."""
         n = len(point)
         where = self._mesh.find_simplex(point, tol=self.MESH_TOLERANCE)
-        if where < 0:
+        if where < 0 or not self._compact[where]:
             return np.full(self._cube.shape[1], np.nan)
 
         transform = self._mesh.transform[where]
