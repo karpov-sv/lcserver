@@ -48,6 +48,11 @@ class Command(BaseCommand):
                  "one file, not the per-model originals")
 
         parser.add_argument(
+            '--ingest-bosz', dest='bosz', default=None,
+            help='A BOSZ download - a directory per metallicity of one file '
+                 'per model, and the wavelength grid beside them')
+
+        parser.add_argument(
             '--ingest-koester', dest='koester', default=None,
             help="Koester's white-dwarf models as SVO hands them out - the "
                  'directory of one file per model')
@@ -90,6 +95,9 @@ class Command(BaseCommand):
 
         if options['cdbs']:
             return self.ingest_cdbs(options)
+
+        if options['bosz']:
+            return self.ingest_bosz(options)
 
         if options['koester']:
             return self.ingest_koester(options)
@@ -184,6 +192,38 @@ class Command(BaseCommand):
             store.compare(cube, installed, verbose=self.stdout.write,
                           at=((5000., 4.0, 0.0), (8000., 4.0, 0.0),
                               (10000., 4.0, 0.0), (10000., 3.0, -0.5)))
+
+        self.written(name, cube, spectra, target)
+
+    def ingest_bosz(self, options):
+        """Turn a BOSZ download into a cube and a spectrum file.
+
+        The cube already installed is the same composition of the same library,
+        so the two are compared afterwards; what this adds is the spectra, out
+        to thirty-two microns.
+        """
+        from lcserver.ingest import bosz
+
+        source = options['bosz']
+        if not os.path.isdir(source):
+            raise CommandError(f'{source} is not a directory')
+
+        target, name = self.where(options, default='bosz')
+        cube, spectra = self.paths(target, name, options['force'])
+
+        installed = (sedfit.grid_registry().get(name) or {}).get('path')
+
+        bosz.ingest(source, cube, spectra, name=name,
+                    label=options['label'] or 'BOSZ',
+                    description=options['description']
+                    or 'ATLAS9 and MARCS, and the only grid here with spectra '
+                       'past five microns for a warm star',
+                    verbose=self.stdout.write)
+
+        if installed and os.path.abspath(installed) != os.path.abspath(cube):
+            store.compare(cube, installed, verbose=self.stdout.write,
+                          at=((4000., 4.5, 0.0), (6000., 4.5, 0.0),
+                              (10000., 4.0, 0.0), (6000., 2.5, -1.0)))
 
         self.written(name, cube, spectra, target)
 

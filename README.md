@@ -288,6 +288,7 @@ python manage.py sedgrid --ingest-cdbs ~/tmp/kurucz/.../k93models --to data/grid
 python manage.py sedgrid --ingest-cdbs ~/tmp/kurucz/.../ck04models --to data/grids
 python manage.py sedgrid --ingest-koester ~/Downloads/models_.../koester2 \
     --to data/grids
+python manage.py sedgrid --ingest-bosz ~/tmp/bosz --to data/grids
 python manage.py sedgrid --scatter            # or --scatter btsettl bosz
 ```
 
@@ -310,6 +311,16 @@ and astroARIADNE's cubes for both came from them and stop at 12000 K, which is
 less than half of either: 7618 and 3808 models reaching 50000 K. Past about ten
 microns the atlases are a Rayleigh-Jeans tail rather than a model, so those
 grids are written believing themselves only to 8.5 µm.
+
+`--ingest-bosz` reads a [BOSZ](https://archive.stsci.edu/hlsp/bosz) download.
+That library is organised by rather more than the three axes a fit varies here —
+alpha enhancement, carbon abundance and microturbulence besides metallicity, and
+eight instrumental broadenings — so only one composition at one broadening is
+wanted, and only about one file in eight hundred of the archive. The cube here
+already came from the solar-abundance, 2 km/s slice; what the download adds is
+its spectra, out to 32 µm, which is further than any other grid here reaches at
+those temperatures. The ingest refuses a download holding more than one
+composition rather than average two of them together.
 
 `--ingest-koester` reads Koester's white-dwarf models as SVO hands them out, one
 file per model. The cube here was built from the same models and has no spectra;
@@ -363,6 +374,7 @@ lcserver/
 │   ├── powr.py       a PoWR download, one file per model at ten parsecs
 │   ├── tlusty.py     a TLUSTY grid, out of its merged file for Cloudy
 │   ├── cdbs.py       the Kurucz and Castelli atlases, as STScI ships them
+│   ├── bosz.py       a BOSZ download, one composition of the library
 │   ├── koester.py    white-dwarf models, one file each, as SVO hands them out
 │   └── scatter.py    a lattice rewritten as the models it actually holds
 ├── surveys.py      the registry - metadata, bands, form fields, layout
