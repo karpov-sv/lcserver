@@ -421,6 +421,426 @@ def residuals(result, theta, grid):
     return (result['flux'] - model) / result['flux_err'], model
 
 
+# --------------------------------------------------------- infrared excess
+
+# Where the excess is described from, and the shape conventions.
+#
+# The modified blackbody is the field-standard debris-disc form: a blackbody
+# with an emission efficiency falling as 210 um / lambda beyond 210 um, so a
+# temperature here is comparable with a temperature in the literature.
+MODBB_LAMBDA0 = 210.0
+MODBB_BETA = 1.0
+
+# Sigma-Boltzmann in cgs, and the solar luminosity in erg/s, for turning a
+# solid angle at a temperature into a fraction of the star
+SIGMA_SB = 5.670374419e-5
+L_SUN = 3.828e33
+
+# The spectral index of the free-free hypothesis, as F_nu ~ nu^alpha. An
+# ionised envelope runs from about -0.1 where it is optically thin, through
+# the 0.6 of a constant-velocity wind, to the 2 of a body optically thick at
+# every wavelength; the prior covers that and a little either side.
+FREEFREE_ALPHA = (-0.5, 2.0)
+
+# The dust temperatures a modified blackbody is allowed. Silicates do not
+# survive above about 1500 K, and below 30 K a debris disc is colder than the
+# interstellar radiation field would leave it.
+DUST_TEMPERATURE = (30.0, 1500.0)
+
+# How far the amplitude is allowed either side of the largest excess actually
+# measured. It is the same prior for both shapes, so the Occam factor it
+# carries cancels in the free-free against blackbody comparison and enters the
+# comparison with the null once, identically for each.
+AMPLITUDE_RANGE = (1e-4, 1e2)
+
+
+def modbb_factor(wave_um):
+    """The emission efficiency of the modified blackbody at each wavelength."""
+    wave = np.asarray(wave_um, dtype=float)
+    return np.where(wave > MODBB_LAMBDA0,
+                    (MODBB_LAMBDA0 / wave) ** MODBB_BETA, 1.0)
+
+
+def planck(wave_um, temperature):
+    """B_lambda in erg/s/cm2/um/sr, which is the unit the fluxes are in."""
+    from scipy.constants import h, c, k
+
+    lam = np.asarray(wave_um, dtype=float) * 1e-6
+    # A cold blackbody in the ultraviolet overflows the exponential, and the
+    # zero that comes back out of it is the right answer
+    with np.errstate(over='ignore', divide='ignore', invalid='ignore'):
+        # W/m2/m/sr, then to erg/s/cm2/um/sr: 1e7 / 1e4 / 1e6
+        value = (2 * h * c ** 2 / lam ** 5) \
+            / np.expm1(h * c / (lam * k * temperature)) * 1e-3
+
+    return np.where(np.isfinite(value), value, 0.0)
+
+
+def modbb_bolometric_fraction(temperature):
+    """How much of a blackbody survives the modification, as a fraction.
+
+    The solid angle a fitted amplitude implies is turned into a luminosity by
+    integrating the shape that was fitted, not the blackbody it started as.
+    """
+    lam = np.geomspace(1.0, 5000.0, 400)
+    full = planck(lam, temperature)
+
+    return float(np.trapz(full * modbb_factor(lam), lam) / np.trapz(full, lam))
+
+
+def dust_ceiling(temperature):
+    """The largest fractional luminosity a disc of that temperature is seen at.
+
+    An empirical envelope rather than a physical bound: cold debris reaches
+    1e-1 only after a giant impact, and sustained hot dust is observed at the
+    1e-4 of an exozodi. Nothing is refused for exceeding it - the comparison
+    here is about the shape of the excess - but a solution above it is saying
+    something no debris disc has been seen to do, and that is worth printing.
+    """
+    t = np.clip(np.asarray(temperature, dtype=float), 500.0, 1500.0)
+    return 10.0 ** (-1.0 - 3.0 * (np.log10(t) - np.log10(500.0))
+                    / (np.log10(1500.0) - np.log10(500.0)))
+
+
+def predict_bands(run, grid, bands, wave_um, ndraw=400, seed=0):
+    """The photosphere in each band, as the posterior predicts it.
+
+    The mean and spread over posterior rows, not the model at one row: a band
+    the fit leaves loose has a wide prediction, and calling an excess
+    significant means comparing with the width of what was predicted as well
+    as with the error on what was measured.
+    """
+    columns = np.array([grid.column[b] for b in bands])
+    ext_unit = attenuation(wave_um, 1.0)
+
+    samples = run['samples']
+    if len(samples) > ndraw:
+        samples = samples[np.random.default_rng(seed).choice(len(samples),
+                                                             ndraw, replace=False)]
+
+    drawn = np.array([model_flux(row, columns, ext_unit, grid) for row in samples])
+    good = np.isfinite(drawn).all(axis=1)
+    if not good.any():
+        return (np.full(len(bands), np.nan), np.full(len(bands), np.nan))
+
+    drawn = drawn[good]
+    return drawn.mean(axis=0), drawn.std(axis=0)
+
+
+def excess_rows(rows, run, grids):
+    """The points an excess would be measured on, one per band.
+
+    Every point redward of the reddest band that was fitted, which the grids
+    can predict a photosphere for. Redward of the fit is the whole of the
+    condition: a point set aside for any other reason - a second catalogue for
+    a band already taken, one the reader turned off in the optical - is not an
+    excess, it is a point that was not used.
+    """
+    fitted = set(run['bands'])
+    edge = max(run['wave_um'])
+
+    # A band is quantified only where every grid in play both carries it and is
+    # believed there, which is the intersection of what they reach
+    reach = None
+    for grid in grids:
+        covers = {b for b in grid.covers
+                  if _within_limit(grid.name, b, rows)}
+        reach = covers if reach is None else (reach & covers)
+
+    out, seen = [], set()
+    for row in rows:
+        band = row['band']
+        if (band is None or band in fitted or band in seen
+                or row['flux'] is None or row['wave_um'] is None
+                or not row['wave_um'] > edge):
+            continue
+
+        seen.add(band)
+        out.append(dict(row, quantified=band in (reach or ())))
+
+    out.sort(key=lambda r: r['wave_um'])
+    return out
+
+
+def _within_limit(name, band, rows):
+    """Whether a grid is believed at a band, by the wavelength it stops at."""
+    limit = GRID_IR_LIMIT.get(name)
+    if limit is None:
+        return True
+
+    for row in rows:
+        if row['band'] == band and row['wave_um']:
+            return row['wave_um'] <= limit
+
+    return True
+
+
+def quantify_excess(rows, run, grid):
+    """Observed against predicted, band by band, for the points beyond the fit.
+
+    The significance is against both errors - the catalogue's on what was
+    measured, and the posterior's on what was predicted - which is what makes
+    a three-sigma excess at a band the fit barely constrains mean anything.
+    """
+    quantified = [r for r in rows if r['quantified']]
+    table = []
+
+    model = model_err = {}
+    if quantified:
+        bands = [r['band'] for r in quantified]
+        waves = np.array([r['wave_um'] for r in quantified])
+        predicted, spread = predict_bands(run, grid, bands, waves)
+        model = dict(zip(bands, predicted))
+        model_err = dict(zip(bands, spread))
+
+    for row in rows:
+        entry = {'id': row['id'], 'band': row['band'],
+                 'wave_um': float(row['wave_um']),
+                 'observed': float(row['flux']), 'observed_err': float(row['err']),
+                 'quantified': bool(row['quantified']),
+                 'model': None, 'model_err': None,
+                 'excess': None, 'ratio': None, 'sigma': None}
+
+        m = model.get(row['band'])
+        if entry['quantified'] and m is not None and np.isfinite(m) and m > 0:
+            me = float(model_err[row['band']])
+            entry['model'] = float(m)
+            entry['model_err'] = me
+            entry['excess'] = float(row['flux'] - m)
+            entry['ratio'] = float(row['flux'] / m)
+            entry['sigma'] = float((row['flux'] - m) / np.hypot(row['err'], me))
+        else:
+            entry['quantified'] = False
+
+        table.append(entry)
+
+    return table
+
+
+def compare_excess(table, run, grid, summary):
+    """Which shape the excess has, by the evidence for each.
+
+    Three hypotheses, compared by integrating the likelihood over their priors
+    on a grid. At two parameters that integral is exact to the resolution of
+    the grid and carries no Monte Carlo error at all, which is worth more here
+    than sampling would be - the whole comparison is a ratio of numbers that
+    sampling would only add noise to.
+
+      null        no excess, and no parameters to pay for it.
+
+      free-free   a power law, F_nu ~ nu^alpha. The continuum of ionised gas -
+                  a wind, or the decretion disc of a Be star - which has no
+                  temperature to speak of and does not turn over anywhere in
+                  the infrared.
+
+      blackbody   a modified blackbody at one dust temperature, which is what
+                  a debris disc is. It peaks, and where it peaks is the whole
+                  of the information in it.
+
+    Both shapes carry the same amplitude prior, so what the comparison between
+    them tests is the shape and nothing else. The free-free law is defined
+    only redward of the fit: a power law continued blueward diverges, and
+    whatever the gas contributes among the fitted bands was absorbed into the
+    photosphere when it was fitted. The blackbody is defined everywhere, and
+    pays for what it predicts among the fitted bands - which is what keeps a
+    1500 K solution from quietly out-shining the star in K.
+    """
+    used = [e for e in table if e['quantified']]
+    if len(used) < 2:
+        return None
+
+    wave = np.array([e['wave_um'] for e in used])
+    excess = np.array([e['excess'] for e in used])
+    sigma = np.array([np.hypot(e['observed_err'], e['model_err']) for e in used])
+    inv2 = 1.0 / sigma ** 2
+
+    # The amplitude is the excess at this wavelength, which is put in the
+    # middle of the measured ones so that it is interpolated rather than
+    # extrapolated whatever the shape turns out to be
+    reference = float(np.exp(np.mean(np.log(wave))))
+    scale = float(np.max(np.abs(excess)))
+    if not scale > 0:
+        return None
+
+    # What each shape would add to the bands the photosphere was fitted on
+    fit_wave = np.asarray(run['wave_um'], dtype=float)
+    fit_model = np.array([summary['best'][p] for p in PARAMETERS])
+    fit_model = model_flux(fit_model, run['columns'], run['ext_unit'], grid)
+    fit_sigma = np.hypot(run['flux_err'], summary['jitter']['median'] * fit_model)
+    fit_inv2 = 1.0 / fit_sigma ** 2
+
+    amplitude = np.geomspace(AMPLITUDE_RANGE[0] * scale,
+                             AMPLITUDE_RANGE[1] * scale, 1024)
+
+    def evidence(at_bands, at_fit):
+        """Integrate exp(-chi2/2) over the amplitude and the shape.
+
+        chi2 is quadratic in the amplitude, so the sums over bands are done
+        once per shape and the whole amplitude axis follows from three numbers.
+        """
+        s0 = float(np.sum(excess ** 2 * inv2))
+        s1 = at_bands @ (excess * inv2)
+        s2 = (at_bands ** 2) @ inv2 + (at_fit ** 2) @ fit_inv2
+
+        chi2 = (s0 - 2 * amplitude[None, :] * s1[:, None]
+                + amplitude[None, :] ** 2 * s2[:, None])
+        return chi2, s0
+
+    # free-free: F_lambda ~ lambda^-(alpha + 2), and nothing blueward of the fit
+    alpha = np.linspace(*FREEFREE_ALPHA, 61)
+    ff_bands = (wave[None, :] / reference) ** -(alpha[:, None] + 2)
+    ff_fit = np.zeros((alpha.size, fit_wave.size))
+    chi2_ff, chi2_null = evidence(ff_bands, ff_fit)
+
+    # blackbody: a solid angle set by the amplitude at the reference wavelength
+    temperature = np.geomspace(*DUST_TEMPERATURE, 64)
+    unit = np.array([planck(wave, t) * modbb_factor(wave) for t in temperature])
+    unit_ref = np.array([float(planck(reference, t)) * float(modbb_factor(reference))
+                         for t in temperature])
+    bb_bands = unit / unit_ref[:, None]
+    bb_fit = np.array([planck(fit_wave, t) * modbb_factor(fit_wave) / u
+                       for t, u in zip(temperature, unit_ref)])
+    chi2_bb, _ = evidence(bb_bands, bb_fit)
+
+    # One offset for all three, so the ratios are the ratios
+    floor = min(chi2_null, float(np.min(chi2_ff)), float(np.min(chi2_bb)))
+    like_ff = np.exp(-(chi2_ff - floor) / 2)
+    like_bb = np.exp(-(chi2_bb - floor) / 2)
+
+    # The priors are uniform over each axis as it is gridded - alpha linearly,
+    # the temperature and the amplitude in the log - so the integral over the
+    # prior is the mean over the nodes
+    z = {'none': float(np.exp(-(chi2_null - floor) / 2)),
+         'freefree': float(np.mean(like_ff)),
+         'blackbody': float(np.mean(like_bb))}
+    total = sum(z.values()) or 1.0
+
+    # The ratios themselves as well as the probabilities: a shape that wins by
+    # forty in the log has a probability of one to every digit that fits, and
+    # the number that says how decisively is the ratio
+    def ln_ratio(a, b):
+        return float(np.log(z[a]) - np.log(z[b])) if z[a] > 0 and z[b] > 0 else None
+
+    out = {'reference_um': reference,
+           'chi2_null': float(chi2_null),
+           'bands': len(used),
+           'probability': {k: v / total for k, v in z.items()},
+           'ln_bayes': {'freefree_over_blackbody': ln_ratio('freefree', 'blackbody'),
+                        'freefree_over_none': ln_ratio('freefree', 'none'),
+                        'blackbody_over_none': ln_ratio('blackbody', 'none')}}
+
+    out['freefree'] = _marginal(like_ff, alpha, amplitude,
+                                ('alpha', 'amplitude'), chi2_ff)
+    out['blackbody'] = _marginal(like_bb, temperature, amplitude,
+                                 ('t_dust', 'amplitude'), chi2_bb)
+
+    # What the fitted blackbody would be, as a fraction of the star
+    best = out['blackbody']
+    dust = _dust_luminosity(best['t_dust'], best['amplitude'], reference,
+                            summary)
+    if dust is not None:
+        best['l_dust_over_lstar'] = dust
+        best['above_ceiling'] = bool(dust > dust_ceiling(best['t_dust']))
+
+    out['preferred'] = max(out['probability'], key=out['probability'].get)
+    return out
+
+
+def _marginal(like, shape, amplitude, names, chi2):
+    """Mean and spread of each axis under the likelihood, and the best node."""
+    weight = like / (like.sum() or 1.0)
+    ws, wa = weight.sum(axis=1), weight.sum(axis=0)
+
+    def moments(values, w):
+        mean = float(np.sum(w * values))
+        var = float(np.sum(w * (values - mean) ** 2))
+        return mean, float(np.sqrt(max(var, 0.0)))
+
+    i, j = np.unravel_index(np.argmin(chi2), chi2.shape)
+    s_mean, s_err = moments(shape, ws)
+    a_mean, a_err = moments(amplitude, wa)
+
+    return {names[0]: s_mean, names[0] + '_err': s_err,
+            names[1]: a_mean, names[1] + '_err': a_err,
+            names[0] + '_best': float(shape[i]),
+            names[1] + '_best': float(amplitude[j]),
+            'chi2': float(chi2[i, j])}
+
+
+def _dust_luminosity(temperature, amplitude, reference_um, summary):
+    """L_dust / L_star for a modified blackbody of that amplitude.
+
+    The amplitude is a flux at one wavelength; the solid angle follows from
+    the shape, and the luminosity from the solid angle and the distance.
+    """
+    distance = summary.get('dist', {}).get('median')
+    luminosity = summary.get('lum_lsun', {}).get('median')
+    if not distance or not luminosity or luminosity <= 0:
+        return None
+
+    unit = float(planck(reference_um, temperature)) * float(modbb_factor(reference_um))
+    if not unit > 0:
+        return None
+
+    omega = amplitude / unit
+    d_cm = distance * PARSEC
+
+    return float(4 * d_cm ** 2 * omega * SIGMA_SB * temperature ** 4
+                 * modbb_bolometric_fraction(temperature)
+                 / (luminosity * L_SUN))
+
+
+def log_excess(table, models, log):
+    """The excess as a table, and what shape it came out as."""
+    log('\n  infrared excess, against the photosphere the fit predicts')
+    log(f"    {'band':<16}{'lam um':>8}{'observed':>11}{'photosphere':>12}"
+        f"{'ratio':>8}{'sigma':>8}")
+
+    for entry in table:
+        if entry['quantified']:
+            log(f"    {entry['band'] or '':<16}{entry['wave_um']:8.2f}"
+                f"{entry['observed']:11.3e}{entry['model']:12.3e}"
+                f"{entry['ratio']:8.2f}{entry['sigma']:+8.1f}")
+        else:
+            log(f"    {entry['band'] or '':<16}{entry['wave_um']:8.2f}"
+                f"{entry['observed']:11.3e}{'-':>12}{'-':>8}{'-':>8}")
+
+    if not models:
+        log('    fewer than two bands to compare shapes on')
+        return
+
+    p = models['probability']
+    log(f"\n    shape, on {models['bands']} band(s):  none {p['none']:.3f}"
+        f"  free-free {p['freefree']:.3f}  blackbody {p['blackbody']:.3f}")
+
+    ln = models['ln_bayes']['freefree_over_blackbody']
+    if ln is not None:
+        log(f"      log Bayes factor, free-free over blackbody {ln:+.1f}")
+
+    # Which shape wins is one question, and whether it fits is another. Two
+    # parameters through four catalogue points measured years apart will not
+    # go through them all, and saying so is worth more than the ratio alone.
+    best = models[models['preferred']] if models['preferred'] != 'none' else None
+    if best is not None and models['bands'] > 2:
+        log(f"      the preferred shape leaves chi2 {best['chi2']:.1f}"
+            f" on {models['bands'] - 2} degree(s) of freedom")
+
+    ff = models['freefree']
+    log(f"      free-free   F_nu ~ nu^({ff['alpha']:+.2f} +/- {ff['alpha_err']:.2f}),"
+        f"  {ff['amplitude']:.3e} at {models['reference_um']:.2f} um")
+
+    bb = models['blackbody']
+    line = (f"      blackbody   T_dust {bb['t_dust']:.0f}"
+            f" +/- {bb['t_dust_err']:.0f} K")
+    if 'l_dust_over_lstar' in bb:
+        line += f",  L_dust/L_star {bb['l_dust_over_lstar']:.2e}"
+    log(line)
+
+    if bb.get('above_ceiling'):
+        log('        - which is more than any debris disc is seen to have'
+            ' at that temperature')
+
+
 # ------------------------------------------------------------ our photometry
 
 # VizieR's designation for a band, as our SED step writes it in the second
@@ -499,6 +919,12 @@ FILTER_MAP = {
 NOT_PHOTOSPHERE = ('WISE_RSR_W3', 'WISE_RSR_W4', 'HERSCHEL_PACS_BLUE',
                    'HERSCHEL_PACS_GREEN', 'HERSCHEL_PACS_RED',
                    'SPITZER_IRAC_58', 'SPITZER_IRAC_80')
+
+# How far out a grid may be believed, in microns. A cube carries a column for
+# every filter, but some grids were built from spectra that stop short of the
+# reddest of them and the flux there is an extrapolation. Only the grids that
+# need a limit have one; the rest are trusted to their whole reach.
+GRID_IR_LIMIT = {'koester': 3.0, 'ck04': 8.5, 'kurucz': 8.5}
 
 # Which grid file holds which grid
 GRID_FILES = {
@@ -714,6 +1140,21 @@ def target_sed_fit(config, basepath='.', outpath=None, selection=None,
             f"   prior shrinkage {100*summary['shrink']:.0f}%")
         log_parameters(summary, log)
 
+        # What the points beyond the fit do, which the fit itself says nothing
+        # about - it was not shown them. Per grid, as everything else here is:
+        # the excess is measured against a photosphere, and two grids predict
+        # two of those.
+        if options.get('excess', True):
+            try:
+                beyond = excess_rows(rows, run, [grid])
+                if beyond:
+                    summary['excess'] = quantify_excess(beyond, run, grid)
+                    summary['excess_models'] = compare_excess(
+                        summary['excess'], run, grid, summary)
+                    log_excess(summary['excess'], summary['excess_models'], log)
+            except Exception as e:
+                log(f'  infrared excess failed: {type(e).__name__}: {e}')
+
     if not runs:
         raise SourceError('no grid covers every fitted band')
 
@@ -784,18 +1225,33 @@ def shrinkage(result, teff_prior):
 
 
 def residual_table(result, summary, grid):
-    """Observed against model at the row the fit is drawn at."""
+    """Observed against model at the row the fit is drawn at.
+
+    The model is that one row, which is what the figures draw and what makes
+    the parameters beside it mean anything together. What it is divided by is
+    both errors: the catalogue's on the measurement, and the posterior's on
+    the prediction. A band the fit barely constrains is predicted loosely, and
+    a residual there is worth fewer sigma than the same residual in a band the
+    fit is pinned to - which dividing by the catalogue error alone will not say.
+    """
     theta = np.array([summary['best'][p] for p in PARAMETERS])
-    res, model = residuals(result, theta, grid)
+    _, model = residuals(result, theta, grid)
+    _, model_err = predict_bands(result, grid, result['bands'],
+                                 result['wave_um'])
 
     drawn = result.get('wave_drawn_um')
     if drawn is None:
         drawn = result['wave_um']
 
+    sigma = np.hypot(result['flux_err'], np.nan_to_num(model_err))
+    res = (result['flux'] - model) / sigma
+
     return [{'band': b, 'wave_um': float(w), 'wave_drawn_um': float(d),
-             'observed': float(f), 'model': float(m), 'residual': float(r)}
-            for b, w, d, f, m, r in zip(result['bands'], result['wave_um'],
-                                        drawn, result['flux'], model, res)]
+             'observed': float(f), 'model': float(m), 'model_err': float(me),
+             'residual': float(r)}
+            for b, w, d, f, m, me, r in zip(result['bands'], result['wave_um'],
+                                            drawn, result['flux'], model,
+                                            model_err, res)]
 
 
 def _grid_spread(summaries):
@@ -994,6 +1450,52 @@ GRID_COLOURS = ['#2980b9', '#c0392b', '#16a085', '#8e44ad', '#e67e22',
 PER_AA = 1e-4
 
 
+# The excess is not the star, and is not drawn as though it were
+EXCESS_COLOUR = '#c0392b'
+
+
+def _excess_curve(models, wave_um):
+    """The fitted excess shape over a wavelength range, or None.
+
+    Drawn at the best node rather than at the marginal means, for the reason
+    the photosphere is drawn at one posterior row: a temperature and an
+    amplitude taken from two different places on the likelihood are not a
+    shape that fits anything.
+    """
+    if not models or models.get('preferred') == 'none':
+        return None
+
+    reference = models['reference_um']
+    wave = np.asarray(wave_um, dtype=float)
+
+    if models['preferred'] == 'freefree':
+        best = models['freefree']
+        flux = best['amplitude_best'] * (wave / reference) ** -(best['alpha_best'] + 2)
+    else:
+        best = models['blackbody']
+        t = best['t_dust_best']
+        unit = float(planck(reference, t)) * float(modbb_factor(reference))
+        if not unit > 0:
+            return None
+        flux = best['amplitude_best'] * planck(wave, t) * modbb_factor(wave) / unit
+
+    return wave, flux
+
+
+def _excess_label(models):
+    """What the drawn excess shape is, in a few words for a legend."""
+    if not models or models.get('preferred') == 'none':
+        return 'excess'
+
+    p = models['probability'][models['preferred']]
+    if models['preferred'] == 'freefree':
+        return (f"free-free, "
+                rf"$\nu^{{{models['freefree']['alpha_best']:+.2f}}}$ (P = {p:.2f})")
+
+    return (f"blackbody, {models['blackbody']['t_dust_best']:.0f} K"
+            f" (P = {p:.2f})")
+
+
 def draw_sed(run, grid, summary, path, name=None, colour=GRID_COLOURS[0]):
     """The photometry, the model that fits it, and what is left over.
 
@@ -1021,7 +1523,6 @@ def draw_sed(run, grid, summary, path, name=None, colour=GRID_COLOURS[0]):
 
     jitter = float(theta[PARAMETERS.index('jitter')])
     widened = np.hypot(err, jitter * model)
-    residual = (flux - model) / err
 
     # What the rest of the posterior would have drawn. Two hundred rows is
     # enough for a 16-84 envelope and costs an interpolation each.
@@ -1032,6 +1533,17 @@ def draw_sed(run, grid, summary, path, name=None, colour=GRID_COLOURS[0]):
     cloud = np.array([model_flux(row, run['columns'], run['ext_unit'], grid)[order]
                       for row in draws]) * PER_AA
     lo, hi = np.nanpercentile(cloud, [16, 84], axis=0)
+
+    # Both errors, as the residual table has them: the catalogue's on the
+    # measurement and the posterior's on the prediction
+    total = np.hypot(err, np.nan_to_num(np.nanstd(cloud, axis=0)))
+    residual = (flux - model) / total
+
+    # The points beyond the fit, and the shape the excess came out as. They
+    # are drawn because they are the reason the fit was told to leave them
+    # out: an excess is a statement about the photosphere as much as the fit is.
+    beyond = [e for e in (summary.get('excess') or []) if e['quantified']]
+    models = summary.get('excess_models')
 
     filename = os.path.join(path, f'sed_{name or run["grid"]}.png')
 
@@ -1054,6 +1566,35 @@ def draw_sed(run, grid, summary, path, name=None, colour=GRID_COLOURS[0]):
         top.errorbar(wave, flux, err, fmt='o', ms=4, color='k', ecolor='k',
                      elinewidth=1, capsize=2, label='photometry')
 
+        if beyond:
+            bw = np.array([e['wave_um'] for e in beyond])
+            bf = np.array([e['observed'] for e in beyond]) * PER_AA
+            be = np.array([e['observed_err'] for e in beyond]) * PER_AA
+            bm = np.array([e['model'] for e in beyond]) * PER_AA
+
+            top.plot(bw, bm, 'd', mfc='none', ms=7, mew=1.2, color=colour,
+                     ls='none', label='photosphere, not fitted here')
+            top.errorbar(bw, bf, be, fmt='s', ms=5, color=EXCESS_COLOUR,
+                         ecolor=EXCESS_COLOUR, elinewidth=1, capsize=2,
+                         label='beyond the fit')
+
+            # The excess alone, as a curve: unlike the photosphere it is a
+            # function we have in closed form, so drawing it between the bands
+            # claims nothing that was not fitted. Dashed, because on its own it
+            # is a component and not a model of the measurement.
+            curve = _excess_curve(models, np.geomspace(wave[-1], bw[-1] * 1.3, 200))
+            if curve is not None:
+                top.plot(curve[0], curve[1] * PER_AA, '--', lw=1.3,
+                         color=EXCESS_COLOUR, alpha=0.8,
+                         label=_excess_label(models))
+
+                # And the two of them together at each band, which is what the
+                # measurement is to be read against
+                at = _excess_curve(models, bw)
+                top.plot(bw, bm + at[1] * PER_AA, 'D', mfc='none', ms=10,
+                         mew=1.4, color=EXCESS_COLOUR, ls='none',
+                         label='photosphere + excess')
+
         top.set_xscale('log')
         top.set_yscale('log')
         top.set_ylabel(r'$F_\lambda$, erg s$^{-1}$ cm$^{-2}$ $\AA^{-1}$')
@@ -1067,7 +1608,7 @@ def draw_sed(run, grid, summary, path, name=None, colour=GRID_COLOURS[0]):
 
         # The band the fit was working to, which is why a three-sigma residual
         # against the catalogue error is not necessarily a bad fit
-        envelope = jitter * model / err
+        envelope = jitter * model / total
         low.axhspan(-1, 1, color='0.85', zorder=0)
         low.vlines(wave, -envelope, envelope, color=colour, alpha=0.45, lw=2,
                    zorder=1, label=f'jitter, {jitter:.1%} of the model')
@@ -1088,6 +1629,30 @@ def draw_sed(run, grid, summary, path, name=None, colour=GRID_COLOURS[0]):
                              textcoords='offset points', va='center',
                              ha='right' if left else 'left',
                              xytext=(-5 if left else 5, 5 if n % 2 else -10))
+
+        # The excess sigmas belong in this panel, but they are tens where the
+        # fitted ones are ones, and letting them set the scale would flatten
+        # the residuals the photosphere is judged on. So the scale stays with
+        # the fit, and an excess off the top is marked at the edge by how far.
+        if beyond:
+            span = max(3.0, 1.25 * float(np.max(np.abs(residual))),
+                       1.25 * float(np.max(envelope)))
+            low.set_ylim(-span, span)
+
+            for e in beyond:
+                sigma = e['sigma']
+                inside = min(max(sigma, -span * 0.92), span * 0.92)
+                low.plot([e['wave_um']], [inside], marker='s', ms=5,
+                         color=EXCESS_COLOUR, zorder=4,
+                         clip_on=abs(sigma) <= span)
+                if abs(sigma) > span:
+                    # Inside the axes, since the panel above starts where this
+                    # one ends and there is nowhere outside to write
+                    low.annotate(f'{sigma:+.0f}', (e['wave_um'], inside),
+                                 fontsize=7, color=EXCESS_COLOUR,
+                                 textcoords='offset points', ha='center',
+                                 va='bottom' if sigma < 0 else 'top',
+                                 xytext=(0, 6 if sigma < 0 else -6))
 
         low.legend(fontsize=7.5, frameon=False, loc='upper left')
 
