@@ -117,3 +117,7 @@ targets/
 
 db.sqlite3
 dump.rdb
+
+# Model grids for the SED fitter - gigabytes of somebody else's data, fetched
+# and converted rather than kept here
+data/

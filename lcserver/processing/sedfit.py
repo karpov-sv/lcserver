@@ -67,18 +67,31 @@ AB_ZERO_JY = 3631.0
 
 
 class Grid:
-    """One atmosphere grid, read straight out of its HDF5 cube.
+    """One atmosphere grid, read straight out of its HDF5 file.
 
-    The file carries three axes and a dense (n_logg, n_teff, n_feh, n_filter)
-    block of fluxes, which is all an interpolator needs. Bands a grid does not
-    reach are NaN at every node; those are reported so a caller can decline to
-    fit them rather than discover it as a likelihood of -inf.
+    Two layouts, because model grids come both ways.
+
+    A *lattice* carries three axes and a dense (n_logg, n_teff, n_feh, n_filter)
+    block of fluxes - every combination computed, which is what astroARIADNE's
+    grids are.
+
+    A *scattered* grid carries a parameter triple per model and a
+    (n_model, n_filter) block. Hot-star grids are this shape and cannot be the
+    other: a star of 56000 K at log g 2 does not exist to be computed, so half
+    the rectangle is empty and filling it with nothing would refuse half the
+    models that do exist. Interpolation is over the models themselves, and the
+    support is the hull they span rather than a box.
+
+    Either way, bands a grid does not reach are NaN; those are reported so a
+    caller can decline to fit them rather than discover it as a likelihood of
+    minus infinity.
     """
 
     def __init__(self, path, name=None):
         self.name = name or str(path)
 
         with h5py.File(path, 'r') as h:
+            self.layout = str(h.attrs.get('layout', 'lattice'))
             self.logg = np.asarray(h['logg'][:], dtype=float)
             self.teff = np.asarray(h['teff'][:], dtype=float)
             self.feh = np.asarray(h['feh'][:], dtype=float)
@@ -88,23 +101,102 @@ class Grid:
 
         self.filters = names
         self.column = {b: i for i, b in enumerate(names)}
-        self._interp = RegularGridInterpolator(
-            (self.logg, self.teff, self.feh), cube,
-            bounds_error=False, fill_value=np.nan)
 
-        finite = np.isfinite(cube).any(axis=(0, 1, 2))
+        if self.layout == 'scattered':
+            axes = self._scattered(cube)
+            finite = np.isfinite(cube).any(axis=0)
+        else:
+            axes = None
+            self._interp = RegularGridInterpolator(
+                (self.logg, self.teff, self.feh), cube,
+                bounds_error=False, fill_value=np.nan)
+            finite = np.isfinite(cube).any(axis=(0, 1, 2))
+
+        self._varies = axes
         self.covers = frozenset(b for b, i in self.column.items() if finite[i])
+
+    def _scattered(self, cube):
+        """Interpolate over the models, in whichever parameters actually vary.
+
+        A grid of one metallicity says nothing about metallicity, and asking an
+        interpolator to work in a direction with one value in it is asking for
+        an error rather than an answer. What does not vary is left out here and
+        comes back as a prior of zero width, which is the honest reading of it.
+        """
+        from scipy.interpolate import interp1d
+        from scipy.spatial import Delaunay
+
+        varies = [n for n in ('logg', 'teff', 'feh')
+                  if np.ptp(getattr(self, n)) > 0]
+        points = np.column_stack([getattr(self, n) for n in varies])
+
+        # Each axis onto the unit interval before triangulating. A temperature
+        # runs to tens of thousands and a gravity to four, and a triangulation
+        # of points twenty thousand times further apart in one direction than
+        # the other is degenerate.
+        self._offset = points.min(axis=0)
+        self._span = np.where(np.ptp(points, axis=0) > 0,
+                              np.ptp(points, axis=0), 1.0)
+
+        if len(varies) >= 2:
+            self._cube = cube
+            self._mesh = Delaunay((points - self._offset) / self._span)
+            self._interp = None
+        elif len(varies) == 1:
+            order = np.argsort(points[:, 0])
+            self._interp = interp1d(points[order, 0], cube[order], axis=0,
+                                    bounds_error=False, fill_value=np.nan)
+        else:
+            raise SourceError(f'{self.name} has one model and nothing to vary')
+
+        return varies
+
+    # How far outside a simplex a point may be and still be taken as inside,
+    # in axes normalised to their own span. Models on the edge of the hull -
+    # which for a hot-star grid is the whole main sequence, every model at the
+    # highest gravity computed - sit exactly on a face of it, and asking for a
+    # node stored as a 32-bit float in 64-bit arithmetic lands a hair outside.
+    # A millionth of an axis is four hundredths of a kelvin here.
+    MESH_TOLERANCE = 1e-6
+
+    def _from_mesh(self, point):
+        """Linear interpolation over the triangulated models."""
+        n = len(point)
+        where = self._mesh.find_simplex(point, tol=self.MESH_TOLERANCE)
+        if where < 0:
+            return np.full(self._cube.shape[1], np.nan)
+
+        transform = self._mesh.transform[where]
+        bary = transform[:n].dot(point - transform[n])
+        weights = np.append(bary, 1 - bary.sum())
+
+        return weights @ self._cube[self._mesh.simplices[where]]
 
     @property
     def limits(self):
-        """The box the grid is defined over, as {parameter: (low, high)}."""
+        """The box the grid is defined over, as {parameter: (low, high)}.
+
+        For a scattered grid this is the box around the models rather than the
+        hull they fill; what falls in the box and outside the hull comes back
+        as no flux, which the likelihood already knows what to do with.
+        """
         return {'teff': (self.teff.min(), self.teff.max()),
                 'logg': (self.logg.min(), self.logg.max()),
                 'feh': (self.feh.min(), self.feh.max())}
 
     def flux(self, teff, logg, feh, columns):
         """Surface flux in the given filter columns, erg/s/cm2/um."""
-        return self._interp(np.array([[logg, teff, feh]]))[0][columns]
+        if self._varies is None:
+            return self._interp(np.array([[logg, teff, feh]]))[0][columns]
+
+        at = {'logg': logg, 'teff': teff, 'feh': feh}
+        point = [at[n] for n in self._varies]
+
+        if len(point) == 1:
+            return np.atleast_2d(self._interp(point[0]))[0][columns]
+
+        scaled = (np.array(point) - self._offset) / self._span
+        return self._from_mesh(scaled)[columns]
 
 
 def attenuation(wave_um, av, law=extinction.fitzpatrick99, rv=3.1):
@@ -1947,11 +2039,14 @@ def draw_sed(run, grid, summary, path, name=None, colour=GRID_COLOURS[0]):
         # said at a resolution the fit never used - the diamonds are what was
         # fitted, and this is what they were summed from.
         if spectrum is not None:
-            # A little blueward of the bluest measurement and no further: the
-            # cache starts at 0.125 um, and stretching the axis down to it to
-            # show a model nothing was measured against costs a quarter of the
-            # width for the part of the figure that is only ever the model.
-            near = spectrum[0] >= 0.6 * wave[0]
+            # A little either side of what was measured and no further. A grid
+            # ingested from its own publication reaches from the ultraviolet to
+            # the radio, and drawing all of it would spend most of the axis -
+            # and most of the decades of the flux axis with it - on a stretch
+            # nothing was ever measured in.
+            red = max([wave[-1]] + [e['wave_um'] for e in beyond + left])
+            near = ((spectrum[0] >= 0.6 * wave[0])
+                    & (spectrum[0] <= 1.5 * red))
             top.plot(spectrum[0][near], spectrum[1][near] * PER_AA, '-',
                      lw=0.6, color=colour, alpha=0.5, zorder=0,
                      label=f'{run["grid"]} spectrum, nearest node')
