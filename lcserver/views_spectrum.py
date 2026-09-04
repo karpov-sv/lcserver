@@ -285,6 +285,10 @@ FIT_OPTIONS = {
     'err_floor': lambda v: float(np.clip(float(v), 0, 1)),
     'err_unknown': lambda v: float(np.clip(float(v), 0, 1)),
     'seed': lambda v: int(v),
+    # Whether Gaia's spectrum is fitted as well as compared with. Where it is,
+    # its bins join the point list and the synthetic photometry made from the
+    # same spectra leaves it, which the fitter does for itself.
+    'xp_fit': lambda v: bool(v),
 }
 
 # Priors arrive as ['uniform', low, high] and are rebuilt here rather than
@@ -555,9 +559,20 @@ def sed_points(request, id):
     extra = sedfit.read_extra_points(target.path())
     points = sedfit.read_sed_points(path, extra=extra)
 
+    # The bins of Gaia's spectrum, where there is one and the grids can answer
+    # for them. They are listed separately rather than mixed in: they are not
+    # part of the SED file, and they are fitted only when asked for.
+    xp = sedfit.xp_points(target.path())
+
     return JsonResponse({
         'source': source,
         'points': points,
+        'xp': xp,
+        # Which of the file's points the bins would replace, worked out where
+        # the rule lives rather than restated in the page
+        'xp_derived': sedfit.xp_derived(points),
+        'xp_grids': sorted(name for name in sedfit.grid_registry()
+                           if sedfit.has_xp(name)),
         # What may be added by hand, for the picker
         'bands': sedfit.known_bands(),
         # And which model grids are installed, which is whatever the grid

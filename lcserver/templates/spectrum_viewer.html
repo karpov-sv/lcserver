@@ -204,6 +204,15 @@
             <option value="sed_all.vot">sed_all.vot &mdash; every catalogue at the position</option>
           </select>
         </div>
+        <div class="form-check form-switch mb-0" id="fit-xp-row" hidden>
+          <input class="form-check-input" type="checkbox" id="fit-xp"
+                 onchange="applyXpChoice(true)">
+          <label class="form-check-label control-label me-0" for="fit-xp"
+                 title="Fit Gaia's spectrum in 30 nm bins, alongside the photometry.
+The synthetic photometry made from the same spectra leaves the fit, being the same measurement.">
+            and the Gaia XP spectrum
+          </label>
+        </div>
         <button class="btn btn-sm btn-outline-primary" onclick="selectAllPoints(true)">All</button>
         <button class="btn btn-sm btn-outline-primary" onclick="selectAllPoints(false)">None</button>
         <span class="spectrum-info" id="fit-point-count"></span>
@@ -765,6 +774,13 @@
  // here: a grid is a file, and adding one should not mean editing a page.
  let fitGrids = [];
 
+ // Gaia's spectrum, in the bins a grid can answer for. Kept apart from the
+ // file's own points and joined to them only while it is being fitted: it is a
+ // different measurement of the star, not another row of sed.vot.
+ let fitBasePoints = [];
+ let fitXpPoints = [];
+ let fitXpDerived = [];
+
  // Read when the file changes, and only then. ``chosen`` restores a run's own
  // selection; without it the panel starts from what the reader of the file
  // would have picked - one point per band, and no infrared excess.
@@ -775,11 +791,19 @@
          .then(r => r.json())
          .then(data => {
              if (data.error) throw new Error(data.error);
-             fitPoints = data.points || [];
+             fitBasePoints = data.points || [];
+             fitXpPoints = data.xp || [];
+             fitXpDerived = data.xp_derived || [];
              fitBands = data.bands || [];
              fitGrids = data.grids || fitGrids;
              buildGridPicker();
-             fitOn = chosen || defaultPoints();
+
+             // Offered only where there is a spectrum to offer
+             document.getElementById('fit-xp-row').hidden = !fitXpPoints.length;
+             if (!fitXpPoints.length) document.getElementById('fit-xp').checked = false;
+
+             composePoints();
+             fitOn = chosen || defaultFitPoints();
              // Never both, whatever was asked for: a point that is being
              // fitted is the photosphere and cannot also be measured against it
              excessOn = new Set([...defaultExcess()].filter(id => !fitOn.has(id)));
@@ -792,8 +816,41 @@
          });
  }
 
+ function fittingXp() {
+     const box = document.getElementById('fit-xp');
+     return !!(box && !box.disabled && box.checked && fitXpPoints.length);
+ }
+
+ // One list, in wavelength, whether or not the bins are in it
+ function composePoints() {
+     fitPoints = fittingXp()
+         ? fitBasePoints.concat(fitXpPoints).sort(
+             (a, b) => (a.wave_um || 0) - (b.wave_um || 0))
+         : fitBasePoints;
+ }
+
  function defaultPoints() {
      return new Set(fitPoints.filter(p => p.default).map(p => p.id));
+ }
+
+ // The defaults, less what the bins make redundant: Gaia's synthetic
+ // photometry is these very spectra integrated, and fitting both is one
+ // measurement counted twice. The fitter does the same on its own side; this
+ // is so that the list a reader sees is the list that will be fitted.
+ function defaultFitPoints() {
+     const on = defaultPoints();
+     if (fittingXp()) fitXpDerived.forEach(id => on.delete(id));
+     return on;
+ }
+
+ // Turning the spectrum on or off changes which points make sense together,
+ // so the choices go back to the defaults rather than being carried across
+ // into a combination nobody asked for.
+ function applyXpChoice() {
+     composePoints();
+     fitOn = defaultFitPoints();
+     excessOn = new Set([...defaultExcess()].filter(id => !fitOn.has(id)));
+     buildPointList();
  }
 
  // What the reader of the file would measure an excess on: everything past the
@@ -844,7 +901,7 @@
            <span class="spectrum-info">${point.band || ''}</span>
            <span class="spectrum-info">${wavelength}</span>
            <span class="spectrum-info">${residual}</span>
-           <div class="form-check excess-check me-2" ${point.fittable === false ? 'hidden' : ''}>
+           <div class="form-check excess-check me-2" ${point.fittable === false || point.xp ? 'hidden' : ''}>
              <input class="form-check-input" type="checkbox" id="exc-${n}"
                     ${excessIsOn(point) ? 'checked' : ''}>
              <label class="form-check-label spectrum-info me-0" for="exc-${n}"
@@ -863,7 +920,9 @@
          // fitted, so it is there and hidden rather than there and wrong
          const excess = row.querySelector('.excess-check');
          const showExcess = () => {
-             if (point.fittable !== false) excess.hidden = pointIsOn(point);
+             if (point.fittable !== false && !point.xp) {
+                 excess.hidden = pointIsOn(point);
+             }
          };
 
          const box = row.querySelector('input[type="checkbox"]');
@@ -938,7 +997,7 @@
  // defaults are there to prevent, and not what a button called All should
  // quietly undo. Wanting two points on a band is said point by point.
  function selectAllPoints(on) {
-     fitOn = on ? defaultPoints() : new Set();
+     fitOn = on ? defaultFitPoints() : new Set();
      excessOn = on ? defaultExcess() : new Set();
      buildPointList();
  }
@@ -1050,6 +1109,7 @@
              source: document.getElementById('fit-source').value,
              points: Array.from(fitOn),
              excess: Array.from(excessOn),
+             xp_fit: fittingXp(),
              grids: grids,
              teff_prior: ['loguniform',
                           parseFloat(document.getElementById('fit-teff-lo').value),
@@ -1401,6 +1461,16 @@
 
      if (result.source) {
          select.value = result.source;
+     }
+
+     // Whether that run fitted the spectrum as well. Taken from what it was
+     // asked with where the run says, and otherwise from whether any of the
+     // points it names is one of the bins - a run from before this existed
+     // names none and comes back with the switch off, which is what it was.
+     const box = document.getElementById('fit-xp');
+     if (box) {
+         box.checked = !!(result.options || {}).xp_fit
+             || (selection.points || []).some(id => String(id).startsWith('Gaia XP '));
      }
 
      if (selection.points) {

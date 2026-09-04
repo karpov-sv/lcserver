@@ -238,6 +238,60 @@ class Grid:
         return self._from_mesh(scaled)[columns]
 
 
+class CompositeGrid:
+    """Two cubes over the same models, answering as one.
+
+    A grid's filters are in one file and its Gaia XP bins in another, because
+    the bins were written later and from the spectra rather than from whatever
+    the group published. Nothing else should have to know that. This presents
+    the two as a single grid with one set of band names and one column
+    numbering, so a likelihood, a residual table and a figure take an XP bin
+    exactly as they take Johnson V, and none of them contains the word Gaia.
+
+    Where the two disagree about what exists, nothing exists: the spectra of a
+    grid are usually a subset of its models, so a fit that wanders where there
+    are spectra but no cube - or the other way - gets no flux for the bands it
+    cannot have, and the likelihood already knows what that means.
+    """
+
+    def __init__(self, base, extra):
+        self.base, self.extra = base, extra
+        self.name = base.name
+        self.teff, self.logg, self.feh = base.teff, base.logg, base.feh
+
+        self.filters = list(base.filters) + [b for b in extra.filters
+                                             if b not in base.column]
+        self.column = {b: i for i, b in enumerate(self.filters)}
+        self.covers = frozenset(base.covers | extra.covers)
+
+        # For each of our columns, which grid answers for it and where in it
+        self._where = [(0, base.column[b]) if b in base.column
+                       else (1, extra.column[b]) for b in self.filters]
+
+    @property
+    def limits(self):
+        """The box both are defined over, which is where both can answer."""
+        one, other = self.base.limits, self.extra.limits
+
+        return {p: (max(one[p][0], other[p][0]), min(one[p][1], other[p][1]))
+                for p in one}
+
+    def flux(self, teff, logg, feh, columns):
+        """Surface flux in the given columns, from whichever cube holds them."""
+        columns = np.atleast_1d(columns)
+        out = np.full(len(columns), np.nan)
+
+        for n, grid in enumerate((self.base, self.extra)):
+            mine = np.array([self._where[c][0] == n for c in columns])
+            if not mine.any():
+                continue
+
+            wanted = np.array([self._where[c][1] for c in columns[mine]])
+            out[mine] = grid.flux(teff, logg, feh, wanted)
+
+        return out
+
+
 def attenuation(wave_um, av, law=extinction.fitzpatrick99, rv=3.1):
     """Extinction in magnitudes at each wavelength, for one Av."""
     return law(np.asarray(wave_um, dtype=float) * 1e4, av, rv)
@@ -1060,6 +1114,331 @@ def log_excess(table, models, log):
             ' at that temperature')
 
 
+# --------------------------------------------------- the Gaia XP spectrum
+
+# What the info step leaves behind where Gaia published one: the sampled BP/RP
+# spectrum, 343 points from 336 to 1020 nm in erg/s/cm2/A. It is not fitted
+# here. It is a second measurement of the same star over the same wavelengths
+# the photometry covers, taken as one epoch-average and calibrated by somebody
+# else, and what it is worth is the answer to whether it agrees with the model
+# the photometry produced. That is a question to ask before letting it into a
+# likelihood, not after.
+XP_FILE = 'gaia_xp.vot'
+
+# Why it is binned to be compared.
+#
+# The 343 samples are a resampling of 55 + 55 basis coefficients through a line
+# spread function of order ten to fifteen nanometres, so neighbouring points
+# are largely the same measurement said again and the published errors are per
+# point rather than per resolution element. Binned to twice the width of that
+# function, what comes out is insensitive to its shape - a boxcar wider than
+# the kernel integrates the same flux whatever the kernel is - and the twenty
+# or so bins that result are no more numbers than the spectrum ever held.
+XP_BIN_NM = 30.0
+XP_LSF_NM = 15.0
+
+# The ends are trimmed rather than compared. The flux calibration of the
+# sampled spectra is at its worst below 400 and above 950 nm, and outside the
+# range the mission publishes the reconstruction has no basis functions left.
+XP_RANGE_NM = (350.0, 980.0)
+
+# The calibration systematic, added to every bin. Without it the comparison is
+# against the photon noise of a spectrum whose absolute scale is known to a
+# couple of per cent, and every bin of a bright star would come out tens of
+# sigma from a model that is in fact right.
+XP_SYSTEMATIC = 0.02
+
+
+def xp_bands():
+    """The pseudo-passbands the spectrum is binned into, blue to red.
+
+    Fixed, and fixed for good: they are convolved into every grid's file, and a
+    cube built on one set of bins cannot be read with another. Changing them
+    means rebuilding every grid, which is what a filter set is like everywhere
+    else here.
+
+    Named as the grids name their filters, so that a bin is a band and needs no
+    special case anywhere downstream - a point list, a residual table and a
+    likelihood all take one exactly as they take Johnson V.
+    """
+    edges = np.arange(XP_RANGE_NM[0], XP_RANGE_NM[1] + 1e-6, XP_BIN_NM)
+
+    return [{'band': f'GAIA_XP_{int(round(0.5 * (a + b)))}',
+             'lo_nm': float(a), 'hi_nm': float(b),
+             'wave_um': float(0.5 * (a + b) * 1e-3)}
+            for a, b in zip(edges[:-1], edges[1:])]
+
+
+def is_xp(band):
+    """Whether a band is one of those bins rather than a real filter."""
+    return str(band or '').startswith('GAIA_XP_')
+
+
+def read_xp(basepath):
+    """The Gaia XP spectrum, on the units the rest of this module works in.
+
+    Written per Angstrom by the info step, as every spectrum on this site is,
+    and read per micron, as every flux here is.
+    """
+    from astropy.table import Table
+
+    path = os.path.join(basepath, XP_FILE)
+    if not os.path.exists(path):
+        return None
+
+    table = Table.read(path)
+    if 'wavelength' not in table.colnames or 'flux' not in table.colnames:
+        return None
+
+    wave = np.asarray(table['wavelength'], dtype=float)
+    flux = np.asarray(table['flux'], dtype=float)
+    err = (np.asarray(table['flux_error'], dtype=float)
+           if 'flux_error' in table.colnames else np.full(len(wave), np.nan))
+
+    order = np.argsort(wave)
+
+    return {'wave_um': wave[order] * 1e-4,
+            'flux': flux[order] / PER_AA,
+            'err': err[order] / PER_AA}
+
+
+def xp_binned(xp):
+    """The spectrum in those bins, with what each one is worth.
+
+    Two terms in the error and they answer different questions. Within one
+    resolution element the samples are one measurement said several times, so
+    the noise on a bin is the mean of theirs over the root of how many
+    resolution elements it holds - not of how many samples, which would claim
+    a precision the reconstruction never had. And the absolute scale of these
+    spectra is known to a couple of per cent, which no amount of binning
+    improves and which is what a bright star's bins are limited by.
+    """
+    wave_nm = np.asarray(xp['wave_um'], dtype=float) * 1e3
+    flux = np.asarray(xp['flux'], dtype=float)
+    err = np.asarray(xp['err'], dtype=float)
+
+    out = []
+    for band in xp_bands():
+        inside = ((wave_nm >= band['lo_nm']) & (wave_nm < band['hi_nm'])
+                  & np.isfinite(flux))
+        if inside.sum() < 3:
+            continue
+
+        observed = float(np.mean(flux[inside]))
+        if not np.isfinite(observed) or observed <= 0:
+            continue
+
+        elements = max(1.0, (band['hi_nm'] - band['lo_nm']) / XP_LSF_NM)
+        stat = float(np.mean(err[inside])) / np.sqrt(elements)
+        if not np.isfinite(stat):
+            stat = 0.0
+
+        out.append(dict(band, samples=int(inside.sum()), observed=observed,
+                        stat_err=stat,
+                        err=float(np.hypot(stat, XP_SYSTEMATIC * observed))))
+
+    return out
+
+
+def rebin(wave, flux, edges):
+    """The mean of a spectrum over each interval, by integrating it.
+
+    Sampling a model at the middle of an interval is not what a spectrograph
+    does to it. These grids run at a resolving power of thousands where Gaia's
+    spectra run at tens, so a line that would be half the depth of a bin can
+    fall between two samples of it and vanish; integrated, it counts for what
+    it is. The antiderivative is evaluated at the interval edges, which is
+    exact wherever an edge falls on a point of the model and close between.
+    """
+    wave = np.asarray(wave, dtype=float)
+    flux = np.asarray(flux, dtype=float)
+
+    integral = np.concatenate([[0.0], np.cumsum(np.diff(wave)
+                                                * 0.5 * (flux[1:] + flux[:-1]))])
+
+    return np.diff(np.interp(edges, wave, integral)) / np.diff(edges)
+
+
+def at_xp_resolution(wave_um, flux, step_nm=1.0, lsf_nm=XP_LSF_NM):
+    """A model spectrum reduced to what Gaia's spectra are able to say.
+
+    Integrated onto a fine uniform axis and convolved with the instrument's
+    width, so that what is then binned has been through the same two things
+    the data have been through. Over most of a thirty-nanometre bin this
+    changes nothing - which is the point of binning that wide - and where it
+    matters is the one place it should, at a bin edge that falls on a Balmer
+    jump, where the spectrograph puts flux across the edge and a model that
+    had not been smeared would not.
+    """
+    lo, hi = XP_RANGE_NM[0] - 4 * lsf_nm, XP_RANGE_NM[1] + 4 * lsf_nm
+    edges = np.arange(lo, hi + step_nm, step_nm)
+    axis = 0.5 * (edges[:-1] + edges[1:])
+
+    wave_nm = np.asarray(wave_um, dtype=float) * 1e3
+    if wave_nm[0] > lo or wave_nm[-1] < hi:
+        return None, None
+
+    fine = rebin(wave_nm, flux, edges)
+
+    sigma = lsf_nm / 2.3548 / step_nm
+    half = int(np.ceil(4 * sigma))
+    kernel = np.exp(-0.5 * (np.arange(-half, half + 1) / sigma) ** 2)
+
+    return axis, np.convolve(fine, kernel / kernel.sum(), mode='same')
+
+
+def compare_xp(xp, run, grid, theta, ndraw=400, seed=0):
+    """The XP spectrum against what the fit predicts in the same bins.
+
+    Nothing stands in for the fit here. The bins are columns of a cube over
+    the grid's own models, so the prediction is that cube interpolated at the
+    fitted parameters - the same operation, in the same function, that
+    produces the model for Johnson V - and the posterior's width in a bin is
+    the spread of that over posterior rows rather than an interpolation of
+    what it was in the neighbouring filters.
+
+    Which means this compares two things and only two: what Gaia measured, and
+    what the fit says. It is a comparison and not part of the fit unless the
+    bins were fitted, and it is reported the same way either way.
+
+    Nothing is scaled to anything. Both are absolute, so an overall offset
+    between them is one of the things worth finding out, and it is reported
+    beside the chi2 - a fit three per cent low everywhere and a fit at the
+    wrong temperature are different problems with the same chi2.
+    """
+    bands = [b['band'] for b in xp_bands() if b['band'] in grid.covers]
+    if not bands:
+        raise SourceError(f'{grid.name} has no Gaia XP bins - '
+                          f'"manage.py sedgrid --xp" writes them')
+
+    binned = [b for b in xp_binned(xp) if b['band'] in grid.covers]
+    if not binned:
+        raise SourceError('no usable bins in the XP spectrum')
+
+    wave = np.array([b['wave_um'] for b in binned])
+    columns = np.array([grid.column[b['band']] for b in binned])
+    ext_unit = attenuation(wave, 1.0)
+
+    model = model_flux(theta, columns, ext_unit, grid)
+
+    # What the rest of the posterior would have predicted here, which is what
+    # makes a deviation in a bin the fit barely constrains worth what it is
+    samples = run['samples']
+    if len(samples) > ndraw:
+        samples = samples[np.random.default_rng(seed).choice(len(samples),
+                                                             ndraw, replace=False)]
+    cloud = np.array([model_flux(row, columns, ext_unit, grid) for row in samples])
+    good = np.isfinite(cloud).all(axis=1)
+    model_err = (cloud[good].std(axis=0) if good.any()
+                 else np.zeros(len(binned)))
+
+    # Where the fit had points and where it did not. A bin redward of the
+    # reddest band fitted is not a test of the fit, it is a test of what the
+    # model does past the data, and reporting the two together makes a model
+    # extrapolating badly look like a model that does not fit.
+    fitted = [w for w, b in zip(run['wave_um'], run['bands']) if not is_xp(b)]
+    span = (float(np.min(fitted)), float(np.max(fitted))) if fitted else None
+    inside = set(run['bands'])
+
+    bins = []
+    for entry, m, me in zip(binned, model, model_err):
+        if not np.isfinite(m) or m <= 0:
+            bins.append(dict(entry, model=None, model_err=None, ratio=None,
+                             sigma=None, constrained=False, fitted=False))
+            continue
+
+        total = float(np.sqrt(entry['err'] ** 2 + me ** 2))
+        bins.append(dict(
+            entry, model=float(m), model_err=float(me),
+            ratio=float(entry['observed'] / m),
+            sigma=float((entry['observed'] - m) / total),
+            total_err=total,
+            fitted=entry['band'] in inside,
+            constrained=bool(entry['band'] in inside
+                             or span is None
+                             or span[0] <= entry['wave_um'] <= span[1])))
+
+    usable = [b for b in bins if b['ratio'] is not None]
+    if not usable:
+        raise SourceError(f'{grid.name} predicts no Gaia XP bin at this fit')
+
+    ratio = np.array([b['ratio'] for b in usable])
+    sigma = np.array([b['sigma'] for b in usable])
+    offset = float(np.median(ratio))
+
+    # What is left once the offset is taken out, which the absolute chi2 does
+    # not answer: whether the shape is right
+    shape = np.array([(b['observed'] - offset * b['model']) / b['total_err']
+                      for b in usable])
+
+    within = [b for b in usable if b['constrained']]
+    beyond = [b for b in usable if not b['constrained']]
+    worst = usable[int(np.argmax(np.abs(sigma)))]
+
+    return {
+        'bins': bins,
+        'n': len(usable),
+        'n_fitted': sum(1 for b in usable if b['fitted']),
+        'chi2': float(np.sum(sigma ** 2)),
+        'offset': offset,
+        'offset_within': (float(np.median([b['ratio'] for b in within]))
+                          if within else None),
+        'n_within': len(within),
+        'offset_beyond': (float(np.median([b['ratio'] for b in beyond]))
+                          if beyond else None),
+        'n_beyond': len(beyond),
+        'scatter': float(1.4826 * np.median(np.abs(ratio - offset))),
+        'chi2_shape': float(np.sum(shape ** 2)),
+        'worst': {'wave_um': worst['wave_um'], 'sigma': worst['sigma']},
+        'spread': float(np.median([b['model_err'] / b['model'] for b in usable])),
+        'systematic': XP_SYSTEMATIC,
+        'bin_nm': XP_BIN_NM,
+    }
+
+
+def log_xp(result, log):
+    """The comparison as a table, and what the numbers in it mean."""
+    fitted = result['n_fitted']
+    log(f"\n  Gaia XP spectrum in {result['bin_nm']:.0f} nm bins, against what"
+        f" the fit predicts in them")
+    log(f"    (errors are the spectrum's own, {result['systematic']:.0%} of"
+        f" calibration, and how loosely the posterior predicts the bin -"
+        f" {100 * result['spread']:.1f}% of it in the median)")
+
+    log(f"    {'lam nm':>8}{'observed':>12}{'model':>12}{'ratio':>8}{'sigma':>8}"
+        f"{'fitted':>9}")
+    for b in result['bins']:
+        log(f"    {b['wave_um'] * 1e3:8.0f}{b['observed'] * PER_AA:12.3e}"
+            + (f"{b['model'] * PER_AA:12.3e}{b['ratio']:8.2f}{b['sigma']:+8.1f}"
+               if b['ratio'] else f"{'-':>12}{'-':>8}{'-':>8}")
+            + f"{'yes' if b['fitted'] else '-':>9}")
+
+    log(f"\n    chi2 {result['chi2']:.1f} on {result['n']} bins;"
+        f" the spectrum sits {100 * (result['offset'] - 1):+.1f}% on the model,"
+        f" scatter {100 * result['scatter']:.1f}%")
+
+    if result.get('offset_within') is not None and result['n_beyond']:
+        log(f"      {100 * (result['offset_within'] - 1):+.1f}% over the"
+            f" {result['n_within']} bins the fitted bands span, and"
+            f" {100 * (result['offset_beyond'] - 1):+.1f}% over the"
+            f" {result['n_beyond']} beyond them - which is the model past its"
+            f" data rather than the model against it")
+
+    log(f"    with that offset taken out, chi2 {result['chi2_shape']:.1f}"
+        f" - which is the shape, and is what a fit would be working to")
+    log(f"    worst bin {result['worst']['wave_um'] * 1e3:.0f} nm at"
+        f" {result['worst']['sigma']:+.1f} sigma")
+
+    # Which of the two things this is has to be said, since a chi2 in a log
+    # invites the assumption that it was minimised
+    if fitted:
+        log(f"    {fitted} of these bins were fitted, so this is partly the"
+            f" fit describing what it was shown")
+    else:
+        log('    the spectrum was not fitted - this is a check on the fit,'
+            ' not part of it')
+
+
 # ------------------------------------------------------------ our photometry
 
 # VizieR's designation for a band, as our SED step writes it in the second
@@ -1213,7 +1592,7 @@ def grid_registry():
         return out
 
     for name in sorted(glob.glob(os.path.join(path, '*.h5'))):
-        if name.endswith('.spectra.h5'):
+        if name.endswith('.spectra.h5') or name.endswith('.xp.h5'):
             continue
 
         stem = os.path.splitext(os.path.basename(name))[0]
@@ -1246,6 +1625,12 @@ def grid_registry():
 
         spectra = os.path.join(path, entry['name'] + '.spectra.h5')
         entry['spectra'] = spectra if os.path.exists(spectra) else None
+
+        # The Gaia XP bins, where they have been written: a cube of the same
+        # shape as the grid's own over the models its spectra cover, which is
+        # what lets the spectrum be fitted rather than only compared with
+        bins = os.path.join(path, entry['name'] + '.xp.h5')
+        entry['xp'] = bins if os.path.exists(bins) else None
 
         out[entry['name']] = entry
 
@@ -1403,11 +1788,63 @@ def model_spectrum(name, teff, logg, feh):
                 'teff': float(t[i]), 'logg': float(g[i]), 'feh': float(z[i])}
 
 
-def observed_spectrum(name, theta):
+def node_correction(grid, spectrum, values):
+    """What puts a node's spectrum on the scale of the fit it stands for.
+
+    The spectra are a coarser grid than the cube and the fit lands between
+    their nodes, so the nearest one can be several per cent away in flux - two
+    and a half on a TLUSTY fit half a node from its neighbour, and in the
+    other direction on the next grid along. Drawn as it is, that is a line
+    which is not the model the diamonds are, and measured against it a
+    spectrum that agrees with the fit perfectly looks five per cent out.
+
+    The cube knows the difference exactly: it can be evaluated at the fit and
+    at the node, in every filter it covers, and the ratio of those is how much
+    the node is wrong band by band. Interpolated across wavelength it is a
+    smooth curve - it is an interpolation in temperature and gravity and
+    nothing sharper - and multiplying the spectrum by it leaves every line
+    where it was while putting the continuum where the fit puts it.
+
+    Beyond the reddest and bluest filter the grid covers there is nothing to
+    measure it with, so it is held at the value it had there rather than run
+    off to somewhere it was never checked.
+    """
+    pivots, ratios = [], []
+
+    for entry in known_bands():
+        band = entry['band']
+        column = grid.column.get(band)
+        if column is None:
+            continue
+
+        columns = np.array([column])
+        fit = grid.flux(values['teff'], values['logg'], values['feh'], columns)[0]
+        node = grid.flux(spectrum['teff'], spectrum['logg'], spectrum['feh'],
+                         columns)[0]
+
+        if np.isfinite(fit) and np.isfinite(node) and fit > 0 and node > 0:
+            pivots.append(entry['wavelength'] * 1e-4)
+            ratios.append(fit / node)
+
+    if len(pivots) < 2:
+        return None
+
+    order = np.argsort(pivots)
+    x = np.log(np.asarray(pivots, dtype=float)[order])
+    y = np.asarray(ratios, dtype=float)[order]
+
+    return lambda wave_um: np.interp(np.log(np.asarray(wave_um, dtype=float)),
+                                     x, y)
+
+
+def observed_spectrum(name, theta, grid=None):
     """That spectrum as it would be seen: diluted by (R/d)^2 and reddened.
 
     The same three operations the per-band model is put through, so the line
-    and the diamonds on it are the same model said two ways.
+    and the diamonds on it are the same model said two ways - and a fourth,
+    which is what makes that true. The spectrum is the nearest node and the
+    fit is between nodes, so it is put on the fit's own scale first, by the
+    only thing that knows the difference: the cube, evaluated at both.
     """
     values = dict(zip(PARAMETERS, theta)) if not isinstance(theta, dict) else theta
 
@@ -1415,19 +1852,41 @@ def observed_spectrum(name, theta):
     if spectrum is None:
         return None
 
+    flux = spectrum['flux']
+    spectrum['correction'] = None
+
+    correction = (node_correction(grid, spectrum, values)
+                  if grid is not None else None)
+    if correction is not None:
+        scale = correction(spectrum['wave_um'])
+        flux = flux * scale
+        spectrum['correction'] = float(np.median(scale[np.isfinite(scale)]))
+
     dilution = (values['rad'] * R_SUN / (values['dist'] * PARSEC)) ** 2
     reddening = 10 ** (-0.4 * attenuation(spectrum['wave_um'], values['Av']))
 
-    spectrum['observed'] = spectrum['flux'] * dilution * reddening
+    spectrum['observed'] = flux * dilution * reddening
     return spectrum
 
 
-def load_grid(name):
-    """One grid by name, from the directory or from astroARIADNE's own."""
+def has_xp(name):
+    """Whether this grid can answer for the Gaia XP bins."""
+    return bool((grid_registry().get(str(name).lower()) or {}).get('xp'))
+
+
+def load_grid(name, xp=False):
+    """One grid by name, from the directory or from astroARIADNE's own.
+
+    With ``xp``, the Gaia XP bins are loaded alongside the filters and the two
+    answer as one grid - which is all there is to fitting a spectrum here.
+    """
     name = str(name).lower()
     entry = grid_registry().get(name)
     if entry:
-        return Grid(entry['path'], name=name)
+        grid = Grid(entry['path'], name=name)
+        if xp and entry.get('xp'):
+            grid = CompositeGrid(grid, Grid(entry['xp'], name=f'{name}-xp'))
+        return grid
 
     # A directory laid out astroARIADNE's way, being read before it is split
     stem = LEGACY_STEMS.get(name)
@@ -1554,6 +2013,88 @@ def read_sed_points(path, points=None, extra=None,
     return rows
 
 
+def xp_points(basepath, points=None, xp=None):
+    """The Gaia XP spectrum as points, in the shape the SED files come in.
+
+    A bin is a band, so a bin is a row: the same keys, the same meaning of
+    ``used`` and ``default`` and ``fittable``, and the same treatment
+    everywhere downstream. Nothing here knows it came from a spectrum.
+
+    They are their own points and not part of an SED file. That file is
+    written by the SED step and the spectrum by the info step, and a fit that
+    asks for both is asking for two measurements of the same star, not for one
+    file with more rows in it.
+    """
+    xp = xp if xp is not None else read_xp(basepath)
+    if xp is None:
+        return []
+
+    points = set(points) if points is not None else None
+    rows = []
+
+    for entry in xp_binned(xp):
+        name = f"Gaia XP {entry['lo_nm']:.0f}-{entry['hi_nm']:.0f} nm"
+        row = {'id': name, 'band': entry['band'], 'used': False,
+               'default': True, 'fittable': True, 'note': None, 'xp': True,
+               'wave_um': entry['wave_um'], 'wave_drawn_um': entry['wave_um'],
+               'flux': entry['observed'], 'err': entry['err'],
+               'excess': False}
+
+        row['used'] = row['default'] if points is None else name in points
+        if row['used'] and not row['default']:
+            row['note'] = 'chosen by hand'
+        elif not row['used'] and row['default']:
+            row['note'] = 'turned off'
+
+        rows.append(row)
+
+    return rows
+
+
+# The catalogues whose photometry is these very spectra integrated - Gaia's own
+# synthetic photometry, and its broadband bands, which are the same photons in
+# a wider filter. Fitting those and the bins together is fitting one
+# measurement twice, so where the bins are fitted these are not.
+XP_DERIVED_CATALOGUES = ('Gaia-syntphot',)
+XP_DERIVED_BANDS = ('GaiaDR2v2_G', 'GaiaDR2v2_BP', 'GaiaDR2v2_RP')
+
+
+def xp_derived(rows):
+    """Which points of a list are the XP spectrum in another form."""
+    out = []
+
+    for row in rows:
+        if is_xp(row['band']):
+            continue
+
+        catalogue = str(row['id']).rpartition(' ')[0]
+        if (row['band'] in XP_DERIVED_BANDS
+                or any(catalogue.startswith(c) for c in XP_DERIVED_CATALOGUES)):
+            out.append(row['id'])
+
+    return out
+
+
+def drop_xp_derived(rows, log=None):
+    """Turn off what the XP bins already say, and say which."""
+    derived = set(xp_derived(rows))
+    dropped = []
+
+    for row in rows:
+        if row['used'] and row['id'] in derived:
+            row['used'] = False
+            row['note'] = 'the XP bins are this measurement already'
+            dropped.append(row['id'])
+
+    if dropped and log:
+        log(f"\n{len(dropped)} point(s) left out as the spectrum they came"
+            f" from is being fitted:")
+        for each in dropped:
+            log(f'    {each}')
+
+    return dropped
+
+
 def default_excess(rows):
     """The points an excess would be measured on if nobody chose.
 
@@ -1614,8 +2155,38 @@ def target_sed_fit(config, basepath='.', outpath=None, selection=None,
         err_floor=options.get('err_floor', 0.03),
         err_unknown=options.get('err_unknown', 0.05))
 
+    # Read once, ahead of everything: it is one measurement of the star, every
+    # grid is compared against the same copy of it, and where it is being
+    # fitted its bins are points in the list like any others
+    xp = read_xp(basepath) if options.get('xp', True) else None
+    fit_xp = bool(xp is not None and options.get('xp_fit'))
+
+    if fit_xp:
+        # What the bins replace goes out: Gaia's synthetic photometry is these
+        # very spectra integrated, and fitting both is one measurement twice.
+        #
+        # Only where nobody chose, though. A selection given is the whole
+        # answer here as it is everywhere else in this module - somebody who
+        # has deliberately kept a synthetic point beside the bins is allowed
+        # to, and is told what they have rather than quietly corrected.
+        if selection.get('points') is None:
+            drop_xp_derived(rows, log)
+        else:
+            kept = [r['id'] for r in rows if r['used']
+                    and r['id'] in set(xp_derived(rows))]
+            if kept:
+                log(f"\n{len(kept)} point(s) are the XP spectrum in another"
+                    f" form and are fitted beside it, having been asked for:")
+                for each in kept:
+                    log(f'    {each}')
+
+        rows = rows + xp_points(basepath, points=selection.get('points'), xp=xp)
+        rows.sort(key=lambda r: (r['wave_um'] is None, r['wave_um'] or 0))
+
     used = [r for r in rows if r['used']]
-    log(f"{len(used)} of {len(rows)} points from {source}")
+    log(f"\n{len(used)} of {len(rows)} points from {source}"
+        + (f" and {sum(1 for r in rows if is_xp(r['band']))} bins of the Gaia"
+           f" XP spectrum" if fit_xp else ''))
     for r in rows:
         mark = 'fit ' if r['used'] else '   -'
         log(f"  {mark} {r['id']:<34} {r['band'] or '':<18}"
@@ -1640,9 +2211,16 @@ def target_sed_fit(config, basepath='.', outpath=None, selection=None,
     if av_max is None:
         av_max = 2.742 * config['ebv_sfd'] if config.get('ebv_sfd') else 1.0
 
+    if xp is not None and not fit_xp:
+        log(f"\nGaia XP spectrum: {len(xp['wave_um'])} points,"
+            f" {xp['wave_um'][0] * 1e3:.0f} to {xp['wave_um'][-1] * 1e3:.0f} nm."
+            f" It is compared with each fit and fitted by none of them")
+
     runs, summaries = [], {}
     for name in options.get('grids') or ['btsettl']:
-        grid = load_grid(name)
+        # The bins are loaded whether or not they are fitted: unfitted, they
+        # are what the comparison is made against, and that needs the same cube
+        grid = load_grid(name, xp=xp is not None)
         priors = default_priors(grid, distance, distance_err, av_max)
         # The temperature prior is deliberately the same whatever grid is
         # loaded, so that a grid's extent cannot become the answer
@@ -1653,7 +2231,10 @@ def target_sed_fit(config, basepath='.', outpath=None, selection=None,
 
         missing = sorted({b for b in bands if b not in grid.covers})
         if missing:
-            log(f"\n{name}: no model flux for {', '.join(missing)} - skipped")
+            reason = ('no Gaia XP bins - "manage.py sedgrid --xp" writes them'
+                      if all(is_xp(b) for b in missing)
+                      else f"no model flux for {', '.join(missing)}")
+            log(f"\n{name}: {reason} - skipped")
             continue
 
         log(f"\nfitting {name}: Teff {grid.teff.min():.0f}-{grid.teff.max():.0f} K")
@@ -1712,16 +2293,30 @@ def target_sed_fit(config, basepath='.', outpath=None, selection=None,
     }
 
     os.makedirs(outpath, exist_ok=True)
-    with open(os.path.join(outpath, 'fit.json'), 'w') as f:
-        json.dump(result, f, indent=1, default=float)
     for run, grid in runs:
         np.save(os.path.join(outpath, f'samples_{grid.name}.npy'), run['samples'])
+
+        # What Gaia measured over the optical, against what this fit predicts
+        # in the same bins. It needs no spectrum and no node: the bins are
+        # columns of a cube, so the prediction is an interpolation at the
+        # fitted parameters like any other.
+        if xp is not None:
+            try:
+                theta = np.array([summaries[grid.name]['best'][p]
+                                  for p in PARAMETERS])
+                summaries[grid.name]['xp'] = compare_xp(xp, run, grid, theta)
+                log_xp(summaries[grid.name]['xp'], log)
+            except SourceError as e:
+                log(f'\n  no Gaia XP comparison for {grid.name}: {e}')
+            except Exception as e:
+                log(f'\n  Gaia XP comparison failed: {type(e).__name__}: {e}')
 
         # The model as a spectrum, at the row it is drawn at, kept with the run
         # so that neither the figure nor the viewer has to go back to a cache
         # of several gigabytes to draw a line
         try:
-            spectrum = observed_spectrum(grid.name, summaries[grid.name]['best'])
+            spectrum = observed_spectrum(grid.name, summaries[grid.name]['best'],
+                                         grid=grid)
         except Exception as e:
             spectrum = None
             log(f'no model spectrum for {grid.name}: {type(e).__name__}: {e}')
@@ -1741,6 +2336,15 @@ def target_sed_fit(config, basepath='.', outpath=None, selection=None,
         log(f"\n  {grid.name} spectrum: nearest node is"
             f" {spectrum['teff']:.0f} K,"
             f" log g {spectrum['logg']:.1f}, [Fe/H] {spectrum['feh']:+.1f}")
+        if spectrum.get('correction'):
+            log(f"    put on the fit's own scale, which the cube says is"
+                f" {100 * (spectrum['correction'] - 1):+.1f}% from that node")
+
+    # Written after the runs rather than before them, since what those learn -
+    # which node the spectrum came from, how the XP spectrum compares - belongs
+    # in the file a reader opens
+    with open(os.path.join(outpath, 'fit.json'), 'w') as f:
+        json.dump(result, f, indent=1, default=float)
 
     # Drawn last, and never allowed to lose a run: the fit is the thing, and a
     # figure that will not render is not a reason to throw away an hour of
@@ -1748,7 +2352,7 @@ def target_sed_fit(config, basepath='.', outpath=None, selection=None,
     if options.get('figures', True):
         for run, grid in runs:
             try:
-                draw_sed(run, grid, summaries[grid.name], outpath)
+                draw_sed(run, grid, summaries[grid.name], outpath, xp=xp)
             except Exception as e:
                 log(f'SED plot for {grid.name} failed: {type(e).__name__}: {e}')
 
@@ -2018,6 +2622,11 @@ PER_AA = 1e-4
 # The excess is not the star, and is not drawn as though it were
 EXCESS_COLOUR = '#c0392b'
 
+# Gaia's spectrum is a measurement, and is drawn nearer the photometry's black
+# than any grid's colour - but not the same, since nothing else on the figure
+# was measured by one instrument at one epoch
+XP_COLOUR = '#5d6d7e'
+
 
 def _excess_label(models):
     """What the drawn excess shape is, in a few words for a legend."""
@@ -2033,7 +2642,8 @@ def _excess_label(models):
             f" (P = {p:.2f})")
 
 
-def draw_sed(run, grid, summary, path, name=None, colour=GRID_COLOURS[0]):
+def draw_sed(run, grid, summary, path, name=None, colour=GRID_COLOURS[0],
+             xp=None):
     """The photometry, the model that fits it, and what is left over.
 
     The model is drawn at the plot row - one place the posterior actually
@@ -2046,6 +2656,11 @@ def draw_sed(run, grid, summary, path, name=None, colour=GRID_COLOURS[0]):
     the catalogue's widened by the jitter the fit needed. The residual panel
     is in units of the first, as the point list in the viewer is, with the
     second drawn behind it as the envelope the fit was actually working to.
+
+    Where Gaia published a spectrum it is drawn under all of it, and its bins
+    appear in the residual panel with everything else. It was not fitted, and
+    it is deliberately drawn in a way that says so - a thin line behind the
+    model rather than a set of points the model passes through.
     """
     from stdpipe import plots
 
@@ -2060,6 +2675,12 @@ def draw_sed(run, grid, summary, path, name=None, colour=GRID_COLOURS[0]):
 
     jitter = float(theta[PARAMETERS.index('jitter')])
     widened = np.hypot(err, jitter * model)
+
+    # The XP bins are points like any other to the fit, but not to a figure:
+    # twenty-one of them drawn as photometry would bury the photometry, and
+    # the spectrum they were binned from is already the curve underneath. So
+    # everything below draws the bands, and the bins are drawn once, as bins.
+    shown = np.array([not is_xp(b) for b in bands])
 
     # What the rest of the posterior would have drawn. Two hundred rows is
     # enough for a 16-84 envelope and costs an interpolation each.
@@ -2095,10 +2716,29 @@ def draw_sed(run, grid, summary, path, name=None, colour=GRID_COLOURS[0]):
                                 gridspec_kw={'height_ratios': [3, 1],
                                              'hspace': 0.06})
 
+        # What Gaia measured over the optical, behind everything: it is the
+        # one curve on this figure that is neither a model nor something the
+        # fit was shown, and the whole of its value is how it lies against the
+        # line drawn over it. Positive points only, the axis being logarithmic
+        # and the blue end of a faint spectrum wandering below zero.
+        checked = summary.get('xp')
+        if xp is not None:
+            drawable = np.isfinite(xp['flux']) & (xp['flux'] > 0)
+            label = ('Gaia XP, fitted in bins' if checked
+                     and checked.get('n_fitted') else 'Gaia XP, not fitted')
+            if checked:
+                quoted = checked.get('offset_within') or checked['offset']
+                label += f", {100 * (quoted - 1):+.0f}% on the model"
+
+            top.plot(xp['wave_um'][drawable], xp['flux'][drawable] * PER_AA,
+                     '-', lw=1.0, color=XP_COLOUR, alpha=0.85, zorder=0.5,
+                     label=label)
+
         # The spectrum the cubes were convolved from, at the nearest node the
-        # cache carries. Behind everything and thin, because it is the model
-        # said at a resolution the fit never used - the diamonds are what was
-        # fitted, and this is what they were summed from.
+        # cache carries, scaled to the fit the way the fit's own cube says that
+        # node differs from it. Behind everything and thin, because it is the
+        # model said at a resolution the fit never used - the diamonds are what
+        # was fitted, and this is what they were summed from.
         if spectrum is not None:
             # A little either side of what was measured and no further. A grid
             # ingested from its own publication reaches from the ultraviolet to
@@ -2110,21 +2750,23 @@ def draw_sed(run, grid, summary, path, name=None, colour=GRID_COLOURS[0]):
                     & (spectrum[0] <= 1.5 * red))
             top.plot(spectrum[0][near], spectrum[1][near] * PER_AA, '-',
                      lw=0.6, color=colour, alpha=0.5, zorder=0,
-                     label=f'{run["grid"]} spectrum, nearest node')
+                     label=f'{run["grid"]} spectrum, node put on the fit')
 
         # Per band rather than a shaded curve across them: what the fit
         # produced is a flux in each filter, and a band drawn between them
         # would be claiming a spectrum it never computed
-        top.vlines(wave, lo, hi, color=colour, alpha=0.35, lw=6,
-                   label='posterior, central 68%')
-        top.plot(wave, model, 'D', mfc='none', ms=9, mew=1.6, color=colour,
-                 ls='none', label=f'{run["grid"]} at the plot row')
+        top.vlines(wave[shown], lo[shown], hi[shown], color=colour,
+                   alpha=0.35, lw=6, label='posterior, central 68%')
+        top.plot(wave[shown], model[shown], 'D', mfc='none', ms=9, mew=1.6,
+                 color=colour, ls='none',
+                 label=f'{run["grid"]} at the plot row')
         # Behind the catalogue error and unlabelled: it is the same statement
         # the residual panel makes, and it is made there with room to say it
-        top.errorbar(wave, flux, widened, fmt='none', ecolor='0.75',
-                     elinewidth=3, capsize=0)
-        top.errorbar(wave, flux, err, fmt='o', ms=4, color='k', ecolor='k',
-                     elinewidth=1, capsize=2, label='photometry')
+        top.errorbar(wave[shown], flux[shown], widened[shown], fmt='none',
+                     ecolor='0.75', elinewidth=3, capsize=0)
+        top.errorbar(wave[shown], flux[shown], err[shown], fmt='o', ms=4,
+                     color='k', ecolor='k', elinewidth=1, capsize=2,
+                     label='photometry')
 
         # The photosphere where the fit was not shown it, which is the same
         # statement for a point measured as an excess and one left out of both
@@ -2188,10 +2830,11 @@ def draw_sed(run, grid, summary, path, name=None, colour=GRID_COLOURS[0]):
         # against the catalogue error is not necessarily a bad fit
         envelope = jitter * model / total
         low.axhspan(-1, 1, color='0.85', zorder=0)
-        low.vlines(wave, -envelope, envelope, color=colour, alpha=0.45, lw=2,
-                   zorder=1, label=f'jitter, {jitter:.1%} of the model')
+        low.vlines(wave[shown], -envelope[shown], envelope[shown], color=colour,
+                   alpha=0.45, lw=2, zorder=1,
+                   label=f'jitter, {jitter:.1%} of the model')
         low.axhline(0, color='0.4', lw=1, zorder=2)
-        low.plot(wave, residual, 'o', ms=4, color='k', zorder=3)
+        low.plot(wave[shown], residual[shown], 'o', ms=4, color='k', zorder=3)
 
         # Named where they are worth naming: every band labelled would be five
         # Pan-STARRS labels on top of each other, and the ones worth reading
@@ -2200,7 +2843,9 @@ def draw_sed(run, grid, summary, path, name=None, colour=GRID_COLOURS[0]):
         # Pan-STARRS pair here - would otherwise write over each other; and
         # turned inwards near the right edge, where a name would run off
         turn = wave[0] * (wave[-1] / wave[0]) ** 0.75
-        for n, (w, r, band) in enumerate(zip(wave, residual, bands)):
+        for n, (w, r, band) in enumerate(zip(wave[shown], residual[shown],
+                                             [b for b, keep in zip(bands, shown)
+                                              if keep])):
             if abs(r) >= 3:
                 inward = w > turn
                 low.annotate(band, (w, r), fontsize=7, color='0.3',
@@ -2213,8 +2858,8 @@ def draw_sed(run, grid, summary, path, name=None, colour=GRID_COLOURS[0]):
         # the residuals the photosphere is judged on. So the scale stays with
         # the fit, and an excess off the top is marked at the edge by how far.
         if beyond or left:
-            span = max(3.0, 1.25 * float(np.max(np.abs(residual))),
-                       1.25 * float(np.max(envelope)))
+            span = max(3.0, 1.25 * float(np.max(np.abs(residual[shown]))),
+                       1.25 * float(np.max(envelope[shown])))
             low.set_ylim(-span, span)
 
             def mark(entries, colour, marker, face=None):
@@ -2249,6 +2894,21 @@ def draw_sed(run, grid, summary, path, name=None, colour=GRID_COLOURS[0]):
                      label='from the photosphere')
             low.plot([], [], 'D', ms=5, mfc='none', color=EXCESS_COLOUR,
                      ls='none', label='from it and the excess')
+
+        # The XP bins, last and without a say in the scale. They are a
+        # different measurement of the same star against the same model, and
+        # they can be tens of sigma out where the fit itself is not - letting
+        # them stretch this axis would flatten the residuals the fit is judged
+        # on, which are the reason the panel is here.
+        if checked and checked.get('bins'):
+            usable = [b for b in checked['bins'] if b['ratio'] is not None]
+            span = low.get_ylim()
+            low.plot([b['wave_um'] for b in usable],
+                     [b['sigma'] for b in usable], '.', ms=3.5,
+                     color=XP_COLOUR, alpha=0.9, zorder=2,
+                     label=f"Gaia XP, {checked['bin_nm']:.0f} nm bins"
+                           + (' (fitted)' if checked.get('n_fitted') else ''))
+            low.set_ylim(span)
 
         # Along the bottom, which is the one strip of this panel that is
         # reliably empty - the residuals it draws cluster about zero

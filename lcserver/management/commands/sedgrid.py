@@ -76,6 +76,12 @@ class Command(BaseCommand):
                  'metallicity and one FITS per temperature')
 
         parser.add_argument(
+            '--xp', dest='xp', nargs='*', default=None, metavar='GRID',
+            help="Write each grid's Gaia XP bins beside it, from its spectra, "
+                 'so that the spectrum can be fitted the way photometry is. '
+                 'All of them that have spectra if none are named.')
+
+        parser.add_argument(
             '--name', dest='name', default=None,
             help='What to call it (default: from the download directory)')
 
@@ -112,6 +118,9 @@ class Command(BaseCommand):
 
         if options['scatter'] is not None:
             return self.scatter(options)
+
+        if options['xp'] is not None:
+            return self.xp(options)
 
         if options['show'] or not options['split']:
             return self.show()
@@ -328,6 +337,55 @@ class Command(BaseCommand):
                     scatter.compare(before, path, verbose=self.stdout.write)
             finally:
                 os.unlink(before)
+
+    def xp(self, options):
+        """Write the Gaia XP bins of each grid that has spectra to bin.
+
+        This is what lets an XP spectrum be fitted rather than only looked at:
+        with the bins in a cube the fit interpolates them at its own parameters,
+        exactly as it does a filter, and nothing has to stand in for the fit.
+        A grid with no spectra has nothing to bin and is skipped, which is said
+        rather than passed over.
+        """
+        from lcserver.ingest import xp
+
+        registry = sedfit.grid_registry()
+        wanted = options['xp'] or sorted(registry)
+        unknown = [_ for _ in wanted if _ not in registry]
+        if unknown:
+            raise CommandError(f"no grid called {', '.join(unknown)}")
+
+        target = options['to'] or os.path.dirname(
+            registry[wanted[0]]['path'])
+
+        for name in wanted:
+            entry = registry[name]
+            if not entry.get('spectra'):
+                self.stdout.write(f'{name}: no spectra to bin')
+                continue
+
+            out = os.path.join(target, f'{name}.xp.h5')
+            if os.path.exists(out) and not options['force']:
+                self.stdout.write(f'{name}: {out} is already there '
+                                  f'- --force to write over it')
+                continue
+
+            self.stdout.write(f'\n{name}:')
+            try:
+                count = xp.build(entry['spectra'], out, name,
+                                 label=entry.get('label'),
+                                 verbose=self.stdout.write)
+            except Exception as e:
+                self.stdout.write(f'  failed: {type(e).__name__}: {e}')
+                continue
+
+            self.stdout.write(f'  {count} models written to {out}'
+                              f' ({os.path.getsize(out) / 1e6:.1f} MB)')
+            try:
+                xp.compare(out, entry['spectra'], name,
+                           verbose=self.stdout.write)
+            except Exception as e:
+                self.stdout.write(f'  could not compare: {type(e).__name__}: {e}')
 
     # ------------------------------------------------------- where it all goes
 

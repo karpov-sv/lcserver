@@ -100,6 +100,23 @@ before it. Every run leaves its log, the SED with the model and the residuals
 against it, a corner plot per grid, and the parameters of all the grids drawn
 over each other.
 
+Where Gaia published an XP spectrum for the source, it is drawn under the SED
+and compared with the fitted photosphere bin by bin — in bins of 30 nm, which is
+about twice the width of the instrument's line spread function, so that what
+comes out does not depend on the shape of that function. The log says how far
+the spectrum sits from the model, separately over the bins the fitted bands span
+and over any beyond them — the second being what the model does past its data
+rather than against it — and what is left once that offset is taken out, which
+is the shape.
+
+It can also be **fitted**, with one switch on the form. A bin is then a point
+like any other: it appears in the list, it can be turned off on its own, and it
+is interpolated at the fitted parameters out of a cube of the same layout as the
+grid's own — `<name>.xp.h5`, written by `sedgrid --xp` from that grid's spectra.
+Nothing stands in for the fit and nothing is corrected. Gaia's synthetic
+photometry leaves the fit when the bins enter it, being the same spectra
+integrated, and a grid with no bins written is skipped rather than guessed at.
+
 Two numbers come out beside the parameters and are worth as much as they are:
 the **jitter**, the fractional model inadequacy the fit needed, which says how
 far the photometry is from anything one photosphere explains; and the
@@ -292,6 +309,7 @@ python manage.py sedgrid --ingest-bosz ~/tmp/bosz --to data/grids
 python manage.py sedgrid --ingest-btsettl ~/Downloads/bt-settl.medres.grid.fits \
     --to data/grids
 python manage.py sedgrid --scatter            # or --scatter btsettl bosz
+python manage.py sedgrid --xp                 # or --xp tlusty bosz
 ```
 
 `--ingest-powr` converts a [PoWR](https://www.astro.physik.uni-potsdam.de/PoWR/)
@@ -339,6 +357,11 @@ whole of what there is to see. They stop at three microns, where a
 Rayleigh-Jeans tail takes over for the four bands just beyond — which the models
 are measurably already in, and which the cube it replaces got wrong, having W2
 brighter than W1 on a white dwarf.
+
+`--xp` writes each grid's Gaia XP bins beside it, from its spectra: a small
+cube — under a megabyte — holding a flux per 30 nm bin per model, which is what
+lets a fit take the spectrum as points rather than only compare with it. A grid
+with no spectra has nothing to bin and is skipped.
 
 `--scatter` rewrites a grid stored as a lattice as the models it actually holds.
 A cube on a lattice has a place for every combination of its three axes and a
