@@ -560,6 +560,9 @@ def sed_points(request, id):
         'points': points,
         # What may be added by hand, for the picker
         'bands': sedfit.known_bands(),
+        # And which model grids are installed, which is whatever the grid
+        # directory holds rather than a list kept in the page
+        'grids': sedfit.offered_grids(),
         'added': [str(_) for _ in extra['comment']] if extra is not None else [],
     })
 

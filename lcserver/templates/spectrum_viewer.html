@@ -712,7 +712,6 @@
          // target that has spectra but no catalogue photometry
          if (spectra.some(s => s.source_id === 'sed')) {
              document.getElementById('fit-panel').style.display = 'block';
-             buildGridPicker();
              loadPoints();
              loadRuns();
          }
@@ -762,15 +761,9 @@
  let fitSpectra = {};
  let fitPoll = null;
 
- const GRIDS = [
-     ['btsettl', 'BT-Settl', '400 - 70000 K'],
-     ['tlusty', 'TLUSTY', '15000 - 55000 K, the hot-star models'],
-     ['phoenix', 'Phoenix v2', '2300 - 12000 K'],
-     ['ck04', 'Castelli & Kurucz', '3500 - 12000 K'],
-     ['kurucz', 'Kurucz', '3500 - 12000 K'],
-     ['bosz', 'BOSZ', '2800 - 16000 K'],
-     ['koester', 'Koester', 'white dwarfs'],
- ];
+ // Which grids there are is what the grid directory holds, not a list kept
+ // here: a grid is a file, and adding one should not mean editing a page.
+ let fitGrids = [];
 
  // Read when the file changes, and only then. ``chosen`` restores a run's own
  // selection; without it the panel starts from what the reader of the file
@@ -784,6 +777,8 @@
              if (data.error) throw new Error(data.error);
              fitPoints = data.points || [];
              fitBands = data.bands || [];
+             fitGrids = data.grids || fitGrids;
+             buildGridPicker();
              fitOn = chosen || defaultPoints();
              // Never both, whatever was asked for: a point that is being
              // fitted is the photosphere and cannot also be measured against it
@@ -1004,23 +999,31 @@
 
  function buildGridPicker() {
      const host = document.getElementById('fit-grids');
+     const chosen = chosenGrids();
      host.innerHTML = '';
 
-     GRIDS.forEach(([id, label, range]) => {
+     // Whichever was ticked stays ticked when the list is read again, and the
+     // first one is ticked when nothing was
+     fitGrids.forEach((grid, n) => {
+         const on = chosen.length ? chosen.includes(grid.name) : n === 0;
+         const note = [grid.note, grid.has_spectra ? '' : 'no spectra, so no line']
+             .filter(Boolean).join(' - ');
+
          const div = document.createElement('div');
          div.className = 'form-check';
          div.innerHTML = `
-           <input class="form-check-input" type="checkbox" id="grid-${id}"
-                  value="${id}" ${id === 'btsettl' ? 'checked' : ''}>
-           <label class="form-check-label" for="grid-${id}" title="${range}">${label}</label>
+           <input class="form-check-input" type="checkbox" id="grid-${grid.name}"
+                  value="${grid.name}" ${on ? 'checked' : ''}>
+           <label class="form-check-label" for="grid-${grid.name}"
+                  title="${note}">${grid.label}</label>
          `;
          host.appendChild(div);
      });
  }
 
  function chosenGrids() {
-     return GRIDS.map(g => g[0])
-                 .filter(id => document.getElementById(`grid-${id}`).checked);
+     return [...document.querySelectorAll('#fit-grids input:checked')]
+         .map(box => box.value);
  }
 
  function setFitStatus(text, bad) {

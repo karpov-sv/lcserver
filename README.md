@@ -179,9 +179,34 @@ pip install git+https://github.com/jvines/astroARIADNE.git
 ```
 
 That is 46 MB of HDF5 cubes, installed beside the package, and they are found
-there without being told. Point `SEDFIT_GRIDS` at them if you keep them
-somewhere else. Without the package the rest of the application is unaffected;
-the fit is the only thing that asks for it.
+there without being told. Without the package the rest of the application is
+unaffected; the fit is the only thing that asks for it.
+
+`astroARIADNE.fetch.fetch_spectra_cache()` fetches a further 2.8 GB of the
+spectra those cubes were convolved from, which is what lets a model be drawn as
+a line rather than as a flux per band. It is optional, and a grid without it
+says so.
+
+### The grid directory
+
+A grid is a file, and the directory is the registry: what is installed is what
+is there, and adding one is putting one there. Each grid is `<name>.h5`, the
+cube the fit interpolates, optionally beside `<name>.spectra.h5`, the spectra it
+was convolved from. Both carry what a reader should be told - a label, a
+description, how far out the grid may be believed - so nothing about a grid is
+written down anywhere else.
+
+astroARIADNE's own layout, which names its files differently and keeps every
+spectrum in one cache, is read as it stands. To lay it out the other way:
+
+```sh
+python manage.py sedgrid --list
+python manage.py sedgrid --split --to /where/the/grids/should/live
+```
+
+and point `SEDFIT_GRIDS` at that directory. Splitting is worth it once you
+build grids of your own: adding one is then a file rather than an edit to a
+2.8 GB cache.
 
 ## Running
 
@@ -209,7 +234,8 @@ Read from the environment or a `.env` file, via `python-decouple`:
 | `SECRET_KEY` | Django secret. Set it for anything but local use. |
 | `DEBUG` | default `False` |
 | `TARGETS_PATH` | where per-target data is written, default `targets/` |
-| `SEDFIT_GRIDS` | where the model atmosphere cubes are; unset, they are looked for wherever `astroARIADNE` was installed |
+| `SEDFIT_GRIDS` | the grid directory; unset, astroARIADNE's own is read |
+| `SEDFIT_SPECTRA` | astroARIADNE's single spectra cache, for grids whose spectra do not sit beside them |
 | `CELERY_CONCURRENCY` | how many sources are acquired at once, default `4` |
 
 The sources of one target are acquired in parallel, so `CELERY_CONCURRENCY` is
@@ -247,6 +273,19 @@ python manage.py test_target 42 --step info --debug         # let exceptions esc
 
 The step's log file is written either way; `--verbose` echoes it to the
 terminal as it goes.
+
+### `sedgrid` — the model grids on disk
+
+```sh
+python manage.py sedgrid --list
+python manage.py sedgrid --split --to ~/sedgrids
+python manage.py sedgrid --split --to ~/sedgrids --only btsettl tlusty
+```
+
+`--list` says what the grid directory holds, where each grid's spectra are, and
+which of them are offered on the fitting form — a grid is offered when it can
+say what it is, so the specialist grids astroARIADNE ships stay loadable by
+name without being put in front of someone who has been told nothing about them.
 
 ### `maintenance` — system checks and housekeeping
 

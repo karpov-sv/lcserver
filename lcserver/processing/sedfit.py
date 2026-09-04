@@ -42,6 +42,7 @@ Two numbers come out beside the parameters and are worth as much:
                rather than the data, and should be quoted as such.
 """
 
+import glob
 import os
 
 import numpy as np
@@ -589,7 +590,8 @@ def unused_rows(rows, grids, excess):
 
 def _within_limit(name, band, rows):
     """Whether a grid is believed at a band, by the wavelength it stops at."""
-    limit = GRID_IR_LIMIT.get(name)
+    entry = grid_registry().get(str(name).lower()) or {}
+    limit = entry.get('reach_um')
     if limit is None:
         return True
 
@@ -1003,20 +1005,32 @@ FILTER_MAP = {
 # predict them - most do, and the excess analysis relies on that - but because
 # what is measured there is largely not the star, and a band of excess left in
 # the fit biases the temperature and the radius of exactly the objects it is
-# interesting on. Where a grid genuinely stops short is GRID_IR_LIMIT instead.
-# A reader who wants one of these fitted can name it, and get it.
+# interesting on. Where a grid genuinely stops short is the grid's own reach
+# instead. A reader who wants one of these fitted can name it, and get it.
 NOT_PHOTOSPHERE = ('WISE_RSR_W3', 'WISE_RSR_W4', 'HERSCHEL_PACS_BLUE',
                    'HERSCHEL_PACS_GREEN', 'HERSCHEL_PACS_RED',
                    'SPITZER_IRAC_58', 'SPITZER_IRAC_80')
 
-# How far out a grid may be believed, in microns. A cube carries a column for
-# every filter, but some grids were built from spectra that stop short of the
-# reddest of them and the flux there is an extrapolation. Only the grids that
-# need a limit have one; the rest are trusted to their whole reach.
-GRID_IR_LIMIT = {'koester': 3.0, 'ck04': 8.5, 'kurucz': 8.5}
+# What is known about the grids that arrive without saying anything about
+# themselves - astroARIADNE's, which are named for their files and carry no
+# metadata. A grid built here writes its own, and needs no entry.
+#
+# A grid is offered on the form when it can say what it is, from here or from
+# its file. The rest of what a directory holds is still loadable by name; it is
+# simply not put in front of a reader who has been told nothing about it.
+KNOWN_GRIDS = {
+    'btsettl': ('BT-Settl', None, None),
+    'tlusty': ('TLUSTY', 'the hot-star models', None),
+    'phoenix': ('Phoenix v2', None, None),
+    'ck04': ('Castelli & Kurucz', None, 8.5),
+    'kurucz': ('Kurucz', None, 8.5),
+    'bosz': ('BOSZ', None, None),
+    'koester': ('Koester', 'white dwarfs', 3.0),
+}
 
-# Which grid file holds which grid
-GRID_FILES = {
+# What astroARIADNE calls the files, for a directory laid out its way. A
+# directory laid out ours names each file for its grid and needs none of this.
+LEGACY_STEMS = {
     'btsettl': 'BTSettl', 'btcond': 'BTCond', 'btnextgen': 'BTNextGen',
     'tlusty': 'TLUSTY', 'phoenix': 'Phoenixv2', 'ck04': 'CK04',
     'kurucz': 'Kurucz', 'bosz': 'BOSZ', 'coelho': 'Coelho',
@@ -1024,6 +1038,9 @@ GRID_FILES = {
     'atmo': 'ATMO2020', 'sonora': 'Sonora', 'stagger': 'Stagger',
     'btdusty': 'BTDusty',
 }
+
+# Two of those files are named for a version rather than for the grid
+LEGACY_NAMES = {'phoenixv2': 'phoenix', 'atmo2020': 'atmo'}
 
 
 def grids_dir():
@@ -1044,22 +1061,106 @@ def grids_dir():
     return gridsdir
 
 
-# Which group of the spectra cache holds which grid. Only the grids the cache
-# carries are here - a fit with any other still runs, and draws no line.
-SPECTRA_GROUPS = {
-    'btsettl': 'btsettl', 'btcond': 'btcond', 'btnextgen': 'btnextgen',
-    'ck04': 'ck04', 'kurucz': 'kurucz', 'coelho': 'coelho',
-    'phoenix': 'phoenix',
-}
+def grid_registry():
+    """Every grid the directory holds, by name, and what is known of each.
+
+    The directory is the registry: a file is a grid, its name is the file's,
+    and what a reader is told about it is what the file says. Adding a grid is
+    putting one there. Spectra sit beside their cube as ``<name>.spectra.h5``
+    and are optional - without them a model is drawn per band and not as a line.
+
+    astroARIADNE's own directory is read as well, which names its files for the
+    grids in a different case and keeps every spectrum in one cache; both are
+    understood, so a split can happen when it happens rather than being
+    required first.
+    """
+    import h5py
+
+    path = grids_dir()
+    out = {}
+    if not path or not os.path.isdir(path):
+        return out
+
+    for name in sorted(glob.glob(os.path.join(path, '*.h5'))):
+        if name.endswith('.spectra.h5'):
+            continue
+
+        stem = os.path.splitext(os.path.basename(name))[0]
+        entry = {'name': LEGACY_NAMES.get(stem.lower(), stem.lower()),
+                 'path': name, 'label': None, 'description': None,
+                 'reach_um': None}
+
+        try:
+            with h5py.File(name, 'r') as h:
+                for key in ('name', 'label', 'description'):
+                    if key in h.attrs:
+                        entry[key] = str(h.attrs[key])
+                if 'reach_um' in h.attrs:
+                    entry['reach_um'] = float(h.attrs['reach_um'])
+                teff = np.asarray(h['teff'][:], dtype=float) if 'teff' in h else None
+        except (OSError, KeyError):
+            continue
+
+        if teff is not None and len(teff):
+            entry['teff_lo'] = float(teff.min())
+            entry['teff_hi'] = float(teff.max())
+
+        # What the file did not say, for the grids that came with no way to
+        knows = KNOWN_GRIDS.get(entry['name'])
+        if knows:
+            entry['label'] = entry['label'] or knows[0]
+            entry['description'] = entry['description'] or knows[1]
+            if entry['reach_um'] is None:
+                entry['reach_um'] = knows[2]
+
+        spectra = os.path.join(path, entry['name'] + '.spectra.h5')
+        entry['spectra'] = spectra if os.path.exists(spectra) else None
+
+        out[entry['name']] = entry
+
+    return out
 
 
-def spectra_path():
-    """Where the model spectra are, or None if there are none to be had."""
+def offered_grids():
+    """The grids a reader is offered, in temperature order.
+
+    A grid is offered when it can say what it is. A directory may hold others -
+    the cool-dwarf and specialist grids astroARIADNE ships - and those stay
+    loadable by name without being put in front of someone who has been told
+    nothing about them.
+    """
+    grids = [g for g in grid_registry().values() if g['label']]
+    grids.sort(key=lambda g: g.get('teff_lo') or 0)
+
+    out = []
+    for grid in grids:
+        span = (f"{grid['teff_lo']:.0f} - {grid['teff_hi']:.0f} K"
+                if grid.get('teff_lo') else '')
+
+        # Named, described and nothing else: where the file is is nobody's
+        # business but this machine's
+        out.append({'name': grid['name'], 'label': grid['label'],
+                    'note': ', '.join(_ for _ in (span, grid['description']) if _),
+                    'has_spectra': has_spectra(grid['name'])})
+
+    return out
+
+
+def spectra_cache_path():
+    """astroARIADNE's one-file cache of spectra, if there is one.
+
+    The layout everything came from: seven grids in one file of some gigabytes.
+    A grid whose spectra sit beside it does not need this, and a directory that
+    has been split does not need it at all.
+    """
     from django.conf import settings
 
+    # A file, not a directory: once the grids are split each carries its own
+    # spectra and this is not wanted at all, and a directory given here would
+    # otherwise be handed to h5py to fail on
     configured = getattr(settings, 'SEDFIT_SPECTRA', None)
     if configured:
-        return configured if os.path.exists(configured) else None
+        return configured if os.path.isfile(configured) else None
 
     try:
         from astroARIADNE.config import spectra_cache
@@ -1067,6 +1168,45 @@ def spectra_path():
         return None
 
     return spectra_cache if spectra_cache and os.path.exists(spectra_cache) else None
+
+
+def spectra_source(name):
+    """Where one grid's spectra are, as (path, group), or None.
+
+    Beside the cube where the directory has been split, and otherwise the group
+    of that name in the one-file cache.
+    """
+    entry = grid_registry().get(str(name).lower()) or {}
+    if entry.get('spectra'):
+        return entry['spectra'], None
+
+    cache = spectra_cache_path()
+    return (cache, str(name).lower()) if cache else None
+
+
+def has_spectra(name):
+    """Whether spectra can be had for this grid, from wherever they are.
+
+    Beside the cube once a directory is split, in the one-file cache before
+    that, and for several grids nowhere at all - which is worth knowing before
+    a fit rather than after, since it is the difference between a model drawn
+    as a line and one drawn as a row of diamonds.
+    """
+    import h5py
+
+    source = spectra_source(name)
+    if source is None:
+        return False
+
+    path, group = source
+    if group is None:
+        return os.path.exists(path)
+
+    try:
+        with h5py.File(path, 'r') as h:
+            return group in h
+    except OSError:
+        return False
 
 
 def model_spectrum(name, teff, logg, feh):
@@ -1088,16 +1228,16 @@ def model_spectrum(name, teff, logg, feh):
     """
     import h5py
 
-    path = spectra_path()
-    group = SPECTRA_GROUPS.get(str(name).lower())
-    if not path or not group:
+    source = spectra_source(name)
+    if source is None:
         return None
 
+    path, group = source
     with h5py.File(path, 'r') as h:
-        if group not in h:
+        if group is not None and group not in h:
             return None
 
-        node = h[group]
+        node = h[group] if group is not None else h
         t = np.asarray(node['teff'][:], dtype=float)
         g = np.asarray(node['logg'][:], dtype=float)
         z = np.asarray(node['z'][:], dtype=float)
@@ -1132,8 +1272,18 @@ def observed_spectrum(name, theta):
 
 
 def load_grid(name):
-    """One grid by name."""
-    return Grid(f'{grids_dir()}/{GRID_FILES[name.lower()]}.h5', name=name.lower())
+    """One grid by name, from the directory or from astroARIADNE's own."""
+    name = str(name).lower()
+    entry = grid_registry().get(name)
+    if entry:
+        return Grid(entry['path'], name=name)
+
+    # A directory laid out astroARIADNE's way, being read before it is split
+    stem = LEGACY_STEMS.get(name)
+    if not stem:
+        raise SourceError(f'no grid called {name}')
+
+    return Grid(os.path.join(grids_dir(), f'{stem}.h5'), name=name)
 
 
 def read_sed_points(path, points=None, extra=None,
