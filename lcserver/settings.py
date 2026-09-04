@@ -160,6 +160,11 @@ TARGETS_PATH = config('TARGETS_PATH', default='targets/')
 # come with it.
 SEDFIT_GRIDS = config('SEDFIT_GRIDS', default='')
 
+# The spectra the cubes were convolved from, for drawing a model as a line
+# rather than as a flux per band. Unset, astroARIADNE's own cache is used where
+# it is installed; without either, a fit still runs and draws no line.
+SEDFIT_SPECTRA = config('SEDFIT_SPECTRA', default='')
+
 # Messages
 from django.contrib.messages import constants as messages
 

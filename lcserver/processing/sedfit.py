@@ -1044,6 +1044,93 @@ def grids_dir():
     return gridsdir
 
 
+# Which group of the spectra cache holds which grid. Only the grids the cache
+# carries are here - a fit with any other still runs, and draws no line.
+SPECTRA_GROUPS = {
+    'btsettl': 'btsettl', 'btcond': 'btcond', 'btnextgen': 'btnextgen',
+    'ck04': 'ck04', 'kurucz': 'kurucz', 'coelho': 'coelho',
+    'phoenix': 'phoenix',
+}
+
+
+def spectra_path():
+    """Where the model spectra are, or None if there are none to be had."""
+    from django.conf import settings
+
+    configured = getattr(settings, 'SEDFIT_SPECTRA', None)
+    if configured:
+        return configured if os.path.exists(configured) else None
+
+    try:
+        from astroARIADNE.config import spectra_cache
+    except ImportError:
+        return None
+
+    return spectra_cache if spectra_cache and os.path.exists(spectra_cache) else None
+
+
+def model_spectrum(name, teff, logg, feh):
+    """The model spectrum nearest the given parameters, or None.
+
+    What the cubes were convolved from. The cube the fit interpolates holds a
+    flux per filter; this is the spectrum behind it, and drawing it says what a
+    row of diamonds cannot - where the Balmer jump falls, which bands sit on a
+    molecular band, how much of a colour is a line and how much a continuum.
+
+    It is the nearest node and not an interpolation. The fit's parameters fall
+    between nodes, and interpolating spectra would mean reading and averaging
+    several hundred megabytes to move a line by a per cent; which node it is
+    comes back with it, so that whatever draws it can say so.
+
+    The distance is measured in what changes a spectrum: a fractional
+    temperature, and a half dex of gravity or of metallicity. Teff first, since
+    a hundred kelvin does more to the shape than a whole node of the others.
+    """
+    import h5py
+
+    path = spectra_path()
+    group = SPECTRA_GROUPS.get(str(name).lower())
+    if not path or not group:
+        return None
+
+    with h5py.File(path, 'r') as h:
+        if group not in h:
+            return None
+
+        node = h[group]
+        t = np.asarray(node['teff'][:], dtype=float)
+        g = np.asarray(node['logg'][:], dtype=float)
+        z = np.asarray(node['z'][:], dtype=float)
+
+        distance = (((np.log10(t) - np.log10(teff)) / 0.02) ** 2
+                    + ((g - logg) / 0.5) ** 2
+                    + ((z - feh) / 0.5) ** 2)
+        i = int(np.argmin(distance))
+
+        return {'wave_um': np.asarray(node['wavelength'][:], dtype=float),
+                'flux': np.asarray(node['flux'][i], dtype=float),
+                'teff': float(t[i]), 'logg': float(g[i]), 'feh': float(z[i])}
+
+
+def observed_spectrum(name, theta):
+    """That spectrum as it would be seen: diluted by (R/d)^2 and reddened.
+
+    The same three operations the per-band model is put through, so the line
+    and the diamonds on it are the same model said two ways.
+    """
+    values = dict(zip(PARAMETERS, theta)) if not isinstance(theta, dict) else theta
+
+    spectrum = model_spectrum(name, values['teff'], values['logg'], values['feh'])
+    if spectrum is None:
+        return None
+
+    dilution = (values['rad'] * R_SUN / (values['dist'] * PARSEC)) ** 2
+    reddening = 10 ** (-0.4 * attenuation(spectrum['wave_um'], values['Av']))
+
+    spectrum['observed'] = spectrum['flux'] * dilution * reddening
+    return spectrum
+
+
 def load_grid(name):
     """One grid by name."""
     return Grid(f'{grids_dir()}/{GRID_FILES[name.lower()]}.h5', name=name.lower())
@@ -1328,6 +1415,29 @@ def target_sed_fit(config, basepath='.', outpath=None, selection=None,
         json.dump(result, f, indent=1, default=float)
     for run, grid in runs:
         np.save(os.path.join(outpath, f'samples_{grid.name}.npy'), run['samples'])
+
+        # The model as a spectrum, at the row it is drawn at, kept with the run
+        # so that neither the figure nor the viewer has to go back to a cache
+        # of several gigabytes to draw a line
+        try:
+            spectrum = observed_spectrum(grid.name, summaries[grid.name]['best'])
+        except Exception as e:
+            spectrum = None
+            log(f'no model spectrum for {grid.name}: {type(e).__name__}: {e}')
+
+        if spectrum is None:
+            # Worth saying: a reader who has seen a line under one grid will
+            # wonder where it went under the next
+            log(f"\n  no spectra cached for {grid.name} - it is drawn per band"
+                f" and not as a line")
+            continue
+
+        np.save(os.path.join(outpath, f'model_{grid.name}.npy'),
+                np.vstack([spectrum['wave_um'],
+                           spectrum['observed']]).astype('float32'))
+        log(f"\n  {grid.name} spectrum: nearest node is"
+            f" {spectrum['teff']:.0f} K,"
+            f" log g {spectrum['logg']:.1f}, [Fe/H] {spectrum['feh']:+.1f}")
 
     # Drawn last, and never allowed to lose a run: the fit is the thing, and a
     # figure that will not render is not a reason to throw away an hour of
@@ -1670,12 +1780,31 @@ def draw_sed(run, grid, summary, path, name=None, colour=GRID_COLOURS[0]):
     left = [e for e in (summary.get('unused') or []) if e['quantified']]
     models = summary.get('excess_models')
 
+    # The model as a spectrum, if the cache had one. Written beside the run by
+    # the fit, so this only has to read it.
+    spectrum = os.path.join(path, f'model_{name or run["grid"]}.npy')
+    spectrum = np.load(spectrum) if os.path.exists(spectrum) else None
+
     filename = os.path.join(path, f'sed_{name or run["grid"]}.png')
 
     with plots.figure_saver(filename, figsize=(8, 6), tight_layout=False) as fig:
         top, low = fig.subplots(2, 1, sharex=True,
                                 gridspec_kw={'height_ratios': [3, 1],
                                              'hspace': 0.06})
+
+        # The spectrum the cubes were convolved from, at the nearest node the
+        # cache carries. Behind everything and thin, because it is the model
+        # said at a resolution the fit never used - the diamonds are what was
+        # fitted, and this is what they were summed from.
+        if spectrum is not None:
+            # A little blueward of the bluest measurement and no further: the
+            # cache starts at 0.125 um, and stretching the axis down to it to
+            # show a model nothing was measured against costs a quarter of the
+            # width for the part of the figure that is only ever the model.
+            near = spectrum[0] >= 0.6 * wave[0]
+            top.plot(spectrum[0][near], spectrum[1][near] * PER_AA, '-',
+                     lw=0.6, color=colour, alpha=0.5, zorder=0,
+                     label=f'{run["grid"]} spectrum, nearest node')
 
         # Per band rather than a shaded curve across them: what the fit
         # produced is a flux in each filter, and a band drawn between them

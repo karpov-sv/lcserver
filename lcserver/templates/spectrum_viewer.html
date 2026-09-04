@@ -755,6 +755,11 @@
  // caught in a different state of the star is.
  let excessOn = new Set();
  let fitResult = null;
+ // The model as a spectrum, per grid, as the run recorded it. Kept apart from
+ // fitResult because it is not part of the fit - it is the nearest node of the
+ // cache the cubes were convolved from, drawn to show what the diamonds were
+ // summed out of.
+ let fitSpectra = {};
  let fitPoll = null;
 
  const GRIDS = [
@@ -1183,6 +1188,31 @@
      Object.entries(fitResult.grids).forEach(([grid, summary], n) => {
          const colour = n ? '#c0392b' : '#8e44ad';
 
+         // Behind everything and thin: the fit never used this resolution, and
+         // the markers are what it did use. Cut a little blueward of the
+         // bluest band fitted, as the run's own figure cuts it - the cache
+         // reaches 0.125 um and stretching the axis there shows only model.
+         const spectrum = fitSpectra[grid];
+         if (spectrum && spectrum.wave_um.length) {
+             const blue = 0.6 * Math.min(...(summary.residuals || [])
+                                             .map(r => r.wave_um));
+             const at = spectrum.wave_um
+                 .map((w, i) => [w, spectrum.flux[i]])
+                 .filter(([w]) => !(w < blue));
+
+             traces.push({
+                 x: at.map(([w]) => w * 1e4),
+                 y: at.map(([, f]) => f * 1e-4),
+                 mode: 'lines',
+                 type: 'scatter',
+                 name: `${grid} spectrum`,
+                 line: {color: colour, width: 1},
+                 opacity: 0.5,
+                 hovertemplate: '%{x:.0f} A<br>%{y:.3e}'
+                                + '<extra>' + grid + ' spectrum</extra>',
+             });
+         }
+
          // What the fit predicts where it was not fitted - the bands measured
          // as an excess, and the ones left out of both. Extrapolation, and
          // drawn smaller and fainter for it, but it is the whole of what an
@@ -1329,6 +1359,7 @@
              if (run.error) throw new Error(run.error);
 
              openRun = runId;
+             fitSpectra = run.spectra || {};
              showFitRun(run.html, run.figures);
              document.getElementById('fit-results').style.display = 'block';
              document.getElementById('fit-results-when').textContent =
@@ -1420,6 +1451,7 @@
          if (!runId || runId === openRun) {
              openRun = null;
              fitResult = null;
+             fitSpectra = {};
              document.getElementById('fit-result').innerHTML = '';
              document.getElementById('fit-results').style.display = 'none';
              showFitRun('', []);

@@ -380,6 +380,28 @@ def fit_sed(request, id):
 FIGURE_TYPES = ('*.png', '*.jpg', '*.svg', '*.pdf')
 
 
+def _run_spectra(path):
+    """The model spectrum each grid of a run was drawn at, ready to plot.
+
+    Rounded on the way out - four figures on a flux and six on a wavelength is
+    more than a plot can show, and it halves what has to travel.
+    """
+    spectra = {}
+    for name in sorted(glob.glob(os.path.join(path, 'model_*.npy'))):
+        grid = os.path.basename(name)[len('model_'):-len('.npy')]
+        try:
+            data = np.load(name)
+        except Exception:
+            continue
+
+        spectra[grid] = {
+            'wave_um': [float(f'{_:.6g}') for _ in data[0]],
+            'flux': [float(f'{_:.4g}') for _ in data[1]],
+        }
+
+    return spectra
+
+
 def _run_figures(target, run_id, path):
     """Any figure a run left behind, as URLs the page can use directly.
 
@@ -452,6 +474,7 @@ def sed_fits(request, id):
 
         result, log = read(path)
         figures = _run_figures(target, wanted, path)
+        spectra = _run_spectra(path)
 
         # The log and the figures arrive already drawn, from the same blocks
         # the target page is built of - there is one way this site shows the
@@ -464,7 +487,8 @@ def sed_fits(request, id):
 
         # The log goes out drawn, inside the block, and not a second time raw
         return JsonResponse({'run_id': wanted, 'result': result,
-                             'figures': figures, 'html': html})
+                             'figures': figures, 'spectra': spectra,
+                             'html': html})
 
     runs = []
     for path in sorted(glob.glob(os.path.join(root, '*')), reverse=True):
