@@ -48,6 +48,11 @@ class Command(BaseCommand):
                  "one file, not the per-model originals")
 
         parser.add_argument(
+            '--ingest-koester', dest='koester', default=None,
+            help="Koester's white-dwarf models as SVO hands them out - the "
+                 'directory of one file per model')
+
+        parser.add_argument(
             '--scatter', dest='scatter', nargs='*', default=None,
             metavar='GRID',
             help='Rewrite grids stored as a lattice as the models they have, '
@@ -85,6 +90,9 @@ class Command(BaseCommand):
 
         if options['cdbs']:
             return self.ingest_cdbs(options)
+
+        if options['koester']:
+            return self.ingest_koester(options)
 
         if options['scatter'] is not None:
             return self.scatter(options)
@@ -176,6 +184,38 @@ class Command(BaseCommand):
             store.compare(cube, installed, verbose=self.stdout.write,
                           at=((5000., 4.0, 0.0), (8000., 4.0, 0.0),
                               (10000., 4.0, 0.0), (10000., 3.0, -0.5)))
+
+        self.written(name, cube, spectra, target)
+
+    def ingest_koester(self, options):
+        """Turn a directory of Koester models into a cube and its spectra.
+
+        The cube already installed was built from the same models, so the two
+        are compared afterwards; what this adds is the spectra, which it has
+        none of.
+        """
+        from lcserver.ingest import koester
+
+        source = options['koester']
+        if not os.path.isdir(source):
+            raise CommandError(f'{source} is not a directory')
+
+        target, name = self.where(options, default='koester')
+        cube, spectra = self.paths(target, name, options['force'])
+
+        installed = (sedfit.grid_registry().get(name) or {}).get('path')
+
+        koester.ingest(source, cube, spectra, name=name,
+                       label=options['label'] or 'Koester',
+                       description=options['description'] or 'white dwarfs',
+                       verbose=self.stdout.write)
+
+        if installed and os.path.abspath(installed) != os.path.abspath(cube):
+            store.compare(cube, installed, verbose=self.stdout.write,
+                          bands=['GALEX_NUV', 'GROUND_JOHNSON_U', 'PS1_g',
+                                 'GROUND_JOHNSON_V', '2MASS_J'],
+                          at=((10000., 8.0, 0.0), (20000., 8.0, 0.0),
+                              (40000., 7.5, 0.0), (60000., 9.0, 0.0)))
 
         self.written(name, cube, spectra, target)
 

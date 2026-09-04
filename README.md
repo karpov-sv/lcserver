@@ -286,6 +286,8 @@ python manage.py sedgrid --ingest-tlusty ~/Downloads/obstar_merged_3d.ascii \
     --to data/grids
 python manage.py sedgrid --ingest-cdbs ~/tmp/kurucz/.../k93models --to data/grids
 python manage.py sedgrid --ingest-cdbs ~/tmp/kurucz/.../ck04models --to data/grids
+python manage.py sedgrid --ingest-koester ~/Downloads/models_.../koester2 \
+    --to data/grids
 python manage.py sedgrid --scatter            # or --scatter btsettl bosz
 ```
 
@@ -308,6 +310,14 @@ and astroARIADNE's cubes for both came from them and stop at 12000 K, which is
 less than half of either: 7618 and 3808 models reaching 50000 K. Past about ten
 microns the atlases are a Rayleigh-Jeans tail rather than a model, so those
 grids are written believing themselves only to 8.5 µm.
+
+`--ingest-koester` reads Koester's white-dwarf models as SVO hands them out, one
+file per model. The cube here was built from the same models and has no spectra;
+these are finely sampled through the optical, where a DA's Balmer lines are the
+whole of what there is to see. They stop at three microns, where a
+Rayleigh-Jeans tail takes over for the four bands just beyond — which the models
+are measurably already in, and which the cube it replaces got wrong, having W2
+brighter than W1 on a white dwarf.
 
 `--scatter` rewrites a grid stored as a lattice as the models it actually holds.
 A cube on a lattice has a place for every combination of its three axes and a
@@ -353,6 +363,7 @@ lcserver/
 │   ├── powr.py       a PoWR download, one file per model at ten parsecs
 │   ├── tlusty.py     a TLUSTY grid, out of its merged file for Cloudy
 │   ├── cdbs.py       the Kurucz and Castelli atlases, as STScI ships them
+│   ├── koester.py    white-dwarf models, one file each, as SVO hands them out
 │   └── scatter.py    a lattice rewritten as the models it actually holds
 ├── surveys.py      the registry - metadata, bands, form fields, layout
 ├── celery_tasks.py task generation, and the canvas a full run is built into

@@ -1,9 +1,12 @@
 """Writing out the two files a model grid is here.
 
-``<name>.h5`` is what the fit interpolates: a flux per passband per model,
-scattered rather than on a lattice, because a rectangle of temperature against
-gravity is half empty for a hot star and a lattice with holes in it refuses
-half the models that do exist.
+``<name>.h5`` is what the fit interpolates: a flux per passband per model.
+Usually that is written as the models themselves rather than as a lattice,
+because a rectangle of temperature against gravity is half empty for a hot star
+and a lattice with holes in it refuses the band of parameter space around the
+region that exists. A grid that did compute every combination keeps its
+lattice, since interpolating over a box is better than over a simplex and there
+is nothing to recover.
 
 ``<name>.spectra.h5`` is what a figure draws: the spectra those fluxes were
 summed out of, one to a chunk so that reading one reads one.
@@ -24,9 +27,11 @@ def write(cube_path, spectra_path, name, teff, logg, feh, fluxes, bands,
           wave_um=None, spectra=None, label=None, description=None,
           reach_um=None, source=None, reference=None):
     """One grid, as the pair of files the application reads."""
+    lattice = as_lattice(teff, logg, feh, fluxes)
+
     with h5py.File(cube_path, 'w') as h:
         h.attrs['name'] = name
-        h.attrs['layout'] = 'scattered'
+        h.attrs['layout'] = 'lattice' if lattice else 'scattered'
         h.attrs['label'] = label or name
         if description:
             h.attrs['description'] = description
@@ -40,10 +45,11 @@ def write(cube_path, spectra_path, name, teff, logg, feh, fluxes, bands,
         # The axes in full precision, small as they are: they are the corners a
         # triangulation is built on, and a node rounded to a 32-bit float falls
         # outside the hull it is a vertex of
-        h.create_dataset('teff', data=np.asarray(teff, dtype='float64'))
-        h.create_dataset('logg', data=np.asarray(logg, dtype='float64'))
-        h.create_dataset('feh', data=np.asarray(feh, dtype='float64'))
-        h.create_dataset('flux', data=np.asarray(fluxes, dtype='float32'),
+        axes, block = lattice or ((teff, logg, feh), fluxes)
+        h.create_dataset('teff', data=np.asarray(axes[0], dtype='float64'))
+        h.create_dataset('logg', data=np.asarray(axes[1], dtype='float64'))
+        h.create_dataset('feh', data=np.asarray(axes[2], dtype='float64'))
+        h.create_dataset('flux', data=np.asarray(block, dtype='float32'),
                          compression='gzip')
         h.create_dataset('filters',
                          data=np.array(bands, dtype=h5py.string_dtype()))
@@ -62,6 +68,37 @@ def write(cube_path, spectra_path, name, teff, logg, feh, fluxes, bands,
         h.create_dataset('z', data=np.asarray(feh, dtype='float64'))
         h.create_dataset('flux', data=np.asarray(spectra, dtype='float32'),
                          chunks=(1, len(wave_um)), compression='gzip')
+
+
+def as_lattice(teff, logg, feh, fluxes):
+    """The models as a lattice, if they are one, and otherwise nothing.
+
+    A grid that computed every combination of its axes loses something by being
+    written as scattered points: a box has eight corners to interpolate between
+    and a simplex has four, and where there are no holes the box is the better
+    of the two. So the shape is read off the models rather than assumed.
+    """
+    axes = [np.unique(np.asarray(_, dtype=float)) for _ in (teff, logg, feh)]
+    shape = [len(_) for _ in axes]
+
+    if int(np.prod(shape)) != len(np.asarray(fluxes)):
+        return None
+
+    index = [{v: n for n, v in enumerate(a)} for a in axes]
+    cube = np.full((shape[1], shape[0], shape[2],
+                    np.asarray(fluxes).shape[1]), np.nan, dtype=float)
+    seen = np.zeros(shape[1] * shape[0] * shape[2], dtype=bool)
+
+    for t, g, f, row in zip(teff, logg, feh, fluxes):
+        i, j, k = index[1][g], index[0][t], index[2][f]
+        flat = (i * shape[0] + j) * shape[2] + k
+        if seen[flat]:
+            return None
+
+        seen[flat] = True
+        cube[i, j, k] = row
+
+    return (axes, cube) if seen.all() else None
 
 
 def compare(cube_path, against, at=None, bands=None, verbose=None):
