@@ -282,6 +282,8 @@ python manage.py sedgrid --split --to ~/sedgrids
 python manage.py sedgrid --split --to ~/sedgrids --only btsettl tlusty
 python manage.py sedgrid --ingest-powr ~/Downloads/griddl-gal-ob-vd3-sed \
     --to data/grids --label 'PoWR Gal OB Vd3' --description 'Galactic OB stars'
+python manage.py sedgrid --ingest-tlusty ~/Downloads/obstar_merged_3d.ascii \
+    --to data/grids
 ```
 
 `--ingest-powr` converts a [PoWR](https://www.astro.physik.uni-potsdam.de/PoWR/)
@@ -289,6 +291,12 @@ download - one file per model, the star as seen from ten parsecs - into a cube
 convolved through the same passbands every other grid was built with, plus the
 spectra to draw it from. It appears on the form as soon as it is written; there
 is nothing else to edit.
+
+`--ingest-tlusty` reads a [TLUSTY](https://tlusty.oca.eu/) OB-star grid from the
+single merged file it is published in for Cloudy - which is what astroARIADNE's
+own TLUSTY cube was built from, so the new one is compared against the installed
+one band by band and the ratios printed. What it adds is the spectra, which that
+cube has none of, and the low-gravity edge a lattice with holes in it refuses.
 
 `--list` says what the grid directory holds, where each grid's spectra are, and
 which of them are offered on the fitting form — a grid is offered when it can
@@ -319,8 +327,11 @@ lcserver/
 ├── processing/     one module per survey, each registering itself
 │   └── sedfit.py   the photosphere fit - grids, priors, sampling, figures
 ├── ingest/         turning somebody else's data into ours, once and by hand
-│   ├── ariadne.py  astroARIADNE's grids, laid out as this reads them
-│   └── powr.py     a PoWR download, convolved into a cube and its spectra
+│   ├── passbands.py  the convolution every grid here was built with
+│   ├── store.py      the two files a grid is, written out
+│   ├── ariadne.py    astroARIADNE's grids, laid out as this reads them
+│   ├── powr.py       a PoWR download, one file per model at ten parsecs
+│   └── tlusty.py     a TLUSTY grid, out of its merged file for Cloudy
 ├── surveys.py      the registry - metadata, bands, form fields, layout
 ├── celery_tasks.py task generation, and the canvas a full run is built into
 ├── views.py        pages, file browser

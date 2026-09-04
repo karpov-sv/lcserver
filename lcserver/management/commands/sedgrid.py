@@ -43,6 +43,11 @@ class Command(BaseCommand):
                  'files and their modelparameters.txt')
 
         parser.add_argument(
+            '--ingest-tlusty', dest='tlusty', default=None,
+            help="A TLUSTY grid in the merged ASCII form Cloudy reads - the "
+                 "one file, not the per-model originals")
+
+        parser.add_argument(
             '--name', dest='name', default=None,
             help='What to call it (default: from the download directory)')
 
@@ -62,6 +67,9 @@ class Command(BaseCommand):
         if options['powr']:
             return self.ingest_powr(options)
 
+        if options['tlusty']:
+            return self.ingest_tlusty(options)
+
         if options['show'] or not options['split']:
             return self.show()
 
@@ -79,30 +87,73 @@ class Command(BaseCommand):
         """
         from lcserver.ingest import powr
 
-        target = options['to'] or getattr(settings, 'SEDFIT_GRIDS', '')
-        if not target:
-            raise CommandError('nowhere to write to: pass --to, or set '
-                               'SEDFIT_GRIDS to where the grids should live')
-
         source = options['powr']
         if not os.path.isdir(source):
             raise CommandError(f'{source} is not a directory')
 
-        name = options['name'] or powr.grid_name(source)
-        cube = os.path.join(target, f'{name}.h5')
-        spectra = os.path.join(target, f'{name}.spectra.h5')
-
-        for path in (cube, spectra):
-            if os.path.exists(path) and not options['force']:
-                raise CommandError(f'{path} is already there - --force to '
-                                   f'write over it')
-
-        os.makedirs(target, exist_ok=True)
+        target, name = self.where(options, default=powr.grid_name(source))
+        cube, spectra = self.paths(target, name, options['force'])
 
         powr.ingest(source, cube, spectra, name=name,
                     label=options['label'], description=options['description'],
                     verbose=self.stdout.write)
 
+        self.written(name, cube, spectra, target)
+
+    def ingest_tlusty(self, options):
+        """Turn a merged TLUSTY file into a cube and a spectrum file.
+
+        The cube it produces should be the one that is already installed - that
+        file is what astroARIADNE built it from - so the two are compared band
+        by band afterwards and the ratios printed. Anything but ones means the
+        reading is wrong somewhere.
+        """
+        from lcserver.ingest import tlusty
+
+        source = options['tlusty']
+        if not os.path.isfile(source):
+            raise CommandError(f'{source} is not a file')
+
+        target, name = self.where(options, default='tlusty')
+        cube, spectra = self.paths(target, name, options['force'])
+
+        installed = (sedfit.grid_registry().get(name) or {}).get('path')
+
+        tlusty.ingest(source, cube, spectra, name=name,
+                      label=options['label'] or 'TLUSTY',
+                      description=options['description'] or 'the hot-star models',
+                      verbose=self.stdout.write)
+
+        if installed and os.path.abspath(installed) != os.path.abspath(cube):
+            tlusty.compare(cube, installed, verbose=self.stdout.write)
+
+        self.written(name, cube, spectra, target)
+
+    # ------------------------------------------------------- where it all goes
+
+    def where(self, options, default=None):
+        """The directory to write into, and what to call the grid."""
+        target = options['to'] or getattr(settings, 'SEDFIT_GRIDS', '')
+        if not target:
+            raise CommandError('nowhere to write to: pass --to, or set '
+                               'SEDFIT_GRIDS to where the grids should live')
+
+        os.makedirs(target, exist_ok=True)
+        return target, options['name'] or default
+
+    def paths(self, target, name, force):
+        """Where the two files go, refusing to write over what is there."""
+        cube = os.path.join(target, f'{name}.h5')
+        spectra = os.path.join(target, f'{name}.spectra.h5')
+
+        for path in (cube, spectra):
+            if os.path.exists(path) and not force:
+                raise CommandError(f'{path} is already there - --force to '
+                                   f'write over it')
+
+        return cube, spectra
+
+    def written(self, name, cube, spectra, target):
         self.stdout.write(self.style.SUCCESS(
             f'\n{name}: {os.path.getsize(cube) / 1e6:.1f} MB of cube and '
             f'{os.path.getsize(spectra) / 1e6:.1f} MB of spectra in {target}'))
