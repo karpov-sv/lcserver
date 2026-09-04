@@ -1657,7 +1657,8 @@ def offered_grids():
         # business but this machine's
         out.append({'name': grid['name'], 'label': grid['label'],
                     'note': ', '.join(_ for _ in (span, grid['description']) if _),
-                    'has_spectra': has_spectra(grid['name'])})
+                    'has_spectra': has_spectra(grid['name']),
+                    'has_xp': bool(grid.get('xp'))})
 
     return out
 

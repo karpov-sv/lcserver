@@ -796,12 +796,13 @@ The synthetic photometry made from the same spectra leaves the fit, being the sa
              fitXpDerived = data.xp_derived || [];
              fitBands = data.bands || [];
              fitGrids = data.grids || fitGrids;
-             buildGridPicker();
 
-             // Offered only where there is a spectrum to offer
+             // Offered only where there is a spectrum to offer, and settled
+             // before the picker is drawn - what it marks depends on it
              document.getElementById('fit-xp-row').hidden = !fitXpPoints.length;
              if (!fitXpPoints.length) document.getElementById('fit-xp').checked = false;
 
+             buildGridPicker();
              composePoints();
              fitOn = chosen || defaultFitPoints();
              // Never both, whatever was asked for: a point that is being
@@ -851,6 +852,7 @@ The synthetic photometry made from the same spectra leaves the fit, being the sa
      fitOn = defaultFitPoints();
      excessOn = new Set([...defaultExcess()].filter(id => !fitOn.has(id)));
      buildPointList();
+     buildGridPicker();
  }
 
  // What the reader of the file would measure an excess on: everything past the
@@ -1063,9 +1065,18 @@ The synthetic photometry made from the same spectra leaves the fit, being the sa
 
      // Whichever was ticked stays ticked when the list is read again, and the
      // first one is ticked when nothing was
+     // A grid with no XP bins written cannot answer for them, and a fit that
+     // was asked for the spectrum skips it. Said here rather than left to the
+     // log, which is read after the fit rather than before it.
+     const withXp = fittingXp();
+
      fitGrids.forEach((grid, n) => {
          const on = chosen.length ? chosen.includes(grid.name) : n === 0;
-         const note = [grid.note, grid.has_spectra ? '' : 'no spectra, so no line']
+         const missing = withXp && !grid.has_xp;
+         const note = [grid.note,
+                       grid.has_spectra ? '' : 'no spectra, so no line',
+                       grid.has_xp ? ''
+                           : 'no Gaia XP bins - "manage.py sedgrid --xp" writes them']
              .filter(Boolean).join(' - ');
 
          const div = document.createElement('div');
@@ -1073,8 +1084,10 @@ The synthetic photometry made from the same spectra leaves the fit, being the sa
          div.innerHTML = `
            <input class="form-check-input" type="checkbox" id="grid-${grid.name}"
                   value="${grid.name}" ${on ? 'checked' : ''}>
-           <label class="form-check-label" for="grid-${grid.name}"
-                  title="${note}">${grid.label}</label>
+           <label class="form-check-label ${missing ? 'text-body-secondary' : ''}"
+                  for="grid-${grid.name}" title="${note}">${grid.label}</label>
+           ${missing ? '<span class="spectrum-info ms-1">no XP bins,'
+                       + ' it would be skipped</span>' : ''}
          `;
          host.appendChild(div);
      });

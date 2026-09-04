@@ -571,8 +571,6 @@ def sed_points(request, id):
         # Which of the file's points the bins would replace, worked out where
         # the rule lives rather than restated in the page
         'xp_derived': sedfit.xp_derived(points),
-        'xp_grids': sorted(name for name in sedfit.grid_registry()
-                           if sedfit.has_xp(name)),
         # What may be added by hand, for the picker
         'bands': sedfit.known_bands(),
         # And which model grids are installed, which is whatever the grid
