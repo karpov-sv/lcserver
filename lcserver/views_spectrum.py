@@ -342,7 +342,7 @@ def fit_sed(request, id):
         return JsonResponse({'error': f'{source} is not there yet'}, status=400)
 
     selection = {'source': source}
-    for key in ('points', 'exclude'):
+    for key in ('points', 'excess'):
         if data.get(key) is not None:
             selection[key] = [str(_) for _ in data[key]]
 
@@ -505,10 +505,12 @@ def sed_fits(request, id):
 @login_required
 @require_http_methods(["GET"])
 def sed_points(request, id):
-    """Every point of a SED file, and what a fit would do with each.
+    """Every point of a SED file, and what would be done with each by default.
 
     The same reading the fit itself does, so what the panel lists is what would
-    be fitted - including which points it would set aside, and why.
+    be fitted if nobody chose - which of them, which it would set aside, and
+    why. What the reader then does with that list is the reader's, and is sent
+    back whole when a fit is asked for.
     """
     from .processing import sedfit
 

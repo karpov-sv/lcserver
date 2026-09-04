@@ -527,36 +527,61 @@ def predict_bands(run, grid, bands, wave_um, ndraw=400, seed=0):
     return drawn.mean(axis=0), drawn.std(axis=0)
 
 
-def excess_rows(rows, run, grids):
-    """The points an excess would be measured on, one per band.
+def excess_rows(rows, grids, chosen=None):
+    """The points an excess is measured on.
 
-    Every point redward of the reddest band that was fitted, which the grids
-    can predict a photosphere for. Redward of the fit is the whole of the
-    condition: a point set aside for any other reason - a second catalogue for
-    a band already taken, one the reader turned off in the optical - is not an
-    excess, it is a point that was not used.
+    ``chosen`` names them; without it they are whatever ``default_excess`` made
+    of the reading. Either way a band is only *quantified* where every grid in
+    play both carries it and is believed there, which is the intersection of
+    what they reach - the rest are carried through unquantified, so a point can
+    be shown without a number being invented for it.
     """
-    fitted = set(run['bands'])
-    edge = max(run['wave_um'])
+    reach = _reach(rows, grids)
 
-    # A band is quantified only where every grid in play both carries it and is
-    # believed there, which is the intersection of what they reach
+    wanted = (set(chosen) if chosen is not None
+              else {r['id'] for r in rows if r.get('excess')})
+
+    out = [dict(row, quantified=row['band'] in (reach or ()))
+           for row in rows
+           if row['id'] in wanted and row['fittable'] and not row['used']]
+
+    out.sort(key=lambda r: r['wave_um'])
+    return out
+
+
+def _reach(rows, grids):
+    """The bands every grid in play both carries and is believed at."""
     reach = None
     for grid in grids:
-        covers = {b for b in grid.covers
-                  if _within_limit(grid.name, b, rows)}
+        covers = {b for b in grid.covers if _within_limit(grid.name, b, rows)}
         reach = covers if reach is None else (reach & covers)
 
-    out, seen = [], set()
+    return reach or set()
+
+
+def unused_rows(rows, grids, excess):
+    """The points in neither set, one per band not already spoken for.
+
+    Nothing is done with these - a point the reader left out of both says
+    nothing about the star as far as the fit is concerned. They are read so
+    they can be drawn, because how far a point sits from a photosphere fitted
+    without it is the thing worth seeing before leaving it out for good.
+
+    One per band, and only bands nothing else covers: a file that republishes
+    the same measurement a dozen times would otherwise put a dozen markers on
+    top of each other.
+    """
+    reach = _reach(rows, grids)
+    seen = {r['band'] for r in rows if r['used']}
+    seen |= {r['band'] for r in excess}
+
+    out = []
     for row in rows:
-        band = row['band']
-        if (band is None or band in fitted or band in seen
-                or row['flux'] is None or row['wave_um'] is None
-                or not row['wave_um'] > edge):
+        if (not row['fittable'] or row['used'] or row['band'] in seen):
             continue
 
-        seen.add(band)
-        out.append(dict(row, quantified=band in (reach or ())))
+        seen.add(row['band'])
+        out.append(dict(row, quantified=row['band'] in reach))
 
     out.sort(key=lambda r: r['wave_um'])
     return out
@@ -596,6 +621,8 @@ def quantify_excess(rows, run, grid):
     for row in rows:
         entry = {'id': row['id'], 'band': row['band'],
                  'wave_um': float(row['wave_um']),
+                 'wave_drawn_um': float(row['wave_drawn_um']
+                                        or row['wave_um']),
                  'observed': float(row['flux']), 'observed_err': float(row['err']),
                  'quantified': bool(row['quantified']),
                  'model': None, 'model_err': None,
@@ -790,20 +817,79 @@ def _dust_luminosity(temperature, amplitude, reference_um, summary):
                  / (luminosity * L_SUN))
 
 
+def excess_flux(models, wave_um):
+    """The fitted excess at each wavelength, in erg/s/cm2/um, or None.
+
+    Evaluated at the best node rather than at the marginal means, for the
+    reason the photosphere is drawn at one posterior row: a temperature and an
+    amplitude taken from two different places on the likelihood are not a shape
+    that fits anything.
+    """
+    if not models or models.get('preferred') == 'none':
+        return None
+
+    reference = models['reference_um']
+    wave = np.asarray(wave_um, dtype=float)
+
+    if models['preferred'] == 'freefree':
+        best = models['freefree']
+        flux = best['amplitude_best'] * (wave / reference) ** -(best['alpha_best'] + 2)
+    else:
+        best = models['blackbody']
+        t = best['t_dust_best']
+        unit = float(planck(reference, t)) * float(modbb_factor(reference))
+        if not unit > 0:
+            return None
+        flux = best['amplitude_best'] * planck(wave, t) * modbb_factor(wave) / unit
+
+    return flux
+
+
+def add_excess_residuals(table, models):
+    """What is left of the excess once the fitted shape is taken off it.
+
+    The significance already on each row says how far the point is from the
+    photosphere, which is whether there is an excess at all. This says how far
+    it is from the photosphere and the excess together, which is whether the
+    shape that won describes it - a different question, and the one that says
+    which band a shape is missing.
+    """
+    used = [e for e in table if e['quantified']]
+    if not used or not models:
+        return
+
+    flux = excess_flux(models, np.array([e['wave_um'] for e in used]))
+    if flux is None:
+        return
+
+    for entry, model in zip(used, flux):
+        total = entry['model'] + float(model)
+        sigma = np.hypot(entry['observed_err'], entry['model_err'])
+        entry['fit_model'] = total
+        entry['fit_sigma'] = float((entry['observed'] - total) / sigma)
+
+
 def log_excess(table, models, log):
     """The excess as a table, and what shape it came out as."""
     log('\n  infrared excess, against the photosphere the fit predicts')
+    # Two significances, and they answer different questions: how far the
+    # point is from the photosphere, which is whether there is an excess at
+    # all, and how far it is from the photosphere and the fitted excess
+    # together, which is whether the shape that won describes it.
     log(f"    {'band':<16}{'lam um':>8}{'observed':>11}{'photosphere':>12}"
-        f"{'ratio':>8}{'sigma':>8}")
+        f"{'ratio':>8}{'sigma':>8}{'from fit':>10}")
 
     for entry in table:
-        if entry['quantified']:
+        if not entry['quantified']:
             log(f"    {entry['band'] or '':<16}{entry['wave_um']:8.2f}"
-                f"{entry['observed']:11.3e}{entry['model']:12.3e}"
-                f"{entry['ratio']:8.2f}{entry['sigma']:+8.1f}")
-        else:
-            log(f"    {entry['band'] or '':<16}{entry['wave_um']:8.2f}"
-                f"{entry['observed']:11.3e}{'-':>12}{'-':>8}{'-':>8}")
+                f"{entry['observed']:11.3e}{'-':>12}{'-':>8}{'-':>8}{'-':>10}")
+            continue
+
+        left = entry.get('fit_sigma')
+        log(f"    {entry['band'] or '':<16}{entry['wave_um']:8.2f}"
+            f"{entry['observed']:11.3e}{entry['model']:12.3e}"
+            f"{entry['ratio']:8.2f}{entry['sigma']:+8.1f}"
+            + (f"{left:+10.1f}" if left is not None else f"{'-':>10}"))
 
     if not models:
         log('    fewer than two bands to compare shapes on')
@@ -913,9 +999,12 @@ FILTER_MAP = {
     'TESS:T': 'TESS',
 }
 
-# Bands the grids carry a column for but did not model - the flux there was
-# extrapolated when the grid was built. They belong to an infrared excess
-# rather than to a photosphere, and are never fitted.
+# Bands kept out of the photosphere by default. Not because a grid cannot
+# predict them - most do, and the excess analysis relies on that - but because
+# what is measured there is largely not the star, and a band of excess left in
+# the fit biases the temperature and the radius of exactly the objects it is
+# interesting on. Where a grid genuinely stops short is GRID_IR_LIMIT instead.
+# A reader who wants one of these fitted can name it, and get it.
 NOT_PHOTOSPHERE = ('WISE_RSR_W3', 'WISE_RSR_W4', 'HERSCHEL_PACS_BLUE',
                    'HERSCHEL_PACS_GREEN', 'HERSCHEL_PACS_RED',
                    'SPITZER_IRAC_58', 'SPITZER_IRAC_80')
@@ -960,7 +1049,7 @@ def load_grid(name):
     return Grid(f'{grids_dir()}/{GRID_FILES[name.lower()]}.h5', name=name.lower())
 
 
-def read_sed_points(path, points=None, exclude=None, extra=None,
+def read_sed_points(path, points=None, extra=None,
                     err_floor=0.03, err_unknown=0.05):
     """The rows of one of our SED files, on the convention the grids were built on.
 
@@ -976,15 +1065,25 @@ def read_sed_points(path, points=None, exclude=None, extra=None,
     whole conversion from what VizieR gave us is a factor of
     (lambda_VizieR / lambda_pivot)^2. No zero point enters it.
 
-    Every row is returned, with ``used`` saying whether it will be fitted and
-    ``note`` saying why not, so a caller can show the whole file and mark what
-    it did with each point.
+    Every row is returned, with three things said about it. ``fittable`` is
+    whether it ever could be fitted: a band no grid models, or a row with no
+    flux in it, is a property of the data and not a choice anyone can change.
+    ``default`` is what would be chosen if nobody chose - one point per band,
+    and nothing from the far infrared, which is right for a file where the same
+    measurement is republished by a dozen catalogues and where a band of excess
+    would bias the photosphere. ``used`` is what will actually be fitted, and
+    ``note`` says how it came to be that.
+
+    ``points``, when given, is the whole answer: those points are fitted and no
+    others, whatever the defaults would have said. Two points on one band is
+    then allowed, because two surveys that genuinely measured it are two
+    measurements and a likelihood knows what to do with them. Nothing is
+    promoted or demoted behind the caller's back.
     """
     from astropy.table import Table, vstack
     from astroARIADNE.phot_utils import _get_filter
 
-    points = set(points) if points else None
-    exclude = set(exclude or ())
+    points = set(points) if points is not None else None
 
     table = Table.read(path)
 
@@ -1007,7 +1106,8 @@ def read_sed_points(path, points=None, exclude=None, extra=None,
         # file says it is - VizieR's effective wavelength - and the two differ
         # by up to three per cent, so a model drawn at the pivot sits visibly
         # beside the measurement it belongs to.
-        entry = {'id': comment, 'band': band, 'used': False, 'note': None,
+        entry = {'id': comment, 'band': band, 'used': False, 'default': False,
+                 'fittable': False, 'note': None,
                  'wave_um': None, 'wave_drawn_um': None,
                  'flux': None, 'err': None}
         rows.append(entry)
@@ -1035,20 +1135,64 @@ def read_sed_points(path, points=None, exclude=None, extra=None,
             relative = (err_unknown or 0.10) / 1.0857
         entry['err'] = entry['flux'] * relative
 
+        # Everything from here is a choice about the point rather than a fact
+        # about it, so from here it could be fitted if it were asked for
+        entry['fittable'] = True
+
+        # What would be chosen if nobody chose, and why not where not
         if band in NOT_PHOTOSPHERE:
             entry['note'] = 'infrared excess, not photosphere'
-        elif comment in exclude:
-            entry['note'] = 'excluded'
-        elif points is not None and comment not in points:
-            entry['note'] = 'not selected'
         elif band in seen:
-            entry['note'] = 'another point already covers this band'
+            entry['note'] = 'a second point for this band'
         else:
             seen.add(band)
-            entry['used'] = True
+            entry['default'] = True
+
+        entry['used'] = entry['default'] if points is None else comment in points
+
+        # And how it came to be that, where it was not the default
+        if entry['used'] and not entry['default']:
+            entry['note'] = 'chosen by hand'
+        elif not entry['used'] and entry['default']:
+            entry['note'] = 'turned off'
 
     rows.sort(key=lambda r: (r['wave_um'] is None, r['wave_um'] or 0))
+
+    for row in rows:
+        row['excess'] = False
+    for row in default_excess(rows):
+        row['excess'] = True
+
     return rows
+
+
+def default_excess(rows):
+    """The points an excess would be measured on if nobody chose.
+
+    Everything past the reddest band being fitted, which is where a photosphere
+    stops being what was measured. A point short of that which is not fitted
+    was set aside rather than left over - a second catalogue for a band, or one
+    the reader does not believe - and an excess is not what it is.
+
+    One point per band, on the same reasoning the fit uses: in a file where the
+    same measurement is republished a dozen times, a dozen copies of it would
+    weigh that band a dozen times over.
+    """
+    edge = max((r['wave_um'] for r in rows if r['used'] and r['wave_um']),
+               default=None)
+    if edge is None:
+        return []
+
+    out, seen = [], set()
+    for row in rows:
+        if (not row['fittable'] or row['used'] or row['band'] in seen
+                or not row['wave_um'] or row['wave_um'] <= edge):
+            continue
+
+        seen.add(row['band'])
+        out.append(row)
+
+    return out
 
 
 def target_sed_fit(config, basepath='.', outpath=None, selection=None,
@@ -1076,7 +1220,7 @@ def target_sed_fit(config, basepath='.', outpath=None, selection=None,
         raise SourceError(f'{source} is not there - run the SED step first')
 
     rows = read_sed_points(
-        sed, points=selection.get('points'), exclude=selection.get('exclude'),
+        sed, points=selection.get('points'),
         extra=(read_extra_points(basepath)
                if selection.get('extra', True) else None),
         err_floor=options.get('err_floor', 0.03),
@@ -1146,12 +1290,20 @@ def target_sed_fit(config, basepath='.', outpath=None, selection=None,
         # two of those.
         if options.get('excess', True):
             try:
-                beyond = excess_rows(rows, run, [grid])
+                beyond = excess_rows(rows, [grid], selection.get('excess'))
                 if beyond:
                     summary['excess'] = quantify_excess(beyond, run, grid)
                     summary['excess_models'] = compare_excess(
                         summary['excess'], run, grid, summary)
+                    add_excess_residuals(summary['excess'],
+                                         summary['excess_models'])
                     log_excess(summary['excess'], summary['excess_models'], log)
+
+                # What was left out of both, for the figure to show. Measured
+                # the same way, so that a point set aside can be seen to have
+                # deserved it - or not.
+                summary['unused'] = quantify_excess(
+                    unused_rows(rows, [grid], beyond), run, grid)
             except Exception as e:
                 log(f'  infrared excess failed: {type(e).__name__}: {e}')
 
@@ -1454,34 +1606,6 @@ PER_AA = 1e-4
 EXCESS_COLOUR = '#c0392b'
 
 
-def _excess_curve(models, wave_um):
-    """The fitted excess shape over a wavelength range, or None.
-
-    Drawn at the best node rather than at the marginal means, for the reason
-    the photosphere is drawn at one posterior row: a temperature and an
-    amplitude taken from two different places on the likelihood are not a
-    shape that fits anything.
-    """
-    if not models or models.get('preferred') == 'none':
-        return None
-
-    reference = models['reference_um']
-    wave = np.asarray(wave_um, dtype=float)
-
-    if models['preferred'] == 'freefree':
-        best = models['freefree']
-        flux = best['amplitude_best'] * (wave / reference) ** -(best['alpha_best'] + 2)
-    else:
-        best = models['blackbody']
-        t = best['t_dust_best']
-        unit = float(planck(reference, t)) * float(modbb_factor(reference))
-        if not unit > 0:
-            return None
-        flux = best['amplitude_best'] * planck(wave, t) * modbb_factor(wave) / unit
-
-    return wave, flux
-
-
 def _excess_label(models):
     """What the drawn excess shape is, in a few words for a legend."""
     if not models or models.get('preferred') == 'none':
@@ -1543,6 +1667,7 @@ def draw_sed(run, grid, summary, path, name=None, colour=GRID_COLOURS[0]):
     # are drawn because they are the reason the fit was told to leave them
     # out: an excess is a statement about the photosphere as much as the fit is.
     beyond = [e for e in (summary.get('excess') or []) if e['quantified']]
+    left = [e for e in (summary.get('unused') or []) if e['quantified']]
     models = summary.get('excess_models')
 
     filename = os.path.join(path, f'sed_{name or run["grid"]}.png')
@@ -1566,14 +1691,31 @@ def draw_sed(run, grid, summary, path, name=None, colour=GRID_COLOURS[0]):
         top.errorbar(wave, flux, err, fmt='o', ms=4, color='k', ecolor='k',
                      elinewidth=1, capsize=2, label='photometry')
 
+        # The photosphere where the fit was not shown it, which is the same
+        # statement for a point measured as an excess and one left out of both
+        if beyond or left:
+            aw = np.array([e['wave_um'] for e in beyond + left])
+            am = np.array([e['model'] for e in beyond + left]) * PER_AA
+            top.plot(aw, am, 'd', mfc='none', ms=7, mew=1.2, color=colour,
+                     ls='none', label='photosphere, not fitted here')
+
+        if left:
+            lw = np.array([e['wave_um'] for e in left])
+            lf = np.array([e['observed'] for e in left]) * PER_AA
+            le = np.array([e['observed_err'] for e in left]) * PER_AA
+
+            # Hollow, because it is the photometry marker and this is a
+            # measurement the fit never saw
+            top.errorbar(lw, lf, le, fmt='o', ms=5, mfc='none', color='0.45',
+                         ecolor='0.45', elinewidth=1, capsize=2,
+                         label='left out of both')
+
         if beyond:
             bw = np.array([e['wave_um'] for e in beyond])
             bf = np.array([e['observed'] for e in beyond]) * PER_AA
             be = np.array([e['observed_err'] for e in beyond]) * PER_AA
             bm = np.array([e['model'] for e in beyond]) * PER_AA
 
-            top.plot(bw, bm, 'd', mfc='none', ms=7, mew=1.2, color=colour,
-                     ls='none', label='photosphere, not fitted here')
             top.errorbar(bw, bf, be, fmt='s', ms=5, color=EXCESS_COLOUR,
                          ecolor=EXCESS_COLOUR, elinewidth=1, capsize=2,
                          label='beyond the fit')
@@ -1582,16 +1724,17 @@ def draw_sed(run, grid, summary, path, name=None, colour=GRID_COLOURS[0]):
             # function we have in closed form, so drawing it between the bands
             # claims nothing that was not fitted. Dashed, because on its own it
             # is a component and not a model of the measurement.
-            curve = _excess_curve(models, np.geomspace(wave[-1], bw[-1] * 1.3, 200))
+            span_um = np.geomspace(wave[-1], bw[-1] * 1.3, 200)
+            curve = excess_flux(models, span_um)
             if curve is not None:
-                top.plot(curve[0], curve[1] * PER_AA, '--', lw=1.3,
+                top.plot(span_um, curve * PER_AA, '--', lw=1.3,
                          color=EXCESS_COLOUR, alpha=0.8,
                          label=_excess_label(models))
 
                 # And the two of them together at each band, which is what the
                 # measurement is to be read against
-                at = _excess_curve(models, bw)
-                top.plot(bw, bm + at[1] * PER_AA, 'D', mfc='none', ms=10,
+                top.plot(bw, bm + excess_flux(models, bw) * PER_AA,
+                         'D', mfc='none', ms=10,
                          mew=1.4, color=EXCESS_COLOUR, ls='none',
                          label='photosphere + excess')
 
@@ -1624,37 +1767,57 @@ def draw_sed(run, grid, summary, path, name=None, colour=GRID_COLOURS[0]):
         turn = wave[0] * (wave[-1] / wave[0]) ** 0.75
         for n, (w, r, band) in enumerate(zip(wave, residual, bands)):
             if abs(r) >= 3:
-                left = w > turn
+                inward = w > turn
                 low.annotate(band, (w, r), fontsize=7, color='0.3',
                              textcoords='offset points', va='center',
-                             ha='right' if left else 'left',
-                             xytext=(-5 if left else 5, 5 if n % 2 else -10))
+                             ha='right' if inward else 'left',
+                             xytext=(-5 if inward else 5, 5 if n % 2 else -10))
 
         # The excess sigmas belong in this panel, but they are tens where the
         # fitted ones are ones, and letting them set the scale would flatten
         # the residuals the photosphere is judged on. So the scale stays with
         # the fit, and an excess off the top is marked at the edge by how far.
-        if beyond:
+        if beyond or left:
             span = max(3.0, 1.25 * float(np.max(np.abs(residual))),
                        1.25 * float(np.max(envelope)))
             low.set_ylim(-span, span)
 
-            for e in beyond:
-                sigma = e['sigma']
-                inside = min(max(sigma, -span * 0.92), span * 0.92)
-                low.plot([e['wave_um']], [inside], marker='s', ms=5,
-                         color=EXCESS_COLOUR, zorder=4,
-                         clip_on=abs(sigma) <= span)
-                if abs(sigma) > span:
-                    # Inside the axes, since the panel above starts where this
-                    # one ends and there is nowhere outside to write
-                    low.annotate(f'{sigma:+.0f}', (e['wave_um'], inside),
-                                 fontsize=7, color=EXCESS_COLOUR,
-                                 textcoords='offset points', ha='center',
-                                 va='bottom' if sigma < 0 else 'top',
-                                 xytext=(0, 6 if sigma < 0 else -6))
+            def mark(entries, colour, marker, face=None):
+                for e in entries:
+                    sigma = e['sigma']
+                    inside = min(max(sigma, -span * 0.92), span * 0.92)
+                    low.plot([e['wave_um']], [inside], marker=marker, ms=5,
+                             color=colour, mfc=face or colour, zorder=4,
+                             clip_on=abs(sigma) <= span)
+                    if abs(sigma) > span:
+                        # Inside the axes, since the panel above starts where
+                        # this one ends and there is nowhere outside to write
+                        low.annotate(f'{sigma:+.0f}', (e['wave_um'], inside),
+                                     fontsize=7, color=colour,
+                                     textcoords='offset points', ha='center',
+                                     va='bottom' if sigma < 0 else 'top',
+                                     xytext=(0, 6 if sigma < 0 else -6))
 
-        low.legend(fontsize=7.5, frameon=False, loc='upper left')
+            mark(left, '0.45', 'o', face='none')
+            mark(beyond, EXCESS_COLOUR, 's')
+
+            # And what the fitted shape leaves, drawn as the open diamond the
+            # total model carries above, so the two panels say the same thing
+            # with the same marker: the filled square is the excess, the open
+            # diamond is what is left of it once the shape is taken off.
+            mark([dict(e, sigma=e['fit_sigma']) for e in beyond
+                  if e.get('fit_sigma') is not None],
+                 EXCESS_COLOUR, 'D', face='none')
+
+        if beyond and any(e.get('fit_sigma') is not None for e in beyond):
+            low.plot([], [], 's', ms=5, color=EXCESS_COLOUR, ls='none',
+                     label='from the photosphere')
+            low.plot([], [], 'D', ms=5, mfc='none', color=EXCESS_COLOUR,
+                     ls='none', label='from it and the excess')
+
+        # Along the bottom, which is the one strip of this panel that is
+        # reliably empty - the residuals it draws cluster about zero
+        low.legend(fontsize=7.5, frameon=False, loc='lower center', ncol=3)
 
         low.set_xlabel(r'Wavelength, $\mu$m')
         low.set_ylabel(r'Residual, $\sigma$', fontsize=9)
