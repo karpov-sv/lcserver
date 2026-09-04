@@ -1315,6 +1315,14 @@ def spectra_source(name):
     return (cache, str(name).lower()) if cache else None
 
 
+# How far the nearest node of a grid's spectra may be from the fit and still be
+# drawn as it. A tenth of a dex in temperature is a quarter of the way between
+# any two nodes of the coarsest grid here; a dex of gravity or of metallicity
+# changes a spectrum less than that does. Past these there is a line to draw
+# and it is not this one.
+SPECTRUM_REACH = {'teff': 0.04, 'logg': 1.0, 'feh': 1.0}
+
+
 def has_spectra(name):
     """Whether spectra can be had for this grid, from wherever they are.
 
@@ -1356,6 +1364,12 @@ def model_spectrum(name, teff, logg, feh):
     The distance is measured in what changes a spectrum: a fractional
     temperature, and a half dex of gravity or of metallicity. Teff first, since
     a hundred kelvin does more to the shape than a whole node of the others.
+
+    Nearest is not the same as near. A grid's spectra need not cover all of its
+    cube - what is published at full wavelength is often a subset of what was
+    computed - and the nearest node to a fit outside that subset can be a
+    thousand kelvin away. Drawn, it would be a line that is not the model, so
+    beyond SPECTRUM_REACH nothing is returned and the caller says as much.
     """
     import h5py
 
@@ -1377,6 +1391,12 @@ def model_spectrum(name, teff, logg, feh):
                     + ((g - logg) / 0.5) ** 2
                     + ((z - feh) / 0.5) ** 2)
         i = int(np.argmin(distance))
+
+        # Near enough to be the model, or nothing at all
+        if (abs(np.log10(t[i] / teff)) > SPECTRUM_REACH['teff']
+                or abs(g[i] - logg) > SPECTRUM_REACH['logg']
+                or abs(z[i] - feh) > SPECTRUM_REACH['feh']):
+            return None
 
         return {'wave_um': np.asarray(node['wavelength'][:], dtype=float),
                 'flux': np.asarray(node['flux'][i], dtype=float),
@@ -1709,7 +1729,9 @@ def target_sed_fit(config, basepath='.', outpath=None, selection=None,
         if spectrum is None:
             # Worth saying: a reader who has seen a line under one grid will
             # wonder where it went under the next
-            log(f"\n  no spectra cached for {grid.name} - it is drawn per band"
+            near = 'no spectra' if not has_spectra(grid.name) else \
+                'no spectrum near this fit' 
+            log(f"\n  {near} for {grid.name} - it is drawn per band"
                 f" and not as a line")
             continue
 

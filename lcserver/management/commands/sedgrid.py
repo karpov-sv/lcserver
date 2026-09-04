@@ -48,6 +48,11 @@ class Command(BaseCommand):
                  "one file, not the per-model originals")
 
         parser.add_argument(
+            '--ingest-btsettl', dest='btsettl', default=None,
+            help="BT-Settl's medium-resolution grid file - its spectra only, "
+                 'the cube here already being the wider grid')
+
+        parser.add_argument(
             '--ingest-bosz', dest='bosz', default=None,
             help='A BOSZ download - a directory per metallicity of one file '
                  'per model, and the wavelength grid beside them')
@@ -95,6 +100,9 @@ class Command(BaseCommand):
 
         if options['cdbs']:
             return self.ingest_cdbs(options)
+
+        if options['btsettl']:
+            return self.ingest_btsettl(options)
 
         if options['bosz']:
             return self.ingest_bosz(options)
@@ -194,6 +202,32 @@ class Command(BaseCommand):
                               (10000., 4.0, 0.0), (10000., 3.0, -0.5)))
 
         self.written(name, cube, spectra, target)
+
+    def ingest_btsettl(self, options):
+        """Write BT-Settl's spectra beside the cube that is already here.
+
+        Only the spectra: the grid file covers rather more than half of the
+        cube's models, and a cube from it would lose the cool and metal-poor
+        ends that are the reason for having this grid at all.
+        """
+        from lcserver.ingest import btsettl
+
+        source = options['btsettl']
+        if not os.path.isfile(source):
+            raise CommandError(f'{source} is not a file')
+
+        target, name = self.where(options, default='btsettl')
+        spectra = os.path.join(target, f'{name}.spectra.h5')
+
+        if os.path.exists(spectra) and not options['force']:
+            raise CommandError(f'{spectra} is already there - --force to '
+                               f'write over it')
+
+        btsettl.ingest(source, spectra, name=name, verbose=self.stdout.write)
+
+        self.stdout.write(self.style.SUCCESS(
+            f'\n{name}: {os.path.getsize(spectra) / 1e6:.1f} MB of spectra '
+            f'in {target}'))
 
     def ingest_bosz(self, options):
         """Turn a BOSZ download into a cube and a spectrum file.

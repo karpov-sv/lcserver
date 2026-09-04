@@ -57,7 +57,19 @@ def write(cube_path, spectra_path, name, teff, logg, feh, fluxes, bands,
     if wave_um is None or spectra is None:
         return
 
-    with h5py.File(spectra_path, 'w') as h:
+    write_spectra(spectra_path, name, teff, logg, feh, wave_um, spectra,
+                  source=source)
+
+
+def write_spectra(path, name, teff, logg, feh, wave_um, spectra, source=None):
+    """The spectra of a grid, on their own.
+
+    A grid's spectra need not be the same models as its cube: what a group
+    publishes at full wavelength is often a subset of what it computed, and the
+    subset is worth having on its own terms. Whoever reads them back finds the
+    node nearest what is asked and refuses it if it is not near.
+    """
+    with h5py.File(path, 'w') as h:
         h.attrs['name'] = name
         if source:
             h.attrs['source'] = source

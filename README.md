@@ -289,6 +289,8 @@ python manage.py sedgrid --ingest-cdbs ~/tmp/kurucz/.../ck04models --to data/gri
 python manage.py sedgrid --ingest-koester ~/Downloads/models_.../koester2 \
     --to data/grids
 python manage.py sedgrid --ingest-bosz ~/tmp/bosz --to data/grids
+python manage.py sedgrid --ingest-btsettl ~/Downloads/bt-settl.medres.grid.fits \
+    --to data/grids
 python manage.py sedgrid --scatter            # or --scatter btsettl bosz
 ```
 
@@ -311,6 +313,14 @@ and astroARIADNE's cubes for both came from them and stop at 12000 K, which is
 less than half of either: 7618 and 3808 models reaching 50000 K. Past about ten
 microns the atlases are a Rayleigh-Jeans tail rather than a model, so those
 grids are written believing themselves only to 8.5 µm.
+
+`--ingest-btsettl` writes BT-Settl's spectra from the medium-resolution grid
+published for [pystellibs](https://github.com/mfouesneau/pystellibs), which run
+from a nanometre to a millimetre where astroARIADNE's cache stopped at 4.63 µm.
+Only the spectra: that file covers 8132 of the cube's 14183 models, starting at
+2600 K where the cube starts at 400, so a cube from it would cost the cool and
+metal-poor ends. The two files are allowed to hold different models, and a fit
+outside the spectra is drawn per band as it was before.
 
 `--ingest-bosz` reads a [BOSZ](https://archive.stsci.edu/hlsp/bosz) download.
 That library is organised by rather more than the three axes a fit varies here —
@@ -375,6 +385,7 @@ lcserver/
 │   ├── tlusty.py     a TLUSTY grid, out of its merged file for Cloudy
 │   ├── cdbs.py       the Kurucz and Castelli atlases, as STScI ships them
 │   ├── bosz.py       a BOSZ download, one composition of the library
+│   ├── btsettl.py    BT-Settl's medium-resolution spectra, from their grid file
 │   ├── koester.py    white-dwarf models, one file each, as SVO hands them out
 │   └── scatter.py    a lattice rewritten as the models it actually holds
 ├── surveys.py      the registry - metadata, bands, form fields, layout
