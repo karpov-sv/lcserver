@@ -13,7 +13,7 @@ from django.conf import settings
 import os
 
 from lcserver.processing import sedfit
-from lcserver.ingest import ariadne
+from lcserver.ingest import ariadne, store
 
 
 class Command(BaseCommand):
@@ -48,6 +48,12 @@ class Command(BaseCommand):
                  "one file, not the per-model originals")
 
         parser.add_argument(
+            '--ingest-cdbs', dest='cdbs', default=None,
+            help='An atlas in the layout STScI distributes them in - a '
+                 'k93models or ck04models directory, a subdirectory per '
+                 'metallicity and one FITS per temperature')
+
+        parser.add_argument(
             '--name', dest='name', default=None,
             help='What to call it (default: from the download directory)')
 
@@ -69,6 +75,9 @@ class Command(BaseCommand):
 
         if options['tlusty']:
             return self.ingest_tlusty(options)
+
+        if options['cdbs']:
+            return self.ingest_cdbs(options)
 
         if options['show'] or not options['split']:
             return self.show()
@@ -125,7 +134,38 @@ class Command(BaseCommand):
                       verbose=self.stdout.write)
 
         if installed and os.path.abspath(installed) != os.path.abspath(cube):
-            tlusty.compare(cube, installed, verbose=self.stdout.write)
+            store.compare(cube, installed, verbose=self.stdout.write)
+
+        self.written(name, cube, spectra, target)
+
+    def ingest_cdbs(self, options):
+        """Turn an atlas in STScI's layout into a cube and a spectrum file.
+
+        The cubes already installed for these were built from the same atlases
+        and stop at 12000 K, which is less than half of either; the comparison
+        afterwards is over the part they share.
+        """
+        from lcserver.ingest import cdbs
+
+        source = options['cdbs']
+        if not os.path.isdir(source):
+            raise CommandError(f'{source} is not a directory')
+
+        known, label, description = cdbs.atlas_name(source)
+        target, name = self.where(options, default=known)
+        cube, spectra = self.paths(target, name, options['force'])
+
+        installed = (sedfit.grid_registry().get(name) or {}).get('path')
+
+        cdbs.ingest(source, cube, spectra, name=name,
+                    label=options['label'] or label,
+                    description=options['description'] or description,
+                    verbose=self.stdout.write)
+
+        if installed and os.path.abspath(installed) != os.path.abspath(cube):
+            store.compare(cube, installed, verbose=self.stdout.write,
+                          at=((5000., 4.0, 0.0), (8000., 4.0, 0.0),
+                              (10000., 4.0, 0.0), (10000., 3.0, -0.5)))
 
         self.written(name, cube, spectra, target)
 

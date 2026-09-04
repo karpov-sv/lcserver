@@ -284,6 +284,8 @@ python manage.py sedgrid --ingest-powr ~/Downloads/griddl-gal-ob-vd3-sed \
     --to data/grids --label 'PoWR Gal OB Vd3' --description 'Galactic OB stars'
 python manage.py sedgrid --ingest-tlusty ~/Downloads/obstar_merged_3d.ascii \
     --to data/grids
+python manage.py sedgrid --ingest-cdbs ~/tmp/kurucz/.../k93models --to data/grids
+python manage.py sedgrid --ingest-cdbs ~/tmp/kurucz/.../ck04models --to data/grids
 ```
 
 `--ingest-powr` converts a [PoWR](https://www.astro.physik.uni-potsdam.de/PoWR/)
@@ -297,6 +299,14 @@ single merged file it is published in for Cloudy - which is what astroARIADNE's
 own TLUSTY cube was built from, so the new one is compared against the installed
 one band by band and the ratios printed. What it adds is the spectra, which that
 cube has none of, and the low-gravity edge a lattice with holes in it refuses.
+
+`--ingest-cdbs` reads an atlas in the layout STScI distributes them in — a
+directory per metallicity, one FITS per temperature, a flux column per gravity.
+The 1993 Kurucz atlas and the 2004 Castelli & Kurucz one are both this shape,
+and astroARIADNE's cubes for both came from them and stop at 12000 K, which is
+less than half of either: 7618 and 3808 models reaching 50000 K. Past about ten
+microns the atlases are a Rayleigh-Jeans tail rather than a model, so those
+grids are written believing themselves only to 8.5 µm.
 
 `--list` says what the grid directory holds, where each grid's spectra are, and
 which of them are offered on the fitting form — a grid is offered when it can
@@ -331,7 +341,8 @@ lcserver/
 │   ├── store.py      the two files a grid is, written out
 │   ├── ariadne.py    astroARIADNE's grids, laid out as this reads them
 │   ├── powr.py       a PoWR download, one file per model at ten parsecs
-│   └── tlusty.py     a TLUSTY grid, out of its merged file for Cloudy
+│   ├── tlusty.py     a TLUSTY grid, out of its merged file for Cloudy
+│   └── cdbs.py       the Kurucz and Castelli atlases, as STScI ships them
 ├── surveys.py      the registry - metadata, bands, form fields, layout
 ├── celery_tasks.py task generation, and the canvas a full run is built into
 ├── views.py        pages, file browser

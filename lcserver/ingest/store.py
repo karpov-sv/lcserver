@@ -13,6 +13,8 @@ because the directory they sit in is the register of what is installed and
 nothing about a grid is written down anywhere else.
 """
 
+import os
+
 import numpy as np
 
 import h5py
@@ -60,3 +62,37 @@ def write(cube_path, spectra_path, name, teff, logg, feh, fluxes, bands,
         h.create_dataset('z', data=np.asarray(feh, dtype='float64'))
         h.create_dataset('flux', data=np.asarray(spectra, dtype='float32'),
                          chunks=(1, len(wave_um)), compression='gzip')
+
+
+def compare(cube_path, against, at=None, bands=None, verbose=None):
+    """A cube just written against the one it replaces, band by band.
+
+    Several of these grids are read from the very files astroARIADNE built its
+    cubes out of, which is a claim with a number attached: the ratios should be
+    ones. They are printed rather than asserted, since a grid that is genuinely
+    a different computation will differ and that is not a failure.
+    """
+    from ..processing import sedfit
+
+    log = verbose if callable(verbose) else (print if verbose else lambda *a: None)
+
+    bands = bands or ['GROUND_JOHNSON_U', 'GROUND_JOHNSON_V', 'PS1_g',
+                      '2MASS_J', '2MASS_Ks', 'WISE_RSR_W1']
+
+    new = sedfit.Grid(cube_path, name='new')
+    old = sedfit.Grid(against, name='old')
+
+    log(f"\n  against {os.path.basename(against)}:")
+    log(f"    {'Teff':>7}{'logg':>6}{'[Z]':>6}  "
+        + ''.join(f'{b.split("_")[-1]:>9}' for b in bands))
+
+    for teff, logg, feh in at or ((20000., 4.0, 0.0), (30000., 4.0, 0.0),
+                                 (45000., 4.0, 0.0), (30000., 3.0, -0.3)):
+        columns = np.array([new.column[b] for b in bands])
+        mine = new.flux(teff, logg, feh, columns)
+        theirs = old.flux(teff, logg, feh, np.array([old.column[b] for b in bands]))
+
+        ratios = ''.join(
+            f'{a / b:9.4f}' if np.isfinite(a) and np.isfinite(b) and b else f'{"-":>9}'
+            for a, b in zip(mine, theirs))
+        log(f'    {teff:7.0f}{logg:6.2f}{feh:+6.1f}  {ratios}')

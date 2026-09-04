@@ -153,36 +153,3 @@ def ingest(path, cube_path, spectra_path, name, label=None, description=None,
                 reference='https://tlusty.oca.eu/')
 
     return count
-
-
-def compare(cube_path, against, bands=None, verbose=None):
-    """The new cube against the one that was there, band by band.
-
-    The whole reason for reading this file rather than the originals is that it
-    is what the cube already here was built from. That is a claim with a number
-    attached, so the number is printed rather than asserted.
-    """
-    from ..processing import sedfit
-
-    log = verbose if callable(verbose) else (print if verbose else lambda *a: None)
-
-    bands = bands or ['GROUND_JOHNSON_U', 'GROUND_JOHNSON_V', 'PS1_g',
-                      '2MASS_J', '2MASS_Ks', 'WISE_RSR_W1']
-
-    new = sedfit.Grid(cube_path, name='new')
-    old = sedfit.Grid(against, name='old')
-
-    log(f"\n  against {os.path.basename(against)}:")
-    log(f"    {'Teff':>7}{'logg':>6}{'[Z]':>6}  "
-        + ''.join(f'{b.split("_")[-1]:>9}' for b in bands))
-
-    for teff, logg, feh in ((20000., 4.0, 0.0), (30000., 4.0, 0.0),
-                            (45000., 4.0, 0.0), (30000., 3.0, -0.3)):
-        columns = np.array([new.column[b] for b in bands])
-        mine = new.flux(teff, logg, feh, columns)
-        theirs = old.flux(teff, logg, feh, np.array([old.column[b] for b in bands]))
-
-        ratios = ''.join(
-            f'{a / b:9.4f}' if np.isfinite(a) and np.isfinite(b) and b else f'{"-":>9}'
-            for a, b in zip(mine, theirs))
-        log(f'    {teff:7.0f}{logg:6.2f}{feh:+6.1f}  {ratios}')
