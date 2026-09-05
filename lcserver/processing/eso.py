@@ -381,13 +381,12 @@ def target_eso(config, basepath=None, verbose=True, show=False):
     dec = config.get('target_dec')
     sr = float(config.get('eso_sr', ESO_SR))
 
-    log(f"Searching the ESO archive within {sr:.1f} arcsec")
-
     cache_name = f"eso_{ra:.4f}_{dec:.4f}_{sr:.1f}.vot"
 
     with cached_votable_query(cache_name, basepath, log, 'ESO archive',
                               refresh=refresh_cache) as cache:
         if not cache.hit:
+            log(f"within {sr:.1f} arcsec")
             # Today rather than a fixed date, so that a target queried again
             # next year picks up what came out of embargo in between
             found = _query(ra, dec, sr, Time.now().isot)

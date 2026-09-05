@@ -246,13 +246,12 @@ def target_sdss(config, basepath=None, verbose=True, show=False):
     dec = config.get('target_dec')
     sr = min(float(config.get('sdss_sr', SDSS_SR)), SDSS_MAX_SR)
 
-    log(f"Searching SDSS within {sr:.1f} arcsec")
-
     cache_name = f"sdss_{ra:.4f}_{dec:.4f}_{sr:.1f}.vot"
 
     with cached_votable_query(cache_name, basepath, log, 'SDSS spectra',
                               refresh=refresh_cache) as cache:
         if not cache.hit:
+            log(f"within {sr:.1f} arcsec")
             try:
                 found = SDSS.query_region(
                     SkyCoord(ra, dec, unit='deg'), radius=sr * u.arcsec,

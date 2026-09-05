@@ -151,6 +151,7 @@ def _query(catalogue, ra, dec, sr, basepath, log, name, refresh):
     with cached_votable_query(cache_name, basepath, log,
                               f'LAMOST {name} observations', refresh=refresh) as cache:
         if not cache.hit:
+            log(f"within {sr:.1f} arcsec")
             res = Vizier(columns=['**'], row_limit=-1).query_region(
                 SkyCoord(ra, dec, unit='deg'), radius=sr*u.arcsec, catalog=catalogue)
 
@@ -259,8 +260,6 @@ def target_lamost(config, basepath=None, verbose=True, show=False):
     ra = config.get('target_ra')
     dec = config.get('target_dec')
     sr = config.get('lamost_sr', LAMOST_SR)
-
-    log(f"Searching LAMOST within {sr:.1f} arcsec")
 
     lrs = _query(LAMOST_LRS_CATALOGUE, ra, dec, sr, basepath, log, 'lrs', refresh_cache)
     mrs = _query(LAMOST_MRS_CATALOGUE, ra, dec, sr, basepath, log, 'mrs', refresh_cache)

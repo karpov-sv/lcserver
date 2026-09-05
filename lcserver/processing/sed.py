@@ -272,6 +272,7 @@ def _query(ra, dec, sr, basepath, log, refresh):
     with cached_votable_query(cache_name, basepath, log,
                               'VizieR SED photometry', refresh=refresh) as cache:
         if not cache.hit:
+            log(f"within {sr:.1f} arcsec")
             res = requests.get(SED_URL, timeout=180,
                                params={'-c': f'{ra} {dec:+f}', '-c.rs': sr})
 
@@ -873,8 +874,6 @@ def target_sed(config, basepath=None, verbose=True, show=False):
     ra = config.get('target_ra')
     dec = config.get('target_dec')
     sr = float(config.get('sed_sr') or SED_SR)
-
-    log(f"Searching for catalogue photometry within {sr:.1f} arcsec")
 
     table = _query(ra, dec, sr, basepath, log, refresh_cache)
 

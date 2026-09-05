@@ -1041,9 +1041,6 @@ def target_spherex(config, basepath=None, verbose=True, show=False):
     aperture = float(config.get('spherex_aperture') or SPHEREX_APERTURE)
     quality = quality_level(config, 'spherex')
 
-    log(f"Measuring with a {aperture:.1f} px"
-        f" ({aperture * 6.2:.1f} arcsec) aperture, {quality} filtering")
-
     images = _query_images(ra, dec, basepath, log, refresh_cache)
 
     if images is None or not len(images):
@@ -1068,6 +1065,8 @@ def target_spherex(config, basepath=None, verbose=True, show=False):
                               'SPHEREx spectrophotometry',
                               refresh=refresh_cache) as cache:
         if not cache.hit:
+            log(f"aperture radius {aperture:.1f} px"
+                f" ({aperture * 6.2:.1f} arcsec), {quality} filtering")
             results = _measure(urls, ra, dec, quality, aperture, log)
 
             if not results:

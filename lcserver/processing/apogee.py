@@ -243,13 +243,12 @@ def target_apogee(config, basepath=None, verbose=True, show=False):
     dec = config.get('target_dec')
     sr = float(config.get('apogee_sr', APOGEE_SR))
 
-    log(f"Searching APOGEE within {sr:.1f} arcsec")
-
     cache_name = f"apogee_{ra:.4f}_{dec:.4f}_{sr:.1f}.vot"
 
     with cached_votable_query(cache_name, basepath, log, 'APOGEE observations',
                               refresh=refresh_cache) as cache:
         if not cache.hit:
+            log(f"within {sr:.1f} arcsec")
             try:
                 found = Vizier(columns=APOGEE_COLUMNS, row_limit=-1).query_region(
                     f"{ra} {dec}", radius=sr * u.arcsec, catalog=APOGEE_CATALOGUE)

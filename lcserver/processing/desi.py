@@ -239,6 +239,12 @@ def target_desi(config, basepath=None, verbose=True, show=False):
     dec = config.get('target_dec')
     sr = config.get('desi_sr', DESI_SR)
 
+    # A whole line to itself, where every other source logs this detail inside
+    # its cache block as a continuation of "Querying ...". The search for what
+    # DESI has at a position is not cached - SPARCL is asked afresh every run -
+    # so there is no such line here to continue, and without this one the log
+    # would open on whatever the search came back with and never say what was
+    # looked for.
     log(f"Searching DESI within {sr:.1f} arcsec")
 
     matches = _find(ra, dec, sr, log)

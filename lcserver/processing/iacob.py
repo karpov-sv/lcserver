@@ -461,8 +461,6 @@ def target_iacob(config, basepath=None, verbose=True, show=False):
     dec = config.get('target_dec')
     sr = float(config.get('iacob_sr', IACOB_SR))
 
-    log(f"Searching IACOB within {sr:.0f} arcsec")
-
     cache_name = f"iacob_{ra:.4f}_{dec:.4f}_{sr:.0f}.vot"
 
     session = None
@@ -470,6 +468,7 @@ def target_iacob(config, basepath=None, verbose=True, show=False):
     with cached_votable_query(cache_name, basepath, log, 'IACOB',
                               refresh=refresh_cache) as cache:
         if not cache.hit:
+            log(f"within {sr:.0f} arcsec")
             found, session = _query(ra, dec, sr, log)
 
             if found is None:
