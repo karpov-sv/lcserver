@@ -28,6 +28,7 @@ The module is organized into separate files:
 - lamost.py: LAMOST DR11 spectra
 - apogee.py: APOGEE DR17 near-infrared spectra
 - eso.py: reduced spectra from the ESO archive
+- iacob.py: continuum normalised spectra of massive OB stars
 - desi.py: DESI DR1 spectra
 - spherex.py: SPHEREx QR2 near-infrared spectrophotometry
 - sed.py: broadband catalogue photometry from VizieR, as an SED
@@ -124,6 +125,7 @@ from .sdss import target_sdss
 from .lamost import target_lamost
 from .apogee import target_apogee
 from .eso import target_eso
+from .iacob import target_iacob
 from .desi import target_desi
 from .spherex import target_spherex
 from .sed import target_sed
