@@ -211,6 +211,13 @@ def _value(row, key):
     about_links=[
         ('LAMOST DR11', 'https://www.lamost.org/dr11/'),
     ],
+    acknowledgement=(
+        "Guoshoujing Telescope (the Large Sky Area Multi-Object Fiber "
+        "Spectroscopic Telescope LAMOST) is a National Major Scientific "
+        "Project built by the Chinese Academy of Sciences. Funding for the "
+        "project has been provided by the National Development and Reform "
+        "Commission. LAMOST is operated and managed by the National "
+        "Astronomical Observatories, Chinese Academy of Sciences."),
     kind=KIND_SPECTROSCOPY,
     # Spectra rather than a light curve, so no lc_mode is declared
     spectrum_files='lamost_*.txt',

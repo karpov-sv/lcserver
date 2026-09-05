@@ -473,6 +473,7 @@ def register_lightcurve_source(
     lc_short=False,
     about=None,
     about_links=None,
+    acknowledgement=None,
 ):
     """
     Register a lightcurve-only source (no processing function).
@@ -542,11 +543,9 @@ def register_lightcurve_source(
         'order': 999,  # Sort to end
         # A lightcurve is what these are for, whoever wrote it
         'kind': KIND_PHOTOMETRY,
-        # These have no acknowledgement of their own: whoever fetched the
-        # file is the one with something to credit
         'about': about,
         'about_links': about_links or [],
-        'acknowledgement': None,
+        'acknowledgement': acknowledgement,
         # Lightcurve metadata
         'votable_file': votable_file,
         'lc_mag_column': lc_mag_column,

@@ -43,13 +43,18 @@
    }
 
    .archive-ack-label {
-     display: block;
      font-size: 0.85em;
      font-weight: 600;
      text-transform: uppercase;
      letter-spacing: 0.05em;
      color: var(--bs-body-color);
-     margin-bottom: 0.15rem;
+     cursor: pointer;
+   }
+
+   /* The marker is the only thing saying the text is there to be opened, so
+      it keeps the label's colour rather than the muted one around it */
+   .archive-ack-label::marker {
+     color: var(--bs-body-color);
    }
   </style>
 {% endblock %}
@@ -91,10 +96,17 @@
             {% endif %}
 
             {% if entry.acknowledgement %}
-              <div class="archive-ack">
-                <span class="archive-ack-label">Required acknowledgement</span>
-                {{ entry.acknowledgement }}
-              </div>
+              {% comment %}
+                Folded away rather than laid out: SDSS and DESI ask for a
+                funding paragraph of nearly two thousand characters, and one
+                of those in a card leaves its neighbour a column of white
+                space. The summary is the part that matters at a glance -
+                that there is one, and that it is required.
+              {% endcomment %}
+              <details class="archive-ack">
+                <summary class="archive-ack-label">Required acknowledgement</summary>
+                <div class="mt-1">{{ entry.acknowledgement }}</div>
+              </details>
             {% endif %}
           </div>
         </div>

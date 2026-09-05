@@ -985,6 +985,13 @@ def _preview(results, basepath, name, show, log):
         ('SPHEREx', 'https://spherex.caltech.edu/'),
         ('SPHEREx at IRSA', 'https://irsa.ipac.caltech.edu/Missions/spherex.html'),
     ],
+    acknowledgement=(
+        "This publication makes use of data products from the "
+        "Spectro-Photometer for the History of the Universe, Epoch of "
+        "Reionization and Ices Explorer (SPHEREx), which is a joint project "
+        "of the Jet Propulsion Laboratory and the California Institute of "
+        "Technology, and is funded by the National Aeronautics and Space "
+        "Administration."),
     kind=KIND_SPECTROSCOPY,
     # Spectrophotometry rather than a light curve, so no lc_mode is declared.
     #

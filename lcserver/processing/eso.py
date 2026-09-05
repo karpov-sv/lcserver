@@ -348,6 +348,13 @@ def _chosen(found, log):
         ('ESO Science Portal', 'https://archive.eso.org/scienceportal/home'),
         ('ESO Science Archive', 'http://archive.eso.org/cms.html'),
     ],
+    acknowledgement=(
+        "Credit to the ESO provenance of the data must be acknowledged and "
+        "the file headers preserved. Publications making use of processed "
+        "data downloaded from the archive must include: \"Based on data "
+        "obtained from the ESO Science Archive Facility with DOI(s): "
+        "https://doi.org/10.18727/archive/NNN\", with the DOI of the data "
+        "actually used."),
     kind=KIND_SPECTROSCOPY,
     spectrum_files='eso_*.txt',
     spectrum_palette=['#1a5276', '#1f618d', '#2471a3', '#2e86c1', '#5499c7',

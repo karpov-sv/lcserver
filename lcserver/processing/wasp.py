@@ -134,6 +134,12 @@ def _download_lightcurve(name, log):
         ('SuperWASP archive', 'https://wasp.cerit-sc.cz/'),
         ('WASP project', 'https://wasp-planets.net/'),
     ],
+    acknowledgement=(
+        "This paper makes use of data from the DR1 of the WASP data "
+        "(Butters et al. 2010) as provided by the WASP consortium, and "
+        "computational resources supplied by the project \"e-Infrastruktura "
+        "CZ\" (e-INFRA CZ LM2018140) supported by the Ministry of Education, "
+        "Youth and Sports of the Czech Republic."),
     # Lightcurve metadata
     votable_file='wasp.vot',
     lc_bands=[

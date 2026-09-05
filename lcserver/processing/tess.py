@@ -80,6 +80,13 @@ TESS_OWN_READERS = {'TEQUILA': download_tequila_lightcurve,
         ('TESS at MAST', 'https://archive.stsci.edu/missions-and-data/tess'),
         ('TESS mission', 'https://tess.mit.edu/'),
     ],
+    acknowledgement=(
+        "This paper includes data collected with the TESS mission, obtained "
+        "from the MAST data archive at the Space Telescope Science "
+        "Institute (STScI). Funding for US Institutions for the TESS "
+        "mission is provided by the NASA Explorer Program. STScI is "
+        "operated by the Association of Universities for Research in "
+        "Astronomy, Inc., under NASA contract NAS5-26555."),
     # Lightcurve metadata
     votable_file='tess_lc_*.vot',
     lc_flux_column='flux',

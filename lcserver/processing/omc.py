@@ -176,6 +176,13 @@ def _download_lightcurve(session, obj_id, lct_id):
     about_links=[
         ('OMC Archive', 'https://sdc.cab.inta-csic.es/omc/'),
     ],
+    acknowledgement=(
+        "Based on data from the OMC Archive at CAB (INTA-CSIC), "
+        "pre-processed by ISDC and further processed by the OMC Team at "
+        "CAB. The OMC Archive is part of the Spanish Virtual Observatory "
+        "project. Both are funded by MCIN/AEI/10.13039/501100011033 through "
+        "grants PID2020-112949GB-I00 and PID2019-107061GB-C61, "
+        "respectively."),
     # Lightcurve metadata
     votable_file='omc.vot',
     lc_bands=[

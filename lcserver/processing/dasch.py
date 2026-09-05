@@ -101,6 +101,10 @@ DASCH_MAX_LOCAL_RMS = 0.4
         ('DASCH', 'https://dasch.cfa.harvard.edu/'),
         ('Starglass API', 'https://starglass.cfa.harvard.edu/'),
     ],
+    acknowledgement=(
+        "The DASCH project at Harvard is grateful for partial support from "
+        "NSF grants AST-0407380, AST-0909073 and AST-1313370, which should "
+        "be acknowledged in all papers making use of DASCH data."),
     # Lightcurve metadata
     votable_file='dasch.vot',
     lc_bands=[
