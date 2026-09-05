@@ -35,6 +35,8 @@ from stdpipe import plots
 from ..surveys import survey_source, get_output_files, KIND_SPECTROSCOPY
 from .utils import (SourceError, cleanup_paths, cached_votable_query,
                     break_at_gaps, write_spectrum,
+                    quality_field, quality_level,
+                    QUALITY_STANDARD, QUALITY_RELAXED, QUALITY_PUBLISHED,
                     SPECTRUM_FLUX_UNIT, SPECTRUM_WAVELENGTH_UNIT)
 
 
@@ -89,6 +91,33 @@ ESO_COLUMNS = [
 # the wavelength always does, but not always the same one - X-shooter reports
 # nanometres where HARPS reports Angstrom - so it is read rather than assumed.
 ESO_WAVELENGTH = 'WAVE'
+
+# What the file says about each pixel, where it says anything. Both are
+# optional in the Phase 3 spectrum data model and only some instruments write
+# them: NIRPS and X-shooter do, UVES and HARPS do not, and a file without them
+# is simply taken as it comes.
+#
+#   QUAL - nonzero where the pipeline flagged the pixel
+#   SNR  - the signal to noise achieved at it
+ESO_QUALITY = 'QUAL'
+ESO_SNR = 'SNR'
+
+# The signal to noise a pixel needs to count as a measurement of the star.
+#
+# What this is for is the deep telluric bands. Between the J and H windows the
+# water vapour lets almost nothing through, and what the pipeline extracts
+# there is sky subtraction residual scattering about zero - half of it
+# negative, none of it light from the target. Those pixels are not flagged:
+# the extraction worked, there was simply nothing to extract. On one NIRPS
+# spectrum of HR Car they are three per cent of the points and reach a third
+# of the continuum below zero, and binning ten pixels into one spreads them
+# into the neighbouring real signal.
+#
+# Three separates them cleanly rather than finely. Across that spectrum the
+# pixels that came out negative have a median signal to noise of 2.6 and the
+# ones that came out positive 69, so anything between about one and ten cuts
+# in the same place; three leaves nothing negative behind.
+ESO_MIN_SNR = 3.0
 
 # The flux column, in the order to look for it. A product with no flux scale
 # carries its counts under FLUX_REDUCED instead of FLUX - that is how the
@@ -203,7 +232,54 @@ def _bin(table, maxpoints=ESO_MAX_POINTS):
     return binned, factor
 
 
-def _fetch(dp_id):
+def _keep(columns, data, level, log, dp_id):
+    """Which pixels of a spectrum to take, at the level asked for.
+
+    Three answers, and two columns to give them with. QUAL is the pipeline's
+    own word on a pixel; SNR is what it achieved there. Where a file carries
+    neither - UVES and HARPS carry neither - every level does the same thing
+    and this says nothing, there being nothing to say.
+
+        standard   the pipeline's flags, and a floor on the signal to noise
+        relaxed    the flags alone, so a noisy measurement is still a
+                   measurement and only what the pipeline condemned goes
+        published  neither, and the file as the archive wrote it
+
+    Returns the mask, or None where nothing is to be cut.
+    """
+    if level == QUALITY_PUBLISHED:
+        return None
+
+    quality = (np.asarray(data[ESO_QUALITY]).ravel()
+               if ESO_QUALITY in columns else None)
+    snr = (np.asarray(data[ESO_SNR], dtype=float).ravel()
+           if ESO_SNR in columns else None)
+
+    if quality is None and snr is None:
+        return None
+
+    keep = np.ones(len(data[ESO_WAVELENGTH].ravel()), dtype=bool)
+    said = []
+
+    if quality is not None:
+        keep &= quality == 0
+        said.append(f"{int(np.sum(quality != 0))} flagged")
+
+    if snr is not None and level == QUALITY_STANDARD:
+        # Not >= : a pixel with no signal to noise at all recorded is one the
+        # pipeline could say nothing about
+        keep &= snr > ESO_MIN_SNR
+        said.append(f"{int(np.sum(~(snr > ESO_MIN_SNR)))} below S/N"
+                    f" {ESO_MIN_SNR:.0f}")
+
+    if said:
+        log(f"  {dp_id}: dropping " + ', '.join(said)
+            + f" of {len(keep)} pixels")
+
+    return keep
+
+
+def _fetch(dp_id, level, log):
     """One spectrum, as wavelength in Angstrom and flux as the file has it.
 
     Returns the table together with whether the flux is on a physical scale.
@@ -278,6 +354,14 @@ def _fetch(dp_id):
         # drawing a notch to the axis.
         keep = np.isfinite(table['wavelength']) & (np.asarray(table['flux']) != 0)
 
+        # Before the binning, not after: ten pixels are averaged into one, so
+        # a block straddling the edge of a telluric band would carry the
+        # residual out into the real signal beside it
+        flagged = _keep(columns, data, level, log, dp_id)
+
+        if flagged is not None and len(flagged) == len(keep):
+            keep &= flagged
+
         table = table[keep]
 
         table, factor = _bin(table)
@@ -335,6 +419,11 @@ def _chosen(found, log):
             'initial': ESO_SR,
             'required': False,
         },
+        'eso_quality': quality_field({
+            QUALITY_STANDARD: 'Flagged pixels, and those below S/N 3',
+            QUALITY_RELAXED: 'Flagged pixels only',
+            QUALITY_PUBLISHED: 'None - every pixel as the archive wrote it',
+        }),
     },
     help_text='Reduced spectra from the ESO archive - UVES, X-shooter, FEROS, '
               'HARPS, GIRAFFE and the rest',
@@ -380,6 +469,7 @@ def target_eso(config, basepath=None, verbose=True, show=False):
     ra = config.get('target_ra')
     dec = config.get('target_dec')
     sr = float(config.get('eso_sr', ESO_SR))
+    level = quality_level(config, 'eso')
 
     cache_name = f"eso_{ra:.4f}_{dec:.4f}_{sr:.1f}.vot"
 
@@ -438,12 +528,17 @@ def target_eso(config, basepath=None, verbose=True, show=False):
         # not belong in a filename
         stem = 'eso_' + instrument + '_' + dp_id.replace(':', '').replace('.', '_')
 
-        with cached_votable_query(stem + '.vot', basepath, log,
+        # The level is in the cache name and not in the stem: what is cached
+        # is the spectrum after its pixels were cut, so asking for a different
+        # level has to fetch again rather than read back the last answer -
+        # while the file the target keeps is named for the spectrum alone,
+        # whichever level it was last acquired at.
+        with cached_votable_query(f'{stem}_{level}.vot', basepath, log,
                                   f'ESO spectrum {dp_id}',
                                   refresh=refresh_cache) as cache:
             if not cache.hit:
                 try:
-                    spectrum, calibrated, factor = _fetch(dp_id)
+                    spectrum, calibrated, factor = _fetch(dp_id, level, log)
 
                     if factor > 1:
                         log(f"  {dp_id}: binned by {factor} to"
