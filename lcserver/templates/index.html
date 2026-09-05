@@ -23,14 +23,18 @@
     <li>Look at all of them together in an interactive viewer, with per-source offsets, and search for a period with a multiband Lomb-Scargle periodogram</li>
     <li>Fetch archival spectra from SDSS, LAMOST, DESI, APOGEE, SPHEREx and the ESO archive, together with the Gaia XP and RVS ones, and view them on a single physical scale</li>
     <li>Build a spectral energy distribution out of whatever VizieR catalogues cover the target, from the ultraviolet to the mid-infrared</li>
+    <li>Fit a model photosphere to it &mdash; temperature, gravity, metallicity, reddening and radius &mdash; over several grids of model atmospheres at once, choosing point by point what is fitted, and compare the answer with the Gaia XP spectrum bin by bin</li>
     <li>Browse, preview and download everything that was written for a target</li>
   </ul>
 
   <p>
-    The <a href="{% url 'cutouts' %}">Cutouts</a> and <a href="{% url 'passbands' %}">Passbands</a> pages are
-    standalone utilities, open to everyone. The first previews multi-wavelength images of any sky position from
-    a number of surveys; the second draws the photometric passbands the conversions run between, and lets the
-    conversions themselves be calculated.
+    The <a href="{% url 'cutouts' %}">Cutouts</a>, <a href="{% url 'passbands' %}">Passbands</a> and
+    <a href="{% url 'models' %}">Models</a> pages are standalone utilities, open to everyone and tied to no
+    target. The first previews multi-wavelength images of any sky position from a number of surveys; the
+    second draws the photometric passbands the conversions run between, and lets the conversions themselves
+    be calculated; the third opens up the grids of model atmospheres the photosphere fit is drawn from &mdash;
+    how a colour runs with temperature, where two sets of models disagree, the spectra behind the numbers, and
+    which bands each grid can answer for.
   </p>
 
   <p>

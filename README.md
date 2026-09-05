@@ -87,12 +87,19 @@ answer instead of being averaged flat.
 
 Which points are fitted is yours to say: a single Pan-STARRS band can be
 dropped without dropping the survey, and a measurement the SED step cannot
-place — a magnitude off a paper, say — can be typed in by hand.
+place — a magnitude off a paper, say — can be typed in by hand. Two
+submillimetre bands take a flux and not a magnitude: SPIRE PMW and PLW lie past
+the red end of the reference Vega spectrum, so there is no zero point to read a
+magnitude against, and the picker says so.
 
-Sixteen grids are available, several at once; BT-Settl, TLUSTY, Phoenix,
-Castelli & Kurucz, Kurucz, BOSZ and Koester are on the form. They are not
+Twenty-one grids are installed and twelve are on the form, several at a time:
+BT-Settl, Phoenix, BOSZ, Castelli & Kurucz, Kurucz, TLUSTY and Koester, and
+five PoWR grids for the Wolf-Rayet and OB stars with winds. They are not
 averaged. Two grids that both cover the regime disagree by an amount that is
 the systematic from the atmosphere physics, and that is reported as it stands.
+What each of them actually says — where a colour stops following temperature,
+where two of them part company, which bands one can answer for at all — is the
+[`/models/`](#pages) page.
 
 Each run is written to `targets/{id}/sedfit/{timestamp}/` and stays there —
 what was asked as well as what came back, so a run can be compared with the one
@@ -166,6 +173,7 @@ them.
 | `/targets/{id}/files/` | file browser over the target directory, previewing FITS, images and tables |
 | `/cutouts/` | multi-wavelength cutouts of any position, resolved on the fly — no target, no worker, no login |
 | `/passbands/` | the photometric conversions written out and calculable, over the transmission curves they run between |
+| `/models/` | what the model grids say — any parameter against any colour, magnitude or bolometric correction, over as many grids at once as you ask for, with the reddening and the radius as sliders; the families of spectra behind the cubes; and which bands each grid can answer for |
 | `/queue/` | Celery queue, chain positions, and the controls to stop a run |
 
 Plots follow the theme the reader is in.
@@ -412,7 +420,8 @@ stack warns about it.
 ```
 lcserver/
 ├── processing/     one module per survey, each registering itself
-│   └── sedfit.py   the photosphere fit - grids, priors, sampling, figures
+│   ├── sedfit.py   the photosphere fit - grids, priors, sampling, figures
+│   └── gridstats.py  what a grid says as colours and magnitudes, for the page
 ├── ingest/         turning somebody else's data into ours, once and by hand
 │   ├── passbands.py  the convolution every grid here was built with
 │   ├── store.py      the two files a grid is, written out
@@ -431,6 +440,7 @@ lcserver/
 ├── views_spectrum.py    the spectral viewer, and the photosphere fit behind it
 ├── views_cutouts.py     cutouts of any position, outside the target loop
 ├── views_passbands.py   the conversions, and the passbands they run between
+├── views_models.py      the grids themselves - parameters, colours, spectra
 ├── views_celery.py      the queue
 └── templates/
 data/grids/         one model grid per file, the register the fitter reads
