@@ -432,11 +432,6 @@ def _fetch(session, file_id):
         "Simon-Diaz et al. (2011a, 2011b, 2015)."),
     kind=KIND_SPECTROSCOPY,
     spectrum_files='iacob_*.txt',
-    # Continuum normalised, so every one of them runs about one where the
-    # calibrated spectra beside them run at 1e-14. Loaded and left unticked,
-    # as the Gaia RVS spectrum is, until there is a viewer mode that puts
-    # normalised spectra on an axis of their own.
-    spectrum_hidden='iacob_*.txt',
     spectrum_palette=['#7d6608', '#9a7d0a', '#b7950b', '#d4ac0d', '#f1c40f',
                       '#f4d03f', '#f7dc6f'],
     template_layout='complex',

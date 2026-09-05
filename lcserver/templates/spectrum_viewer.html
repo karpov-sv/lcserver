@@ -116,7 +116,28 @@
   <div class="d-flex flex-wrap align-items-center gap-3 mb-3">
     <h5 class="mb-0">Display</h5>
 
-    <div class="btn-group btn-group-sm">
+    {% if has_both_kinds %}
+      {% comment %}
+        Two axes, not two scalings: a calibrated spectrum runs at 1e-12 and a
+        continuum normalised one at 1, so they are shown one kind at a time
+        rather than together, as the light curve viewer keeps magnitudes apart
+        from normalised flux. Left out entirely unless the target has both.
+      {% endcomment %}
+      <div class="btn-group btn-group-sm">
+        <button onclick="setMode('calibrated')" data-mode="calibrated"
+                class="btn btn-sm {% if data_mode == 'calibrated' %}btn-primary{% else %}btn-outline-primary{% endif %}"
+                title="Spectra on a physical flux scale, in erg/s/cm2/A">
+          Calibrated
+        </button>
+        <button onclick="setMode('normalised')" data-mode="normalised"
+                class="btn btn-sm {% if data_mode == 'normalised' %}btn-primary{% else %}btn-outline-primary{% endif %}"
+                title="Spectra divided by their own continuum, where 1 is the continuum and the lines are what depart from it">
+          Continuum normalised
+        </button>
+      </div>
+    {% endif %}
+
+    <div class="btn-group btn-group-sm" id="scaling-group">
       <button onclick="setScaling('raw')" data-scaling="raw"
               class="btn btn-sm btn-primary"
               title="The flux each survey published, every one of them in erg/s/cm2/A against Angstrom">
@@ -148,7 +169,14 @@
     </div>
 
     <div class="form-check">
-      <input class="form-check-input" type="checkbox" id="log-check" checked onchange="redraw()">
+      {% comment %}
+        On by default for calibrated fluxes, which run over twelve decades and
+        are unreadable linear. Off for the normalised ones, which run about
+        one: a log axis there bends the continuum into a curve and spreads the
+        line cores over decades of nothing.
+      {% endcomment %}
+      <input class="form-check-input" type="checkbox" id="log-check"
+             {% if data_mode != 'normalised' %}checked{% endif %} onchange="redraw()">
       <label class="form-check-label" for="log-check">Log flux</label>
     </div>
 
@@ -335,9 +363,33 @@ The synthetic photometry made from the same spectra leaves the fit, being the sa
      // Stacking steps the spectra apart by one median each, which is a
      // distance only the normalised view has. Shown disabled rather than
      // silently doing nothing, now that the page no longer opens on it.
-     document.getElementById('stack-check').disabled = mode !== 'normalised';
+     document.getElementById('stack-check').disabled = !stackable();
 
      redraw();
+ }
+
+ // Which of the two kinds is on show. Set by the server, which also decided
+ // it: calibrated wherever there is any, as the light curve viewer prefers
+ // magnitudes.
+ let dataMode = "{{ data_mode }}";
+
+ // A whole reload rather than a filter over what is already loaded: the two
+ // kinds are fetched separately, so that a viewer showing one never carries
+ // the megabytes of the other, and the address then says which is on show.
+ // Whether a step of one means anything. It does once every spectrum is on a
+ // common scale, which is true two ways: divided by its own median here, or
+ // divided by its own continuum before it was ever written.
+ function stackable() {
+     return dataMode === 'normalised' || scaling === 'normalised';
+ }
+
+ function setMode(mode) {
+     if (mode === dataMode)
+         return;
+
+     const url = new URL(window.location);
+     url.searchParams.set('mode', mode);
+     window.location = url;
  }
 
  // What a series starts at, and the range the control allows. Only defaults:
@@ -449,7 +501,7 @@ The synthetic photometry made from the same spectra leaves the fit, being the sa
          }
 
          // Only meaningful once every spectrum is on the same scale
-         const offset = (stacked && scaling === 'normalised') ? shown * 1.0 : 0;
+         const offset = (stacked && stackable()) ? shown * 1.0 : 0;
          offsets.set(i, offset);
          shown++;
 
@@ -575,6 +627,20 @@ The synthetic photometry made from the same spectra leaves the fit, being the sa
      // as black, alpha and all.
      const theme = plotlyTheme();
 
+     // The continuum, which is what a normalised spectrum is read against:
+     // absorption below it, emission above, and the whole point of the scale.
+     // Drawn only where it is not stacked - once the spectra are stepped apart
+     // there is a continuum per spectrum and one line marks the wrong ones.
+     // After the theme rather than with the other shapes, the colour being
+     // the page's own grid colour and that not known until here.
+     if (dataMode === 'normalised' && !stacked) {
+         shapes.push({
+             type: 'line', xref: 'paper', x0: 0, x1: 1, y0: 1, y1: 1,
+             line: {color: theme.gridcolor, width: 1, dash: 'dot'},
+             layer: 'below',
+         });
+     }
+
      Plotly.react('plotly-container', traces, {
          margin: {l: 60, r: 20, t: 30, b: 50},
          xaxis: {
@@ -586,8 +652,11 @@ The synthetic photometry made from the same spectra leaves the fit, being the sa
              showgrid: true, gridcolor: theme.gridcolor,
          },
          yaxis: {
-             title: {text: scaling === 'normalised'
-                     ? 'Flux / median' : 'Flux, erg s\u207b\u00b9 cm\u207b\u00b2 \u00c5\u207b\u00b9'},
+             title: {text: dataMode === 'normalised'
+                     ? 'Flux, normalised to the continuum'
+                     : (scaling === 'normalised'
+                        ? 'Flux / median'
+                        : 'Flux, erg s\u207b\u00b9 cm\u207b\u00b2 \u00c5\u207b\u00b9')},
              type: document.getElementById('log-check').checked ? 'log' : 'linear',
              showgrid: true, gridcolor: theme.gridcolor,
          },
@@ -692,7 +761,7 @@ The synthetic photometry made from the same spectra leaves the fit, being the sa
      showAll(false);
  }
 
- fetch(`/targets/{{ target_id }}/spectrum_data/`)
+ fetch(`/targets/{{ target_id }}/spectrum_data/?mode=${encodeURIComponent(dataMode)}`)
      .then(r => r.ok ? r.json() : r.json().then(e => { throw new Error(e.error || 'Server error'); }))
      .then(data => {
          document.getElementById('loading-indicator').style.display = 'none';
@@ -717,9 +786,23 @@ The synthetic photometry made from the same spectra leaves the fit, being the sa
          document.getElementById('control-panel').style.display = 'block';
          document.getElementById('plotly-box').style.display = 'block';
 
+         // Dividing by the median is what puts a bright spectrum and a faint
+         // one on one scale. In the normalised mode they are on one already,
+         // so the choice has nothing to offer and is left out rather than
+         // shown doing nothing.
+         if (dataMode === 'normalised') {
+             const group = document.getElementById('scaling-group');
+             if (group) group.style.display = 'none';
+             document.getElementById('stack-check').disabled = false;
+         }
+
          // Only where there is a SED to fit: the panel is meaningless for a
-         // target that has spectra but no catalogue photometry
-         if (spectra.some(s => s.source_id === 'sed')) {
+         // target that has spectra but no catalogue photometry, and meaningless
+         // again in the normalised mode - the fit is to a flux, and a spectrum
+         // divided by its own continuum has thrown that away. The SED is
+         // calibrated, so it is not in that mode to be found anyway; the mode
+         // is named here so that the reason is not left to a coincidence.
+         if (dataMode !== 'normalised' && spectra.some(s => s.source_id === 'sed')) {
              document.getElementById('fit-panel').style.display = 'block';
              loadPoints();
              loadRuns();

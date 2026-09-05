@@ -515,12 +515,6 @@ DUST_3D_MAPS = [
     spectrum_files='gaia_*.txt',
     spectrum_label='Gaia',
     spectrum_labels={'xp': 'XP', 'rvs': 'RVS'},
-    # Loaded but not ticked. The RVS spectrum is continuum normalised and runs
-    # about one, where every calibrated spectrum beside it runs at 1e-14 or
-    # so; on a shared axis it is the only thing visible and the rest lie flat
-    # along the bottom. It is worth reaching for, not worth being shown by
-    # default at the cost of everything else.
-    spectrum_hidden='gaia_rvs.txt',
     # By filename order, which is how the viewer enumerates them: gaia_rvs
     # before gaia_xp. Written in that order so that XP keeps the blue it has
     # always had rather than being recoloured by the arrival of a second

@@ -58,7 +58,60 @@ SPECTRUM_PALETTE = ['#2980b9', '#c0392b', '#16a085', '#8e44ad', '#e67e22',
                     '#2c3e50', '#27ae60', '#d35400']
 
 
-def load_spectrum_data(basepath):
+# How much of a VOTable to read to find out what its flux is in. The FIELD
+# declarations sit in the first few hundred bytes of the header; this is
+# generous enough that a file with a long description or a COOSYS block ahead
+# of them is still covered.
+VOTABLE_HEADER_BYTES = 8192
+
+# The flux column of a spectrum, as the VOTable declares it
+VOTABLE_FLUX_FIELD = re.compile(r'<FIELD[^>]*\bname="flux"[^>]*>', re.I)
+VOTABLE_UNIT = re.compile(r'\bunit="([^"]*)"', re.I)
+
+
+def is_calibrated(path):
+    """Whether a spectrum's flux is on a physical scale, or normalised.
+
+    The two cannot share an axis - a calibrated spectrum runs at 1e-12 and a
+    continuum normalised one at 1 - so the viewer has to know which it has
+    before it draws anything.
+
+    Read off the VOTable rather than declared in the registry, because it is
+    not a property of the source. The ESO step publishes both: UVES and
+    X-shooter spectra arrive flux calibrated, HARPS and GIRAFFE arrive as
+    detector counts and are put on their own median, and which is which is
+    known only once the file has been fetched. write_spectrum() stamps the
+    unit on the flux column of the calibrated ones and leaves it off the
+    rest, so the file already carries the answer.
+
+    Only the head of the file is read - the FIELD declarations are at the top,
+    and the rest is several megabytes of numbers. Reading the whole VOTable
+    instead of the text table it sits beside would cost about five times the
+    load of the whole viewer.
+
+    A file that cannot be read, or says nothing, is taken as calibrated: that
+    is what every source but two writes, and showing a spectrum on the usual
+    axis is a smaller error than hiding it from the mode it belongs to.
+    """
+    votable = os.path.splitext(path)[0] + '.vot'
+
+    try:
+        with open(votable, 'rb') as fh:
+            head = fh.read(VOTABLE_HEADER_BYTES).decode('utf-8', 'ignore')
+    except OSError:
+        return True
+
+    field = VOTABLE_FLUX_FIELD.search(head)
+
+    if not field:
+        return True
+
+    unit = VOTABLE_UNIT.search(field.group(0))
+
+    return bool(unit and unit.group(1).strip())
+
+
+def load_spectrum_data(basepath, calibrated=None):
     """Every spectrum written for a target.
 
     Nothing is converted here. Each source says in the registry only where its
@@ -66,6 +119,11 @@ def load_spectrum_data(basepath):
     Angstrom, flux in erg/s/cm2/A - the sources having each done their own
     conversion when they wrote the file, so that the files are as comparable
     on disk as they are on the screen.
+
+    `calibrated` picks which of the two kinds to return: True for the ones on
+    a physical flux scale, False for the continuum normalised, None for
+    everything. They are drawn separately because they cannot share an axis -
+    see is_calibrated() - so the viewer asks for one kind at a time.
     """
     spectra = []
     index = 0
@@ -95,6 +153,13 @@ def load_spectrum_data(basepath):
 
             for number, path in enumerate(sorted(glob.glob(os.path.join(basepath, pattern)))):
                 hidden = path in unticked
+
+                # Asked before the file is opened: the wrong kind is not read
+                # at all, rather than read and then dropped
+                physical = is_calibrated(path)
+
+                if calibrated is not None and physical != calibrated:
+                    continue
 
                 try:
                     data = Table.read(path, format='ascii.commented_header')
@@ -211,6 +276,8 @@ def load_spectrum_data(basepath):
                                 if comment is not None else None),
                     # Whether it is shown without being asked for
                     'default_visible': not hidden,
+                    # Which axis it belongs on
+                    'calibrated': physical,
                     # Indices after which the line should be broken
                     'breaks': [int(_) for _ in breaks],
                     'median': median,
@@ -236,6 +303,35 @@ def has_spectra(basepath):
     return False
 
 
+def spectrum_kinds(basepath):
+    """Which of the two kinds of spectrum a target has, as (calibrated, normalised).
+
+    Only the headers are read, which is a couple of milliseconds for a target
+    with a dozen spectra - cheap enough to answer before the page is rendered,
+    so that the mode switch can be left off entirely where there is nothing to
+    switch to.
+    """
+    calibrated = normalised = False
+
+    for survey_config in surveys.SURVEY_SOURCES.values():
+        for key in ('spectrum_files', 'spectrum_points'):
+            pattern = survey_config.get(key)
+
+            if not pattern:
+                continue
+
+            for path in glob.glob(os.path.join(basepath, pattern)):
+                if is_calibrated(path):
+                    calibrated = True
+                else:
+                    normalised = True
+
+                if calibrated and normalised:
+                    return True, True
+
+    return calibrated, normalised
+
+
 @login_required
 def target_spectrum(request, id):
     """Interactive viewer for every spectrum a target has."""
@@ -244,10 +340,24 @@ def target_spectrum(request, id):
     if not target.can_view(request.user):
         raise Http404
 
+    calibrated, normalised = spectrum_kinds(target.path())
+
+    # Calibrated by default where there is any, as the light curve viewer
+    # prefers magnitudes: it is what the SED fit reads and what most sources
+    # write. A target with only normalised spectra opens on those instead,
+    # there being nothing else to show.
+    mode = request.GET.get('mode')
+
+    if mode not in ('calibrated', 'normalised'):
+        mode = 'normalised' if normalised and not calibrated else 'calibrated'
+
     return TemplateResponse(request, 'spectrum_viewer.html', context={
         'target': target,
         'target_id': id,
         'lines': SPECTRAL_LINES,
+        'data_mode': mode,
+        # The switch is only worth drawing where it leads somewhere
+        'has_both_kinds': calibrated and normalised,
     })
 
 
@@ -260,10 +370,13 @@ def load_spectrum_json(request, id):
     if not target.can_view(request.user):
         return JsonResponse({'error': 'Forbidden'}, status=403)
 
-    spectra = load_spectrum_data(target.path())
+    mode = request.GET.get('mode')
+    spectra = load_spectrum_data(target.path(),
+                                 calibrated=(mode != 'normalised'))
 
     return JsonResponse({
         'spectra': spectra,
+        'mode': 'normalised' if mode == 'normalised' else 'calibrated',
         'lines': [{'label': _[0], 'wavelength': _[1]} for _ in SPECTRAL_LINES],
         'telluric': [{'from': _[0], 'to': _[1]} for _ in TELLURIC_BANDS],
         'count': len(spectra),
