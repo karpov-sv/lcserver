@@ -874,7 +874,7 @@ def target_sed(config, basepath=None, verbose=True, show=False):
     dec = config.get('target_dec')
     sr = float(config.get('sed_sr') or SED_SR)
 
-    log(f"within {sr:.1f} arcsec")
+    log(f"Searching for catalogue photometry within {sr:.1f} arcsec")
 
     table = _query(ra, dec, sr, basepath, log, refresh_cache)
 

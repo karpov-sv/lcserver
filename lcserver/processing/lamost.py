@@ -260,7 +260,7 @@ def target_lamost(config, basepath=None, verbose=True, show=False):
     dec = config.get('target_dec')
     sr = config.get('lamost_sr', LAMOST_SR)
 
-    log(f"within {sr:.1f} arcsec")
+    log(f"Searching LAMOST within {sr:.1f} arcsec")
 
     lrs = _query(LAMOST_LRS_CATALOGUE, ra, dec, sr, basepath, log, 'lrs', refresh_cache)
     mrs = _query(LAMOST_MRS_CATALOGUE, ra, dec, sr, basepath, log, 'mrs', refresh_cache)

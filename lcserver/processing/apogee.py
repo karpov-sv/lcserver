@@ -243,7 +243,7 @@ def target_apogee(config, basepath=None, verbose=True, show=False):
     dec = config.get('target_dec')
     sr = float(config.get('apogee_sr', APOGEE_SR))
 
-    log(f"within {sr:.1f} arcsec")
+    log(f"Searching APOGEE within {sr:.1f} arcsec")
 
     cache_name = f"apogee_{ra:.4f}_{dec:.4f}_{sr:.1f}.vot"
 

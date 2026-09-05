@@ -381,7 +381,7 @@ def target_eso(config, basepath=None, verbose=True, show=False):
     dec = config.get('target_dec')
     sr = float(config.get('eso_sr', ESO_SR))
 
-    log(f"within {sr:.1f} arcsec")
+    log(f"Searching the ESO archive within {sr:.1f} arcsec")
 
     cache_name = f"eso_{ra:.4f}_{dec:.4f}_{sr:.1f}.vot"
 

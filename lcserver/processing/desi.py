@@ -239,7 +239,7 @@ def target_desi(config, basepath=None, verbose=True, show=False):
     dec = config.get('target_dec')
     sr = config.get('desi_sr', DESI_SR)
 
-    log(f"within {sr:.1f} arcsec")
+    log(f"Searching DESI within {sr:.1f} arcsec")
 
     matches = _find(ra, dec, sr, log)
 

@@ -246,7 +246,7 @@ def target_sdss(config, basepath=None, verbose=True, show=False):
     dec = config.get('target_dec')
     sr = min(float(config.get('sdss_sr', SDSS_SR)), SDSS_MAX_SR)
 
-    log(f"within {sr:.1f} arcsec")
+    log(f"Searching SDSS within {sr:.1f} arcsec")
 
     cache_name = f"sdss_{ra:.4f}_{dec:.4f}_{sr:.1f}.vot"
 

@@ -461,7 +461,7 @@ def target_iacob(config, basepath=None, verbose=True, show=False):
     dec = config.get('target_dec')
     sr = float(config.get('iacob_sr', IACOB_SR))
 
-    log(f"within {sr:.0f} arcsec")
+    log(f"Searching IACOB within {sr:.0f} arcsec")
 
     cache_name = f"iacob_{ra:.4f}_{dec:.4f}_{sr:.0f}.vot"
 
