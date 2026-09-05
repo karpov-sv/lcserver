@@ -4,6 +4,7 @@ Acquires KWS (Kamogata Wide-field Survey) optical lightcurves.
 """
 
 import os
+import re
 import requests
 import numpy as np
 
@@ -21,6 +22,16 @@ from .utils import (SourceError, cleanup_paths, cached_votable_query,
                     assumed_color, v_to_g, b_to_g,
                     V_TO_G_FORMULA, B_TO_G_FORMULA, CLIP_RATIO_BY_LEVEL,
                     QUALITY_STANDARD, QUALITY_RELAXED, QUALITY_PUBLISHED)
+
+
+# How KWS says it has nothing: the name it was given, echoed back with
+# "not found", and no table at all. That is an answer rather than a failure -
+# the survey has looked and has no photometry under that name - so it is
+# remembered as an empty result. The name comes back mangled ("SDSS J1004+4112"
+# returns as "J1004+4112SDSS"), which is why the phrase is matched and not the
+# target's own name. A reply with neither a table nor this has said nothing
+# about the target, and must not be cached as though it had.
+KWS_NOT_FOUND = re.compile(r"not found\.", re.IGNORECASE)
 
 
 # Largest separation between a V and an Ic measurement still counted as
@@ -143,8 +154,12 @@ def target_kws(config, basepath=None, verbose=True, show=False):
 
                 start_idx = content.find(start_marker)
                 if start_idx == -1:
-                    log("Warning: No table found in KWS response")
-                    log("Object might not be in KWS database or name not resolved")
+                    if not KWS_NOT_FOUND.search(content):
+                        raise SourceError("unrecognised KWS response - it "
+                                          "carries no table, and no word on why")
+
+                    cache.save_empty()
+                    log(f"KWS has nothing under the name {target_name}")
                     return
 
                 end_idx = content.find(end_marker, start_idx)

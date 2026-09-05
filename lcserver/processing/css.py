@@ -5,6 +5,7 @@ Acquires CSS (Catalina Sky Survey) optical lightcurves in V band.
 
 import os
 import ast
+import re
 import requests
 import numpy as np
 
@@ -20,6 +21,16 @@ from ..surveys import survey_source, get_output_files
 from .utils import (SourceError, cleanup_paths, cached_votable_query, log_bands,
                     log_conversion, plot_with_errors,
                     assumed_color, v_to_g, V_TO_G_FORMULA)
+
+
+# The two ways CSS says it has nothing: it never observed this part of the sky,
+# or it did and found no source there. Both are answers rather than failures -
+# neither changes between one run and the next - so both are remembered as an
+# empty result. A reply carrying neither the data nor one of these has said
+# nothing about the target, and must not be cached as though it had.
+CSS_NO_DATA = re.compile(r"not covered by CSS data"
+                         r"|no objects were found in the specified area",
+                         re.IGNORECASE)
 
 
 @survey_source(
@@ -122,8 +133,14 @@ def target_css(config, basepath=None, verbose=True, show=False):
 
                 start_idx = content.find(start_marker)
                 if start_idx == -1:
-                    log("Warning: No data found in CSS response")
-                    log("Response might indicate no objects in search radius")
+                    answer = CSS_NO_DATA.search(content)
+
+                    if not answer:
+                        raise SourceError("unrecognised CSS response - it "
+                                          "carries no data, and no word on why")
+
+                    cache.save_empty()
+                    log(f"CSS has nothing here - {answer.group(0)}")
                     return
 
                 start_idx += len(start_marker) - 2  # Include the opening [[

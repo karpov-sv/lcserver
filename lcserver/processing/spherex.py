@@ -713,12 +713,19 @@ def _measure(images, ra, dec, quality, aperture, log):
     jobs = [(key, url) for key, urls in sorted(groups.items())
             for url in urls if layouts.get(key)]
 
+    # A file that could not be read, and a file the source did not land on,
+    # are both no measurement - but only the second says anything about the
+    # target. They are told apart here so that an archive which was unreachable
+    # is not afterwards remembered as a target SPHEREx has nothing on.
+    failed = []
+
     def one(job):
         key, url = job
         try:
             row = _extract(url, ra, dec, layouts[key], quality, aperture)
         except Exception as e:
             log(f"  {os.path.basename(url)}: {e}")
+            failed.append(url)
             return None
 
         if row is not None:
@@ -766,6 +773,15 @@ def _measure(images, ra, dec, quality, aperture, log):
         log(f"  D{key[0]} {key[1]}: {found} of {len(urls)} measured")
 
     log(f"\n{len(results)} exposures measured, {nbytes / 1e6:.0f} MB read")
+
+    # Nothing measured, and not everything was even read: the archive is what
+    # that describes, not the sky, so the caller must not cache it as an answer
+    unread = len(images) - len(jobs) + len(failed)
+
+    if not results and unread:
+        raise SourceError(f"none of the {len(images)} SPHEREx exposures could "
+                          f"be measured, and {unread} of them could not be "
+                          "read at all")
 
     return results
 
@@ -1039,36 +1055,44 @@ def target_spherex(config, basepath=None, verbose=True, show=False):
             results = _measure(urls, ra, dec, quality, aperture, log)
 
             if not results:
+                # Every exposure was read, and the source landed on none of
+                # them. An answer, and one that will not change, so it is
+                # remembered rather than the whole set being measured again on
+                # the next run. _measure has already raised where the archive,
+                # rather than the sky, was what came back empty.
+                cache.save_empty()
                 log("\nWarning: no exposure could be measured")
-                return
+            else:
+                # The stamps ride along with the measurements, so that the
+                # preview can be redrawn from the cache without reading the
+                # archive again. This one is ours rather than the archive's,
+                # and its columns are named for this module's own use; what the
+                # two published tables carry is named to match the other
+                # spectral sources.
+                cache.save(Table({
+                    'exposure': [_['exposure'] for _ in results],
+                    'mjd': [_['mjd'] for _ in results],
+                    'wavelength': [_['wavelength'] for _ in results],
+                    'bandwidth': [_['bandwidth'] for _ in results],
+                    'flux': [_['flux'] for _ in results],
+                    'flux_err': [_['flux_err'] for _ in results],
+                    'background': [_['background'] for _ in results],
+                    'enclosed': [_['enclosed'] for _ in results],
+                    'complete': [int(_['complete']) for _ in results],
+                    'flags': [_['flags'] for _ in results],
+                    'detector': [_['detector'] for _ in results],
+                    'x': [_['x'] for _ in results],
+                    'y': [_['y'] for _ in results],
+                    'stamp': np.array([_['stamp'].ravel() for _ in results]),
+                    'dra': np.array([_['dra'].ravel() for _ in results]),
+                    'ddec': np.array([_['ddec'].ravel() for _ in results]),
+                }))
 
-            # The stamps ride along with the measurements, so that the preview
-            # can be redrawn from the cache without reading the archive again.
-            # This one is ours rather than the archive's, and its columns are
-            # named for this module's own use; what the two published tables
-            # carry is named to match the other spectral sources.
-            table = Table({
-                'exposure': [_['exposure'] for _ in results],
-                'mjd': [_['mjd'] for _ in results],
-                'wavelength': [_['wavelength'] for _ in results],
-                'bandwidth': [_['bandwidth'] for _ in results],
-                'flux': [_['flux'] for _ in results],
-                'flux_err': [_['flux_err'] for _ in results],
-                'background': [_['background'] for _ in results],
-                'enclosed': [_['enclosed'] for _ in results],
-                'complete': [int(_['complete']) for _ in results],
-                'flags': [_['flags'] for _ in results],
-                'detector': [_['detector'] for _ in results],
-                'x': [_['x'] for _ in results],
-                'y': [_['y'] for _ in results],
-                'stamp': np.array([_['stamp'].ravel() for _ in results]),
-                'dra': np.array([_['dra'].ravel() for _ in results]),
-                'ddec': np.array([_['ddec'].ravel() for _ in results]),
-            })
+        table = cache.data
 
-            cache.save(table)
-        else:
-            table = cache.data
+    # Nothing here, and cached as nothing - the helper has said so already
+    if table is None:
+        return
 
     side = 2 * SPHEREX_STAMP + 1
 

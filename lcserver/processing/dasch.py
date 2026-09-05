@@ -176,6 +176,10 @@ def target_dasch(config, basepath=None, verbose=True, show=False):
             # Parse CSV response
             csv_lines = response.json()
             if not csv_lines or len(csv_lines) < 2:
+                # The catalogue answered, and has no source here. An answer,
+                # not a failure - a plate archive does not grow new plates -
+                # so it is remembered rather than asked again every run.
+                cache.save_empty()
                 log('Warning: No sources found in DASCH catalog')
                 return
 
@@ -185,6 +189,7 @@ def target_dasch(config, basepath=None, verbose=True, show=False):
             sources = list(reader)
 
             if not sources:
+                cache.save_empty()
                 log('Warning: No sources found in DASCH catalog')
                 return
 
@@ -224,6 +229,9 @@ def target_dasch(config, basepath=None, verbose=True, show=False):
             # Parse CSV response
             csv_lines = response.json()
             if not csv_lines or len(csv_lines) < 2:
+                # The source is in the catalogue but carries no photometry,
+                # which is as much an answer as the empty cone search above
+                cache.save_empty()
                 log('Warning: No lightcurve data returned from DASCH')
                 return
 
@@ -233,6 +241,7 @@ def target_dasch(config, basepath=None, verbose=True, show=False):
             rows = list(reader)
 
             if not rows:
+                cache.save_empty()
                 log('Warning: No lightcurve data points found')
                 return
 
