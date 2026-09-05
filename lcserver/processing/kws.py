@@ -24,14 +24,17 @@ from .utils import (SourceError, cleanup_paths, cached_votable_query,
                     QUALITY_STANDARD, QUALITY_RELAXED, QUALITY_PUBLISHED)
 
 
-# How KWS says it has nothing: the name it was given, echoed back with
-# "not found", and no table at all. That is an answer rather than a failure -
-# the survey has looked and has no photometry under that name - so it is
-# remembered as an empty result. The name comes back mangled ("SDSS J1004+4112"
-# returns as "J1004+4112SDSS"), which is why the phrase is matched and not the
-# target's own name. A reply with neither a table nor this has said nothing
-# about the target, and must not be cached as though it had.
-KWS_NOT_FOUND = re.compile(r"not found\.", re.IGNORECASE)
+# How KWS says it has nothing: "Data not found", the object it looked under in
+# brackets after it, and no table at all. That is an answer rather than a
+# failure - the survey has looked and has no photometry there - so it is
+# remembered as an empty result. What is in the brackets is KWS's own name for
+# the object rather than the one it was given ("HR Car" comes back as "CARHR =
+# 102254-5937.5"), and is empty altogether where SIMBAD did the resolving,
+# which is why only the phrase is matched. A reply with neither a table nor
+# this has said nothing about the target, and must not be cached as though it
+# had - a name SIMBAD cannot resolve returns an empty page, and that is a
+# failure.
+KWS_NOT_FOUND = re.compile(r"Data not found", re.IGNORECASE)
 
 
 # Largest separation between a V and an Ic measurement still counted as
