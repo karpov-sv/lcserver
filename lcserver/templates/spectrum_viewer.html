@@ -781,6 +781,9 @@ The synthetic photometry made from the same spectra leaves the fit, being the sa
  let fitXpPoints = [];
  let fitXpDerived = [];
 
+ // Points a restored run named that this file no longer has
+ let fitMissing = [];
+
  // Read when the file changes, and only then. ``chosen`` restores a run's own
  // selection; without it the panel starts from what the reader of the file
  // would have picked - one point per band, and no infrared excess.
@@ -805,6 +808,16 @@ The synthetic photometry made from the same spectra leaves the fit, being the sa
              buildGridPicker();
              composePoints();
              fitOn = chosen || defaultFitPoints();
+
+             // A run's selection names points of the file as it was. The SED
+             // step may have been run again since, with other catalogues in
+             // it, and then some of those names are of points that are no
+             // longer there. They are dropped rather than carried invisibly
+             // into the next fit, and how many is said beside the count.
+             const present = new Set(fitPoints.map(p => p.id));
+             fitMissing = [...fitOn].filter(id => !present.has(id));
+             fitMissing.forEach(id => fitOn.delete(id));
+
              // Never both, whatever was asked for: a point that is being
              // fitted is the photosphere and cannot also be measured against it
              excessOn = new Set([...defaultExcess()].filter(id => !fitOn.has(id)));
@@ -989,7 +1002,10 @@ The synthetic photometry made from the same spectra leaves the fit, being the sa
 
      document.getElementById('fit-point-count').textContent =
          `${on} of ${fitPoints.length} points will be fitted`
-         + (excess ? `, ${excess} measured as an excess` : '');
+         + (excess ? `, ${excess} measured as an excess` : '')
+         + (fitMissing.length
+            ? `; ${fitMissing.length} that run fitted are not in this file`
+            : '');
      document.getElementById('fit-run').disabled = on < 5;
  }
 
@@ -1525,6 +1541,43 @@ The synthetic photometry made from the same spectra leaves the fit, being the sa
  // The list itself is read again from that file rather than lifted out of the
  // run - it is a form for the next fit, and the file may have been rebuilt
  // since. What the run actually fitted is in its log.
+ // The grids a run used and the priors it was given, back into the form.
+ // Only what is still there: a run may name a grid that has since left the
+ // directory, and ticking nothing at all would leave the form unable to fit.
+ function syncOptionsToRun(result) {
+     const options = result.options || {};
+
+     if (options.grids) {
+         const installed = new Set(fitGrids.map(g => g.name));
+         const wanted = options.grids.filter(name => installed.has(name));
+
+         if (wanted.length) {
+             document.querySelectorAll('#fit-grids input').forEach(box => {
+                 box.checked = wanted.includes(box.value);
+             });
+         }
+
+         const gone = options.grids.filter(name => !installed.has(name));
+         if (gone.length) {
+             setFitStatus(`${gone.join(', ')} - not installed any more`, true);
+         }
+     }
+
+     // [kind, low, high], as the fitter takes them and the run recorded them
+     const prior = (spec, lo, hi) => {
+         if (!Array.isArray(spec) || spec.length < 3) return;
+         if (Number.isFinite(spec[1])) document.getElementById(lo).value = spec[1];
+         if (Number.isFinite(spec[2])) document.getElementById(hi).value = spec[2];
+     };
+
+     prior(options.teff_prior, 'fit-teff-lo', 'fit-teff-hi');
+     prior(options.logg_prior, 'fit-logg-lo', 'fit-logg-hi');
+
+     if (Number.isFinite(options.nlive)) {
+         document.getElementById('fit-nlive').value = options.nlive;
+     }
+ }
+
  function syncPointsToRun(result) {
      const selection = result.selection || {};
      const select = document.getElementById('fit-source');
@@ -1546,6 +1599,10 @@ The synthetic photometry made from the same spectra leaves the fit, being the sa
 
      if (selection.points) {
          return loadPoints(new Set(selection.points)).then(() => {
+             // After the list, since the picker is rebuilt with it and
+             // rebuilding keeps whatever was ticked before
+             syncOptionsToRun(result);
+
              // What the run measured its excess on. Named outright if it was
              // asked that way; otherwise the flag its own reading left on each
              // point, which is the boundary its own selection implied. Runs
@@ -1566,6 +1623,8 @@ The synthetic photometry made from the same spectra leaves the fit, being the sa
      // defaults, and those are already in hand unless the run was of the
      // other file.
      return (elsewhere ? loadPoints() : Promise.resolve()).then(() => {
+         syncOptionsToRun(result);
+
          const off = new Set(selection.exclude || []);
          fitOn = new Set([...defaultPoints()].filter(id => !off.has(id)));
          (selection.include || []).forEach(id => fitOn.add(id));
