@@ -797,6 +797,8 @@ The synthetic photometry made from the same spectra leaves the fit, being the sa
              fitBasePoints = data.points || [];
              fitXpPoints = data.xp || [];
              fitXpDerived = data.xp_derived || [];
+             // Of the file that was open, and no use for this one
+             fitXpDropped = [];
              fitBands = data.bands || [];
              fitGrids = data.grids || fitGrids;
 
@@ -857,13 +859,30 @@ The synthetic photometry made from the same spectra leaves the fit, being the sa
      return on;
  }
 
- // Turning the spectrum on or off changes which points make sense together,
- // so the choices go back to the defaults rather than being carried across
- // into a combination nobody asked for.
+ // What the switch turned off when it was turned on, so that turning it off
+ // again puts back what it took and nothing else.
+ let fitXpDropped = [];
+
+ // The switch moves the points the switch is about and leaves the rest alone.
+ // On: the bins join what is being fitted, and Gaia's synthetic photometry
+ // leaves it, being the same spectra integrated. Off: the bins go and those
+ // points come back. Everything a reader has chosen for their own reasons -
+ // a WISE band turned off, a second measurement of a band turned on - is
+ // theirs, and a switch about Gaia has no business with it.
  function applyXpChoice() {
+     const on = fittingXp();
      composePoints();
-     fitOn = defaultFitPoints();
-     excessOn = new Set([...defaultExcess()].filter(id => !fitOn.has(id)));
+
+     if (on) {
+         fitXpDropped = fitXpDerived.filter(id => fitOn.has(id));
+         fitXpDropped.forEach(id => fitOn.delete(id));
+         fitXpPoints.filter(p => p.default).forEach(p => fitOn.add(p.id));
+     } else {
+         fitXpPoints.forEach(p => fitOn.delete(p.id));
+         fitXpDropped.forEach(id => fitOn.add(id));
+         fitXpDropped = [];
+     }
+
      buildPointList();
      buildGridPicker();
  }
