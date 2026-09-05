@@ -24,6 +24,7 @@ from . import views
 from . import views_celery
 from . import views_cutouts
 from . import views_lightcurve
+from . import views_models
 from . import views_passbands
 from . import views_spectrum
 
@@ -37,6 +38,12 @@ urlpatterns = [
     # The photometric conversions everything else here is built on
     path('passbands/', views_passbands.passbands, name='passbands'),
     path('passbands/data/', views_passbands.passbands_data, name='passbands_data'),
+
+    # The model atmosphere grids the SED fits are drawn from
+    path('models/', views_models.models, name='models'),
+    path('models/data/', views_models.models_data, name='models_data'),
+    path('models/spectra/', views_models.models_spectra, name='models_spectra'),
+    path('models/coverage/', views_models.models_coverage, name='models_coverage'),
 
     # Targets
     path('targets/', views.targets, {'id':None}, name='targets'),

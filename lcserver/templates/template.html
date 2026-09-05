@@ -102,6 +102,9 @@
             <li class="nav-item">
               <a class="nav-link {% if request.resolver_match.view_name == 'passbands' %}active{% endif %}" href="{% url 'passbands' %}">Passbands</a>
             </li>
+            <li class="nav-item">
+              <a class="nav-link {% if request.resolver_match.view_name == 'models' %}active{% endif %}" href="{% url 'models' %}">Models</a>
+            </li>
           </ul>
 
           <ul class="navbar-nav ms-auto me-2">

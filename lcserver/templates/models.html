@@ -1,0 +1,1291 @@
+{% extends "template.html" %}
+
+{% block ptitle %}Model grids{% endblock %}
+
+{% block title %}Model grids{% endblock %}
+
+{% block head %}
+  <script src="https://cdn.plot.ly/plotly-3.7.0.min.js" charset="utf-8"></script>
+
+  {% load static %}
+  <script src="{% static 'plot_theme.js' %}"></script>
+  <script src="{% static 'plot_resize.js' %}"></script>
+
+  <style>
+   /* The grid picker is a list of checkboxes that may run to a dozen entries,
+      and is not allowed to push the plot off the screen */
+   .grid-picker {
+     max-height: 11rem;
+     overflow-y: auto;
+   }
+
+   .grid-picker .form-check {
+     margin-bottom: 0.1rem;
+   }
+
+   /* Axis pickers sit in a column each and their band selects must not widen
+      the column past what the row can hold */
+   .axis-picker select {
+     max-width: 100%;
+   }
+
+   .range-input {
+     max-width: 6rem;
+   }
+
+   .slider-value {
+     font-family: var(--bs-font-monospace);
+     font-size: 0.875em;
+     min-width: 4.5rem;
+     display: inline-block;
+   }
+
+   .preset-note {
+     max-width: 40rem;
+   }
+
+   .table-grids td, .table-grids th {
+     vertical-align: top;
+   }
+
+   .table-grids .grid-note {
+     max-width: 30rem;
+   }
+  </style>
+{% endblock %}
+
+{% block content %}
+
+  <p class="text-body-secondary">
+    Every SED fit here interpolates one of these grids of model atmospheres and reports six numbers.
+    What the grid itself says - how a colour runs with temperature, where two sets of models disagree,
+    which bands a grid can answer for at all - decides whether those numbers mean anything, and is not
+    visible anywhere else. The magnitudes below are computed with the same pivot wavelengths, zero
+    points and extinction law the fit puts an observed magnitude through, so what is plotted here and
+    what is fitted there are the same arithmetic.
+  </p>
+
+  <p class="text-body-secondary">
+    A grid knows three parameters - effective temperature, surface gravity and metallicity - and no
+    radius, so an absolute magnitude cannot be had from it alone. Everything here is a star of
+    <b>one solar radius seen from ten parsecs</b>; a star of radius R sits 5&nbsp;log<sub>10</sub>(R/R<sub>&#9737;</sub>)
+    brighter and no colour moves at all, which is exactly what the radius slider does.
+  </p>
+
+  <!-- ------------------------------------------------ the explorer -->
+  <div class="card mb-4">
+    <div class="card-header d-flex flex-wrap align-items-center gap-2">
+      <span>Parameters against observables</span>
+      <span class="text-body-secondary small ms-auto" id="explore-count"></span>
+    </div>
+
+    <div class="card-body pb-0">
+      <div class="mb-3 d-flex flex-wrap gap-2 align-items-center">
+        <span class="text-body-secondary small">Start from:</span>
+        {% for preset in presets %}
+          <button type="button" class="btn btn-sm btn-outline-secondary preset-pick"
+                  data-preset="{{ preset.id }}">{{ preset.name }}</button>
+        {% endfor %}
+      </div>
+
+      <p class="text-body-secondary small preset-note" id="preset-note"></p>
+
+      <div class="row g-3">
+        <div class="col-lg-3">
+          <label class="form-label small text-body-secondary mb-1">Grids</label>
+          <div class="grid-picker border rounded p-2">
+            {% for grid in grids %}
+              <div class="form-check">
+                <input class="form-check-input grid-check" type="checkbox"
+                       value="{{ grid.name }}" id="grid-{{ grid.name }}">
+                <label class="form-check-label small" for="grid-{{ grid.name }}"
+                       title="{{ grid.note }}">{{ grid.label }}</label>
+              </div>
+            {% endfor %}
+          </div>
+        </div>
+
+        <div class="col-lg-3 axis-picker">
+          <label class="form-label small text-body-secondary mb-1">Horizontal axis</label>
+          <select class="form-select form-select-sm mb-1 axis-kind" data-axis="x"></select>
+          <select class="form-select form-select-sm mb-1 axis-band" data-axis="x" data-slot="0"></select>
+          <select class="form-select form-select-sm mb-1 axis-band" data-axis="x" data-slot="1"></select>
+          <div class="d-flex gap-3">
+            <div class="form-check form-check-inline">
+              <input class="form-check-input axis-log" type="checkbox" data-axis="x" id="x-log">
+              <label class="form-check-label small" for="x-log">log</label>
+            </div>
+            <div class="form-check form-check-inline">
+              <input class="form-check-input axis-reverse" type="checkbox" data-axis="x" id="x-reverse">
+              <label class="form-check-label small" for="x-reverse">reversed</label>
+            </div>
+          </div>
+        </div>
+
+        <div class="col-lg-3 axis-picker">
+          <label class="form-label small text-body-secondary mb-1">Vertical axis</label>
+          <select class="form-select form-select-sm mb-1 axis-kind" data-axis="y"></select>
+          <select class="form-select form-select-sm mb-1 axis-band" data-axis="y" data-slot="0"></select>
+          <select class="form-select form-select-sm mb-1 axis-band" data-axis="y" data-slot="1"></select>
+          <div class="d-flex gap-3">
+            <div class="form-check form-check-inline">
+              <input class="form-check-input axis-log" type="checkbox" data-axis="y" id="y-log">
+              <label class="form-check-label small" for="y-log">log</label>
+            </div>
+            <div class="form-check form-check-inline">
+              <input class="form-check-input axis-reverse" type="checkbox" data-axis="y" id="y-reverse">
+              <label class="form-check-label small" for="y-reverse">reversed</label>
+            </div>
+          </div>
+        </div>
+
+        <div class="col-lg-3">
+          <label class="form-label small text-body-secondary mb-1">Colour by</label>
+          <select class="form-select form-select-sm mb-2" id="colour-by">
+            <option value="">the grid</option>
+            <option value="teff">Teff</option>
+            <option value="logg">log g</option>
+            <option value="feh">[Fe/H]</option>
+          </select>
+
+          <label class="form-label small text-body-secondary mb-1">Connect models along</label>
+          <select class="form-select form-select-sm" id="track-by">
+            <option value="">nothing - points only</option>
+            <option value="teff">Teff</option>
+            <option value="logg">log g</option>
+            <option value="feh">[Fe/H]</option>
+          </select>
+        </div>
+      </div>
+
+      <hr class="my-3">
+
+      <div class="row g-3 align-items-start">
+        <div class="col-lg-4">
+          <label class="form-label small text-body-secondary mb-1">
+            Extinction
+            <span class="text-body-secondary" id="av-note"></span>
+          </label>
+          <div class="d-flex align-items-center gap-2">
+            <input type="range" class="form-range" id="av-slider" min="0" max="5" step="0.02" value="0">
+            <span class="slider-value" id="av-value">Av 0.00</span>
+          </div>
+        </div>
+
+        <div class="col-lg-4">
+          <label class="form-label small text-body-secondary mb-1">
+            Radius
+            <span class="text-body-secondary" id="radius-note"></span>
+          </label>
+          <div class="d-flex align-items-center gap-2">
+            <input type="range" class="form-range" id="radius-slider" min="-2" max="3" step="0.02" value="0">
+            <span class="slider-value" id="radius-value">1.00 R&#9737;</span>
+          </div>
+        </div>
+
+        <div class="col-lg-4">
+          <label class="form-label small text-body-secondary mb-1">Show only models within</label>
+          <div class="d-flex flex-wrap gap-2 align-items-center small">
+            <span class="text-body-secondary">Teff</span>
+            <input type="number" class="form-control form-control-sm range-input" id="teff-min" placeholder="min">
+            <input type="number" class="form-control form-control-sm range-input" id="teff-max" placeholder="max">
+          </div>
+          <div class="d-flex flex-wrap gap-2 align-items-center small mt-1">
+            <span class="text-body-secondary">log g</span>
+            <input type="number" class="form-control form-control-sm range-input" id="logg-min" placeholder="min" step="0.1">
+            <input type="number" class="form-control form-control-sm range-input" id="logg-max" placeholder="max" step="0.1">
+          </div>
+          <div class="d-flex flex-wrap gap-2 align-items-center small mt-1">
+            <span class="text-body-secondary">[Fe/H]</span>
+            <input type="number" class="form-control form-control-sm range-input" id="feh-min" placeholder="min" step="0.1">
+            <input type="number" class="form-control form-control-sm range-input" id="feh-max" placeholder="max" step="0.1">
+            <button type="button" class="btn btn-sm btn-link p-0" id="range-reset">clear</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="text-body-secondary text-center py-5" id="explore-status">
+        <div class="spinner-border spinner-border-sm" role="status"></div>
+        Reading the grids
+      </div>
+
+      <div id="explore-box" class="plotly-resizable mt-3" style="height: 520px; display: none;">
+        <div id="explore-plot" class="plotly-chart"></div>
+        <div class="plot-resize-handle" role="separator" title="Drag to resize the plot"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ------------------------------------------------ the spectra -->
+  <div class="card mb-4">
+    <div class="card-header">
+      Model spectra
+      <span class="text-body-secondary small ms-2">
+        the families the cubes above were convolved from, at the grid's own nodes
+      </span>
+    </div>
+
+    <div class="card-body pb-0">
+      <div class="row g-3 align-items-end">
+        <div class="col-lg-3">
+          <label class="form-label small text-body-secondary mb-1">Grid</label>
+          <select class="form-select form-select-sm" id="spectra-grid">
+            {% for grid in grids %}
+              {% if grid.has_spectra %}
+                <option value="{{ grid.name }}">{{ grid.label }}</option>
+              {% endif %}
+            {% endfor %}
+          </select>
+        </div>
+
+        <div class="col-lg-2">
+          <label class="form-label small text-body-secondary mb-1">Step along</label>
+          <select class="form-select form-select-sm" id="spectra-along">
+            <option value="teff">Teff</option>
+            <option value="logg">log g</option>
+            <option value="feh">[Fe/H]</option>
+          </select>
+        </div>
+
+        <div class="col-lg-3">
+          <label class="form-label small text-body-secondary mb-1">
+            Holding <span id="spectra-held-note" class="text-body-secondary"></span>
+          </label>
+          <div class="d-flex gap-2">
+            <input type="number" class="form-control form-control-sm" id="spectra-teff" placeholder="Teff">
+            <input type="number" class="form-control form-control-sm" id="spectra-logg" placeholder="log g" step="0.5">
+            <input type="number" class="form-control form-control-sm" id="spectra-feh" placeholder="[Fe/H]" step="0.5">
+          </div>
+        </div>
+
+        <div class="col-lg-2">
+          <label class="form-label small text-body-secondary mb-1">Normalisation</label>
+          <select class="form-select form-select-sm" id="spectra-norm">
+            <option value="peak">each to its own peak</option>
+            <option value="bol">to unit bolometric flux</option>
+            <option value="raw">surface flux as computed</option>
+          </select>
+        </div>
+
+        <div class="col-lg-2">
+          <label class="form-label small text-body-secondary mb-1">Form</label>
+          <select class="form-select form-select-sm mb-2" id="spectra-form">
+            <option value="lf">&#955; F<sub>&#955;</sub></option>
+            <option value="f">F<sub>&#955;</sub></option>
+          </select>
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" id="spectra-bands">
+            <label class="form-check-label small" for="spectra-bands">passbands</label>
+          </div>
+        </div>
+      </div>
+
+      <div class="text-body-secondary text-center py-5" id="spectra-status">
+        <div class="spinner-border spinner-border-sm" role="status"></div>
+        Reading the spectra
+      </div>
+
+      <div id="spectra-box" class="plotly-resizable mt-3" style="height: 460px; display: none;">
+        <div id="spectra-plot" class="plotly-chart"></div>
+        <div class="plot-resize-handle" role="separator" title="Drag to resize the plot"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ------------------------------------------------ what is installed -->
+  <h3 class="mt-4">The grids</h3>
+  <p class="text-body-secondary">
+    What the directory holds, in temperature order. A grid is offered to a fit when it can say what it
+    is - a label from its own file, or from the short table of what is known about the ones that arrive
+    saying nothing.
+  </p>
+
+  <div class="table-responsive">
+    <table class="table table-sm table-hover table-grids">
+      <thead>
+        <tr>
+          <th>Grid</th>
+          <th>Covers</th>
+          <th>Second axis</th>
+          <th>Spectra</th>
+          <th>Gaia XP</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for grid in grids %}
+          <tr>
+            <td><b>{{ grid.label }}</b><div class="text-body-secondary small">{{ grid.name }}</div></td>
+            <td class="grid-note small">{{ grid.note }}</td>
+            <td class="small">
+              {% if grid.axis_note %}
+                <span class="text-warning-emphasis">{{ grid.axis_note }}</span>
+              {% else %}
+                surface gravity
+              {% endif %}
+            </td>
+            <td class="small">{% if grid.has_spectra %}yes{% else %}&mdash;{% endif %}</td>
+            <td class="small">{% if grid.has_xp %}yes{% else %}&mdash;{% endif %}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <!-- ------------------------------------------------ coverage and support -->
+  <div class="card mb-4">
+    <div class="card-header">
+      <a class="text-decoration-none" data-bs-toggle="collapse" href="#coverage-section"
+         role="button" aria-expanded="false" aria-controls="coverage-section">
+        Coverage and support
+      </a>
+      <span class="text-body-secondary small ms-2">
+        which bands each grid predicts, and how densely its models are laid out
+      </span>
+    </div>
+
+    <div class="collapse" id="coverage-section">
+      <div class="card-body">
+        <p class="text-body-secondary small">
+          A band a grid has no flux for is one a fit silently drops, and the grids differ by more than
+          thirty bands in what they reach. Where the models are is the other half of the same question:
+          a scattered grid is interpolated over a triangulation of the models it has, and the hull of
+          that triangulation is convex where a set of computed models is not - so past the temperatures
+          a given gravity was computed at, a simplex carries on across a gap. Those are refused rather
+          than answered, and the fraction of them is how much of a grid's apparent extent is not there.
+        </p>
+
+        <div class="text-body-secondary text-center py-5" id="coverage-status">
+          <div class="spinner-border spinner-border-sm" role="status"></div>
+          Reading every grid
+        </div>
+
+        <div id="coverage-box" class="plotly-resizable" style="height: 420px; display: none;">
+          <div id="coverage-plot" class="plotly-chart"></div>
+          <div class="plot-resize-handle" role="separator" title="Drag to resize the plot"></div>
+        </div>
+
+        <div class="table-responsive mt-3">
+          <table class="table table-sm table-hover" id="support-table" style="display: none;">
+            <thead>
+              <tr>
+                <th>Grid</th>
+                <th class="text-end">Models</th>
+                <th>Layout</th>
+                <th>Varies in</th>
+                <th class="text-end">Bands</th>
+                <th class="text-end">Bridging</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <h3 class="mt-4">What these numbers are not</h3>
+
+  <ul class="text-body-secondary">
+    <li>
+      <b>Not a Hertzsprung-Russell diagram.</b> No cube here carries a radius or a luminosity, so
+      neither can be plotted. The colour-magnitude preset is the honest substitute: magnitudes at one
+      solar radius, with the radius slider moving every one of them by the same
+      5&nbsp;log<sub>10</sub>(R/R<sub>&#9737;</sub>). A real track through the diagram would need
+      evolutionary models, which are not part of this.
+    </li>
+    <li>
+      <b>The PoWR grids do not share these axes.</b> Their second parameter is log&nbsp;R<sub>t</sub>,
+      a transformed radius rather than a gravity, and their temperature is quoted at a reference
+      optical depth in an expanding wind. A bolometric correction or an absolute magnitude computed
+      from &#963;T<sup>4</sup> per unit surface is not referred to the same radius as it is for a
+      photosphere, so those two axes are not comparable across the two kinds of grid. Colours are.
+    </li>
+    <li>
+      <b>Synthetic colours carry the usual systematics.</b> The solar node of Castelli &amp; Kurucz
+      comes out at M<sub>V</sub>&nbsp;4.83, M<sub>bol</sub>&nbsp;4.76 and BC<sub>V</sub>&nbsp;-0.07,
+      which are the accepted values; its B&nbsp;-&nbsp;V is 0.695 against an observed 0.65. Good enough
+      to trace a dependence, not good enough to calibrate against.
+    </li>
+    <li>
+      <b>Reddening is applied at the pivot wavelength</b>, not integrated through the passband -
+      A<sub>b</sub>&nbsp;=&nbsp;A<sub>v</sub>&#183;k(&#955;<sub>pivot</sub>) on the Fitzpatrick (1999)
+      law at R<sub>V</sub>&nbsp;=&nbsp;3.1. That is an approximation, and it is the same one the
+      likelihood makes, which is the reason for making it here.
+    </li>
+  </ul>
+
+  {{ grids|json_script:"grids-data" }}
+  {{ bands|json_script:"bands-data" }}
+  {{ presets|json_script:"presets-data" }}
+  {{ state|json_script:"state-data" }}
+
+  <script>
+   $(function(){
+     var GRIDS = JSON.parse($('#grids-data').text());
+     var BANDS = JSON.parse($('#bands-data').text());
+     var PRESETS = JSON.parse($('#presets-data').text());
+     var START = JSON.parse($('#state-data').text());
+     var TRACK_LIMIT = {{ track_limit }};
+
+     // ------------------------------------------------------ axis pickers
+
+     // How many bands each kind of axis needs named. A colour is two, a
+     // magnitude or a correction one, a parameter none - which is what the
+     // pickers below show and hide on.
+     var AXIS_KINDS = [
+       {id: 'teff',  name: 'Effective temperature',  bands: 0},
+       {id: 'logg',  name: 'Surface gravity, log g', bands: 0},
+       {id: 'feh',   name: 'Metallicity, [Fe/H]',    bands: 0},
+       {id: 'color', name: 'Colour',                 bands: 2},
+       {id: 'mag',   name: 'Absolute magnitude',     bands: 1},
+       {id: 'bc',    name: 'Bolometric correction',  bands: 1},
+       {id: 'mbol',  name: 'Bolometric magnitude',   bands: 0},
+     ];
+
+     var kindOf = function(id){
+       for(var i = 0; i < AXIS_KINDS.length; i++)
+         if(AXIS_KINDS[i].id === id)
+           return AXIS_KINDS[i];
+
+       return AXIS_KINDS[0];
+     };
+
+     $('.axis-kind').each(function(){
+       var select = $(this);
+
+       AXIS_KINDS.forEach(function(kind){
+         select.append($('<option>').val(kind.id).text(kind.name));
+       });
+     });
+
+     $('.axis-band').each(function(){
+       var select = $(this);
+
+       BANDS.forEach(function(band){
+         select.append($('<option>').val(band.band)
+                       .text(band.band + '  ' + band.wavelength + ' µm'));
+       });
+     });
+
+     // The axis as the server names it, and back again
+     var readAxis = function(which){
+       var kind = kindOf($('.axis-kind[data-axis="' + which + '"]').val());
+       var bands = $('.axis-band[data-axis="' + which + '"]');
+
+       if(kind.bands === 0)
+         return kind.id;
+
+       if(kind.bands === 1)
+         return kind.id + ':' + $(bands[0]).val();
+
+       return kind.id + ':' + $(bands[0]).val() + '-' + $(bands[1]).val();
+     };
+
+     var writeAxis = function(which, spec){
+       var parts = String(spec).split(':');
+       var kind = kindOf(parts[0]);
+       var bands = $('.axis-band[data-axis="' + which + '"]');
+
+       $('.axis-kind[data-axis="' + which + '"]').val(kind.id);
+
+       if(kind.bands === 1 && parts[1])
+         $(bands[0]).val(parts[1]);
+       else if(kind.bands === 2 && parts[1]){
+         var pair = parts[1].split('-');
+         $(bands[0]).val(pair[0]);
+         $(bands[1]).val(pair[1]);
+       }
+
+       showBands(which);
+     };
+
+     var showBands = function(which){
+       var kind = kindOf($('.axis-kind[data-axis="' + which + '"]').val());
+
+       $('.axis-band[data-axis="' + which + '"]').each(function(){
+         $(this).toggle(parseInt($(this).data('slot'), 10) < kind.bands);
+       });
+     };
+
+     // ------------------------------------------------------ colours
+
+     // A ramp of its own rather than Plotly's, because a track is one line of
+     // one colour and a colourscale can only be given to markers
+     var VIRIDIS = [[68, 1, 84], [72, 40, 120], [62, 74, 137], [49, 104, 142],
+                    [38, 130, 142], [31, 158, 137], [53, 183, 121],
+                    [109, 205, 89], [180, 222, 44], [253, 231, 37]];
+
+     var ramp = function(t){
+       if(!isFinite(t))
+         return 'rgb(128,128,128)';
+
+       t = Math.max(0, Math.min(1, t)) * (VIRIDIS.length - 1);
+
+       var i = Math.min(Math.floor(t), VIRIDIS.length - 2);
+       var f = t - i;
+       var a = VIRIDIS[i], b = VIRIDIS[i + 1];
+
+       return 'rgb(' + Math.round(a[0] + f * (b[0] - a[0])) + ',' +
+                       Math.round(a[1] + f * (b[1] - a[1])) + ',' +
+                       Math.round(a[2] + f * (b[2] - a[2])) + ')';
+     };
+
+     // Grids told apart when the colour is carrying a parameter instead
+     var GRID_COLOURS = ['#4c78a8', '#f58518', '#54a24b', '#e45756', '#72b7b2',
+                         '#b279a2', '#ff9da6', '#9d755d'];
+     var GRID_SYMBOLS = ['circle', 'square', 'diamond', 'triangle-up', 'cross',
+                         'x', 'star', 'hexagon'];
+
+     // ------------------------------------------------------ the explorer
+
+     var data = null;      // what the server last sent
+     var pending = null;   // the request in flight, so a stale one may be dropped
+
+     var state = function(){
+       return {
+         grids: $('.grid-check:checked').map(function(){ return this.value; }).get(),
+         x: readAxis('x'),
+         y: readAxis('y'),
+         c: $('#colour-by').val(),
+       };
+     };
+
+     var slider = function(){
+       return {
+         av: parseFloat($('#av-slider').val()),
+         logr: parseFloat($('#radius-slider').val()),
+       };
+     };
+
+     // An axis as it stands after the two sliders. Both are exactly linear and
+     // their slopes came with the values, so this is the whole of it.
+     var valuesOf = function(grid, which){
+       var axis = grid.axes[which];
+
+       if(!axis || axis.error)
+         return null;
+
+       if(axis.ref)
+         return grid[axis.ref];
+
+       var at = slider();
+       var shift = axis.slope * at.av - (axis.radius ? 5 * at.logr : 0);
+
+       if(!shift)
+         return axis.values;
+
+       return axis.values.map(function(v){
+         return v === null ? null : v + shift;
+       });
+     };
+
+     var labelOf = function(which){
+       if(!data || !data.grids.length)
+         return '';
+
+       for(var i = 0; i < data.grids.length; i++){
+         var axis = data.grids[i].axes[which];
+         if(axis && axis.label)
+           return axis.label;
+       }
+
+       return '';
+     };
+
+     var limit = function(id){
+       var value = parseFloat($('#' + id).val());
+       return isFinite(value) ? value : null;
+     };
+
+     // Which models survive the three range boxes
+     var keptOf = function(grid){
+       var bounds = [['teff', limit('teff-min'), limit('teff-max')],
+                     ['logg', limit('logg-min'), limit('logg-max')],
+                     ['feh', limit('feh-min'), limit('feh-max')]];
+       var kept = [];
+
+       for(var i = 0; i < grid.teff.length; i++){
+         var ok = true;
+
+         for(var b = 0; b < bounds.length && ok; b++){
+           var value = grid[bounds[b][0]][i];
+
+           if(value === null ||
+              (bounds[b][1] !== null && value < bounds[b][1]) ||
+              (bounds[b][2] !== null && value > bounds[b][2]))
+             ok = false;
+         }
+
+         if(ok)
+           kept.push(i);
+       }
+
+       return kept;
+     };
+
+     var extent = function(values){
+       var lo = Infinity, hi = -Infinity;
+
+       values.forEach(function(v){
+         if(v !== null && isFinite(v)){
+           lo = Math.min(lo, v);
+           hi = Math.max(hi, v);
+         }
+       });
+
+       return isFinite(lo) ? [lo, hi] : null;
+     };
+
+     // Where the drawn points reach, kept by traces_of for the reddening
+     // arrow to be put somewhere it can be seen
+     var drawn = null;
+
+     var traces_of = function(){
+       var traces = [];
+       var colour = $('#colour-by').val();
+       var track = $('#track-by').val();
+       var shown = 0, dropped = 0;
+
+       drawn = null;
+
+       // One scale across every grid on the plot, so that two of them may be
+       // compared rather than each stretched over its own range
+       var span = null;
+
+       if(colour){
+         data.grids.forEach(function(grid){
+           if(grid.error)
+             return;
+
+           var kept = keptOf(grid);
+           var these = kept.map(function(i){ return grid[colour][i]; });
+           var range = extent(these);
+
+           if(range)
+             span = span ? [Math.min(span[0], range[0]),
+                            Math.max(span[1], range[1])] : range;
+         });
+       }
+
+       data.grids.forEach(function(grid, index){
+         if(grid.error)
+           return;
+
+         var xs = valuesOf(grid, 'x'), ys = valuesOf(grid, 'y');
+
+         if(!xs || !ys)
+           return;
+
+         var kept = keptOf(grid);
+         var label = gridLabel(grid.name);
+
+         // Lines first, so the points sit on top of them
+         if(track){
+           var groups = {};
+           var others = ['teff', 'logg', 'feh'].filter(function(p){
+             return p !== track;
+           });
+
+           kept.forEach(function(i){
+             var key = others.map(function(p){ return grid[p][i]; }).join('|');
+             (groups[key] = groups[key] || []).push(i);
+           });
+
+           var keys = Object.keys(groups);
+
+           if(keys.length > TRACK_LIMIT)
+             dropped += keys.length;
+           else
+             keys.forEach(function(key){
+               var members = groups[key].slice().sort(function(a, b){
+                 return grid[track][a] - grid[track][b];
+               });
+
+               var tint = GRID_COLOURS[index % GRID_COLOURS.length];
+
+               if(colour && span && span[1] > span[0]){
+                 var at = grid[colour][members[0]];
+                 tint = ramp((at - span[0]) / (span[1] - span[0]));
+               }
+
+               traces.push({
+                 type: 'scattergl',
+                 x: members.map(function(i){ return xs[i]; }),
+                 y: members.map(function(i){ return ys[i]; }),
+                 mode: 'lines',
+                 line: {color: tint, width: 1},
+                 opacity: 0.7,
+                 showlegend: false,
+                 hoverinfo: 'skip',
+               });
+             });
+         }
+
+         var marker = {
+           size: 4,
+           symbol: GRID_SYMBOLS[index % GRID_SYMBOLS.length],
+           line: {width: 0},
+         };
+
+         if(colour && span){
+           marker.color = kept.map(function(i){ return grid[colour][i]; });
+           marker.colorscale = 'Viridis';
+           marker.cmin = span[0];
+           marker.cmax = span[1];
+           // One colourbar for the plot, drawn beside the first grid on it
+           marker.showscale = traces.every(function(t){
+             return !(t.marker && t.marker.showscale);
+           });
+           marker.colorbar = {title: {text: colourLabel(colour)}, thickness: 12};
+         } else {
+           marker.color = GRID_COLOURS[index % GRID_COLOURS.length];
+         }
+
+         shown += kept.length;
+
+         var here = {x: extent(kept.map(function(i){ return xs[i]; })),
+                     y: extent(kept.map(function(i){ return ys[i]; }))};
+
+         if(here.x && here.y)
+           drawn = drawn ? {
+             x: [Math.min(drawn.x[0], here.x[0]), Math.max(drawn.x[1], here.x[1])],
+             y: [Math.min(drawn.y[0], here.y[0]), Math.max(drawn.y[1], here.y[1])],
+           } : here;
+
+         traces.push({
+           type: 'scattergl',
+           x: kept.map(function(i){ return xs[i]; }),
+           y: kept.map(function(i){ return ys[i]; }),
+           customdata: kept.map(function(i){
+             return [grid.teff[i], grid.logg[i], grid.feh[i]];
+           }),
+           mode: 'markers',
+           marker: marker,
+           name: label,
+           hovertemplate: '<b>' + label + '</b><br>' +
+                          'Teff %{customdata[0]:.0f} K, ' +
+                          (grid.axis_logg === 'logg' ? 'log g' : 'log Rt') +
+                          ' %{customdata[1]:.2f}, [Fe/H] %{customdata[2]:.2f}<br>' +
+                          '%{x:.4g}, %{y:.4g}<extra></extra>',
+         });
+       });
+
+       var note = data.grids.length
+                ? shown.toLocaleString() + ' model' + (shown === 1 ? '' : 's')
+                : 'no grid chosen';
+
+       if(dropped)
+         note += ', tracks not drawn - ' + dropped.toLocaleString() +
+                 ' of them, past the ' + TRACK_LIMIT + ' this will draw';
+
+       $('#explore-count').text(note);
+
+       return traces;
+     };
+
+     var gridLabel = function(name){
+       for(var i = 0; i < GRIDS.length; i++)
+         if(GRIDS[i].name === name)
+           return GRIDS[i].label;
+
+       return name;
+     };
+
+     var colourLabel = function(id){
+       return {teff: 'Teff, K', logg: 'log g', feh: '[Fe/H]'}[id] || id;
+     };
+
+     // What one magnitude of extinction does to the plot, drawn where it can
+     // be seen. Only on axes that reddening moves in both directions and that
+     // are both linear - on a log axis an arrow of fixed length in data units
+     // is not the same arrow at both ends of it.
+     var reddeningArrow = function(){
+       if(!data || !drawn)
+         return [];
+
+       if($('.axis-log[data-axis="x"]').is(':checked') ||
+          $('.axis-log[data-axis="y"]').is(':checked'))
+         return [];
+
+       var slope = {x: 0, y: 0};
+
+       data.grids.forEach(function(grid){
+         if(grid.error)
+           return;
+
+         ['x', 'y'].forEach(function(which){
+           var axis = grid.axes[which];
+           if(axis && !axis.error && axis.slope)
+             slope[which] = axis.slope;
+         });
+       });
+
+       if(!slope.x && !slope.y)
+         return [];
+
+       var pad = function(range){ return 0.08 * (range[1] - range[0]); };
+       var x0 = drawn.x[0] + pad(drawn.x);
+       var y0 = drawn.y[1] - pad(drawn.y);
+
+       return [{
+         x: x0 + slope.x, y: y0 + slope.y, ax: x0, ay: y0,
+         xref: 'x', yref: 'y', axref: 'x', ayref: 'y',
+         showarrow: true, arrowhead: 2, arrowsize: 1, arrowwidth: 1.5,
+         arrowcolor: '#e45756',
+         text: 'Av = 1', font: {color: '#e45756', size: 11},
+         xanchor: 'left', yanchor: 'bottom', standoff: 0,
+       }];
+     };
+
+     var layout_of = function(){
+       var theme = plotlyTheme();
+
+       var axis = function(which){
+         var out = {
+           title: {text: labelOf(which)},
+           type: $('.axis-log[data-axis="' + which + '"]').is(':checked') ? 'log' : 'linear',
+           showgrid: true, gridcolor: theme.gridcolor, zeroline: false,
+           linecolor: theme.linecolor,
+         };
+
+         if($('.axis-reverse[data-axis="' + which + '"]').is(':checked'))
+           out.autorange = 'reversed';
+
+         return out;
+       };
+
+       return {
+         margin: {l: 65, r: 20, t: 10, b: 55},
+         xaxis: axis('x'),
+         yaxis: axis('y'),
+         hovermode: 'closest',
+         legend: {orientation: 'h', y: -0.15},
+         annotations: reddeningArrow(),
+         font: theme.font,
+         plot_bgcolor: theme.plot_bgcolor,
+         paper_bgcolor: theme.paper_bgcolor,
+       };
+     };
+
+     var redraw = function(){
+       if(!data)
+         return;
+
+       $('#explore-status').hide();
+       $('#explore-box').show();
+
+       // The traces first: layout_of places the reddening arrow against the
+       // extents that drawing them works out
+       var traces = traces_of();
+
+       Plotly.react('explore-plot', traces, layout_of(),
+                    {responsive: true, displaylogo: false});
+     };
+
+     // Whether either slider does anything on the axes as they stand, said
+     // rather than left to be discovered by dragging one that cannot
+     var sliderNotes = function(){
+       var moves = {av: false, radius: false};
+
+       if(data)
+         data.grids.forEach(function(grid){
+           if(grid.error)
+             return;
+
+           ['x', 'y'].forEach(function(which){
+             var axis = grid.axes[which];
+             if(!axis || axis.error)
+               return;
+
+             if(axis.slope)
+               moves.av = true;
+             if(axis.radius)
+               moves.radius = true;
+           });
+         });
+
+       $('#av-slider').prop('disabled', !moves.av);
+       $('#radius-slider').prop('disabled', !moves.radius);
+
+       $('#av-note').text(moves.av ? '' : '- neither axis is reddened');
+       $('#radius-note').text(moves.radius ? '' : '- neither axis is a magnitude');
+     };
+
+     var load = function(){
+       var want = state();
+
+       if(!want.grids.length){
+         data = {grids: []};
+         redraw();
+         return;
+       }
+
+       $('#explore-status').show().find('span').remove();
+
+       var request = $.getJSON('{% url "models_data" %}', {
+         grids: want.grids.join(','),
+         x: want.x, y: want.y, c: want.c || '',
+       });
+
+       pending = request;
+
+       request.done(function(answer){
+         // A slower answer to an older question is not the one to draw
+         if(pending !== request)
+           return;
+
+         data = answer;
+         sliderNotes();
+         redraw();
+       }).fail(function(xhr){
+         if(pending !== request)
+           return;
+
+         var message = 'Could not read the grids';
+
+         try {
+           message = JSON.parse(xhr.responseText).error || message;
+         } catch(e) {}
+
+         $('#explore-status').show().text(message);
+         $('#explore-box').hide();
+       });
+     };
+
+     // ------------------------------------------------------ the controls
+
+     $('.grid-check').on('change', load);
+     $('.axis-kind').on('change', function(){
+       showBands($(this).data('axis'));
+       load();
+     });
+     $('.axis-band').on('change', load);
+     $('#colour-by').on('change', load);
+
+     $('.axis-log, .axis-reverse, #track-by').on('change', redraw);
+     $('#teff-min, #teff-max, #logg-min, #logg-max, #feh-min, #feh-max')
+       .on('change', redraw);
+
+     $('#range-reset').on('click', function(){
+       $('#teff-min, #teff-max, #logg-min, #logg-max, #feh-min, #feh-max').val('');
+       redraw();
+     });
+
+     var sliderMoved = function(){
+       var at = slider();
+
+       $('#av-value').text('Av ' + at.av.toFixed(2));
+       $('#radius-value').text(Math.pow(10, at.logr).toPrecision(3) + ' R☉');
+
+       redraw();
+     };
+
+     $('#av-slider, #radius-slider').on('input', sliderMoved);
+
+     $('.preset-pick').on('click', function(){
+       var id = $(this).data('preset');
+
+       PRESETS.forEach(function(preset){
+         if(preset.id !== id)
+           return;
+
+         $('#preset-note').text(preset.note);
+
+         writeAxis('x', preset.state.x);
+         writeAxis('y', preset.state.y);
+         $('#colour-by').val(preset.state.c || '');
+         $('#x-log').prop('checked', !!preset.state.xlog);
+         $('#y-log').prop('checked', !!preset.state.ylog);
+         $('#x-reverse').prop('checked', !!preset.state.xreverse);
+         $('#y-reverse').prop('checked', !!preset.state.yreverse);
+
+         load();
+       });
+     });
+
+     onThemeChange(function(){ plotlyRetheme('explore-plot'); });
+     plotlyResizable('explore-plot');
+
+     // ------------------------------------------------------ the spectra
+
+     var passbands = null;
+
+     var spectraTraces = function(answer){
+       var form = $('#spectra-form').val();
+       var norm = $('#spectra-norm').val();
+       var wave = answer.wave_um;
+       var traces = [];
+
+       var span = extent(answer.spectra.map(function(s){
+         return s[$('#spectra-along').val()];
+       })) || [0, 1];
+
+       answer.spectra.forEach(function(spectrum, index){
+         var scale = spectrum.scale;
+
+         if(norm === 'peak')
+           scale = 1.0;
+         else if(norm === 'bol')
+           // sigma T^4 in the same units the flux is in, erg/s/cm2/um
+           scale = spectrum.scale / (5.670374419e-5 * Math.pow(spectrum.teff, 4));
+
+         var at = spectrum[$('#spectra-along').val()];
+         var tint = span[1] > span[0]
+                  ? ramp((at - span[0]) / (span[1] - span[0]))
+                  : GRID_COLOURS[index % GRID_COLOURS.length];
+
+         traces.push({
+           type: 'scattergl',
+           x: wave,
+           y: spectrum.flux.map(function(f, i){
+             if(f === null)
+               return null;
+
+             return f * scale * (form === 'lf' ? wave[i] : 1);
+           }),
+           mode: 'lines',
+           line: {color: tint, width: 1},
+           name: spectrum.teff.toFixed(0) + ' K, ' +
+                 spectrum.logg.toFixed(2) + ', ' + spectrum.feh.toFixed(2),
+           hovertemplate: '%{x:.4g} µm, %{y:.4g}<extra>' +
+                          spectrum.teff.toFixed(0) + ' K</extra>',
+         });
+       });
+
+       if(passbands)
+         passbands.families.forEach(function(family){
+           family.filters.forEach(function(filter, i){
+             traces.push({
+               x: filter.wave,
+               // Drawn on an axis of their own, so that a transmission of one
+               // means the top of the plot whatever the fluxes are doing
+               yaxis: 'y2',
+               y: filter.trans,
+               mode: 'lines',
+               line: {color: family.color, width: 0.8},
+               fill: 'tozeroy',
+               fillcolor: 'rgba(128,128,128,0.10)',
+               name: family.name,
+               legendgroup: family.id,
+               showlegend: false,
+               hoverinfo: 'skip',
+             });
+           });
+         });
+
+       return traces;
+     };
+
+     var spectraLayout = function(){
+       var theme = plotlyTheme();
+       var form = $('#spectra-form').val();
+       var norm = $('#spectra-norm').val();
+
+       var unit = {
+         peak: 'normalised to the peak',
+         bol: 'per unit bolometric flux',
+         raw: 'erg/s/cm²/µm at the surface',
+       }[norm];
+
+       return {
+         margin: {l: 70, r: 20, t: 10, b: 55},
+         xaxis: {
+           type: 'log', title: {text: 'Wavelength, µm'},
+           showgrid: true, gridcolor: theme.gridcolor, zeroline: false,
+         },
+         yaxis: {
+           type: 'log',
+           title: {text: (form === 'lf' ? 'λ Fλ, ' : 'Fλ, ') + unit},
+           showgrid: true, gridcolor: theme.gridcolor, zeroline: false,
+         },
+         yaxis2: {
+           overlaying: 'y', side: 'right', range: [0, 4],
+           showticklabels: false, showgrid: false, zeroline: false,
+         },
+         hovermode: 'closest',
+         legend: {orientation: 'h', y: -0.18},
+         font: theme.font,
+         plot_bgcolor: theme.plot_bgcolor,
+         paper_bgcolor: theme.paper_bgcolor,
+       };
+     };
+
+     var spectra = null;
+
+     var spectraRedraw = function(){
+       if(!spectra)
+         return;
+
+       Plotly.react('spectra-plot', spectraTraces(spectra), spectraLayout(),
+                    {responsive: true, displaylogo: false});
+     };
+
+     var spectraLoad = function(){
+       var along = $('#spectra-along').val();
+
+       // The two that are held are the two not being stepped
+       $('#spectra-teff').toggle(along !== 'teff');
+       $('#spectra-logg').toggle(along !== 'logg');
+       $('#spectra-feh').toggle(along !== 'feh');
+
+       $('#spectra-status').show().html(
+         '<div class="spinner-border spinner-border-sm" role="status"></div> Reading the spectra');
+       $('#spectra-box').hide();
+
+       $.getJSON('{% url "models_spectra" %}', {
+         grid: $('#spectra-grid').val(),
+         along: along,
+         teff: along === 'teff' ? '' : $('#spectra-teff').val(),
+         logg: along === 'logg' ? '' : $('#spectra-logg').val(),
+         feh: along === 'feh' ? '' : $('#spectra-feh').val(),
+         count: 8,
+       }).done(function(answer){
+         spectra = answer;
+
+         // What the grid actually had nearest what was asked for, which is
+         // rarely the round number that was typed
+         var held = [];
+
+         Object.keys(answer.fixed).forEach(function(key){
+           held.push({teff: 'Teff', logg: 'log g', feh: '[Fe/H]'}[key] +
+                     ' ' + answer.fixed[key]);
+         });
+
+         $('#spectra-held-note').text(held.length ? 'at ' + held.join(', ') : '');
+         $('#spectra-status').hide();
+         $('#spectra-box').show();
+
+         spectraRedraw();
+       }).fail(function(xhr){
+         var message = 'Could not read the spectra';
+
+         try {
+           message = JSON.parse(xhr.responseText).error || message;
+         } catch(e) {}
+
+         $('#spectra-status').show().text(message);
+       });
+     };
+
+     $('#spectra-grid, #spectra-along, #spectra-teff, #spectra-logg, #spectra-feh')
+       .on('change', spectraLoad);
+     $('#spectra-form, #spectra-norm').on('change', spectraRedraw);
+
+     $('#spectra-bands').on('change', function(){
+       if(!this.checked){
+         passbands = null;
+         spectraRedraw();
+         return;
+       }
+
+       if(passbands){
+         spectraRedraw();
+         return;
+       }
+
+       $.getJSON('{% url "passbands_data" %}').done(function(answer){
+         passbands = answer.families ? answer : null;
+         spectraRedraw();
+       });
+     });
+
+     onThemeChange(function(){ plotlyRetheme('spectra-plot'); });
+     plotlyResizable('spectra-plot');
+
+     // ------------------------------------------------------ coverage
+
+     var coverageLoaded = false;
+
+     $('#coverage-section').on('show.bs.collapse', function(){
+       if(coverageLoaded)
+         return;
+
+       coverageLoaded = true;
+
+       $.getJSON('{% url "models_coverage" %}').done(function(answer){
+         var theme = plotlyTheme();
+         var labels = answer.bands.map(function(b){ return b.band; });
+
+         var trace = {
+           type: 'heatmap',
+           x: labels,
+           y: answer.grids.map(function(g){ return g.label; }),
+           z: answer.grids.map(function(g){ return g.covered; }),
+           zmin: 0, zmax: 2,
+           // Three states: no flux in the cube, a flux no magnitude can be
+           // made of, and a band the grid answers for
+           colorscale: [[0, 'rgba(128,128,128,0.12)'], [0.49, 'rgba(128,128,128,0.12)'],
+                        [0.5, '#e4a11b'], [0.99, '#e4a11b'],
+                        [1, '#4c78a8']],
+           showscale: false,
+           xgap: 1, ygap: 1,
+           hovertemplate: '%{y}<br>%{x}: %{customdata}<extra></extra>',
+           customdata: answer.grids.map(function(g){
+             return g.covered.map(function(c){
+               return ['no flux in the cube',
+                       'flux, but the band has no zero point',
+                       'predicted'][c];
+             });
+           }),
+         };
+
+         $('#coverage-status').hide();
+         $('#coverage-box').show();
+
+         Plotly.react('coverage-plot', [trace], {
+           margin: {l: 130, r: 20, t: 10, b: 130},
+           xaxis: {tickangle: -90, tickfont: {size: 8}, showgrid: false},
+           // Plotly puts a heatmap's first row at the bottom; the grids are in
+           // temperature order and the table below reads the other way
+           yaxis: {automargin: true, showgrid: false, autorange: 'reversed'},
+           font: theme.font,
+           plot_bgcolor: theme.plot_bgcolor,
+           paper_bgcolor: theme.paper_bgcolor,
+         }, {responsive: true, displaylogo: false});
+
+         var body = $('#support-table tbody').empty();
+
+         answer.grids.forEach(function(grid){
+           var s = grid.support;
+
+           body.append($('<tr>')
+             .append($('<td>').text(grid.label))
+             .append($('<td class="text-end">').text(s ? s.models.toLocaleString() : '—'))
+             .append($('<td>').text(s ? s.layout : '—'))
+             .append($('<td class="small">').text(s ? s.varies.join(', ') : '—'))
+             .append($('<td class="text-end">').text(grid.count))
+             .append($('<td class="text-end">').text(
+               s && s.bridging !== null && s.bridging !== undefined
+                 ? (100 * s.bridging).toFixed(1) + '%' : '—')));
+         });
+
+         $('#support-table').show();
+       }).fail(function(){
+         $('#coverage-status').text('Could not read the grids');
+       });
+     });
+
+     onThemeChange(function(){ plotlyRetheme('coverage-plot'); });
+     plotlyResizable('coverage-plot');
+
+     // ------------------------------------------------------ opening state
+
+     START.grids.forEach(function(name){
+       $('#grid-' + name).prop('checked', true);
+     });
+
+     writeAxis('x', START.x);
+     writeAxis('y', START.y);
+     $('#colour-by').val(START.c || '');
+     $('#x-log').prop('checked', true);
+     $('#preset-note').text(PRESETS[0].note);
+
+     showBands('x');
+     showBands('y');
+     sliderMoved();
+     load();
+     spectraLoad();
+   });
+  </script>
+
+{% endblock %}
