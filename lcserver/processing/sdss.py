@@ -184,6 +184,14 @@ def _fetch_spectrum(row):
     help_text=f'SDSS DR{SDSS_DR} optical spectra, 3600-10400 A',
     # First of the spectra, being the largest collection of them
     order=79,
+    about=(
+        "The Sloan Digital Sky Survey, the largest optical spectroscopic "
+        "survey there is, covering 3600-10400 A at a resolution of about "
+        "two thousand."),
+    about_links=[
+        ('SDSS', 'https://www.sdss.org/'),
+        ('SkyServer', 'https://skyserver.sdss.org/'),
+    ],
     kind=KIND_SPECTROSCOPY,
     spectrum_files='sdss_*.txt',
     # A target may have several, one per time a fibre was put on it

@@ -252,6 +252,13 @@ def _frame_times(log):
     },
     help_text='Northern Sky Variability Survey, unfiltered, 1999-2000',
     order=25,
+    about=(
+        "The Northern Sky Variability Survey, recorded by ROTSE-I in 1999 "
+        "and 2000 - the earliest all-sky CCD photometry there is, and a "
+        "fixed point two decades before the modern surveys."),
+    about_links=[
+        ('NSVS at VizieR', 'https://cdsarc.cds.unistra.fr/viz-bin/cat/II/287'),
+    ],
     # Lightcurve metadata
     votable_file='nsvs.vot',
     lc_bands=[

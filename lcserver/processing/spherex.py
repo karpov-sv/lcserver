@@ -977,6 +977,14 @@ def _preview(results, basepath, name, show, log):
     },
     help_text='SPHEREx QR2 spectrophotometry, all sky, 0.75-5 um',
     order=82,
+    about=(
+        "SPHEREx, which is surveying the whole sky in 102 near-infrared "
+        "channels - not quite a spectrum and not quite photometry, but a "
+        "low resolution spectral energy distribution measured in one pass."),
+    about_links=[
+        ('SPHEREx', 'https://spherex.caltech.edu/'),
+        ('SPHEREx at IRSA', 'https://irsa.ipac.caltech.edu/Missions/spherex.html'),
+    ],
     kind=KIND_SPECTROSCOPY,
     # Spectrophotometry rather than a light curve, so no lc_mode is declared.
     #

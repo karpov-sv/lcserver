@@ -67,6 +67,15 @@ ASAS_SATURATION = 11.5
     },
     help_text='All-Sky Automated Survey for Supernovae',
     order=20,
+    about=(
+        "ASAS-SN, the All-Sky Automated Survey for Supernovae - twenty "
+        "small telescopes covering the whole visible sky nightly in V and g "
+        "since 2012, and the best-sampled modern record for anything "
+        "brighter than about 17th magnitude."),
+    about_links=[
+        ('ASAS-SN', 'https://asas-sn.osu.edu/'),
+        ('ASAS-SN variable stars', 'https://asas-sn.osu.edu/variables'),
+    ],
     # Lightcurve metadata
     votable_file='asas.vot',
     lc_bands=[

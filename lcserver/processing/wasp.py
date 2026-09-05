@@ -126,6 +126,14 @@ def _download_lightcurve(name, log):
     },
     help_text='Wide Angle Search for Planets, broad band, 2004-2008',
     order=22,
+    about=(
+        "SuperWASP, wide-field cameras in La Palma and South Africa "
+        "watching bright stars for transiting planets from 2004, as served "
+        "by the CERIT-SC archive."),
+    about_links=[
+        ('SuperWASP archive', 'https://wasp.cerit-sc.cz/'),
+        ('WASP project', 'https://wasp-planets.net/'),
+    ],
     # Lightcurve metadata
     votable_file='wasp.vot',
     lc_bands=[

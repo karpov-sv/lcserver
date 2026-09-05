@@ -96,6 +96,15 @@ def gaussian_smoothing(x, y, dy, scale=100, nsteps=1000):
     },
     help_text='ZTF optical transient survey (g/r bands)',
     order=10,
+    about=(
+        "The Zwicky Transient Facility, scanning the northern sky in g, r "
+        "and i from Palomar since 2018 at a cadence of a couple of days. "
+        "Fetched through the SNAD mirror of the ZTF data releases, which "
+        "answers a cone search directly."),
+    about_links=[
+        ('ZTF', 'https://www.ztf.caltech.edu/'),
+        ('SNAD ZTF mirror', 'https://snad.space/'),
+    ],
     # Lightcurve metadata
     votable_file='ztf.vot',
     lc_bands=[

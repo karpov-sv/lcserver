@@ -203,6 +203,13 @@ def _parse_lightcurve(text, log):
     },
     help_text='All Sky Automated Survey, V band, 2000-2009, south of +28 deg',
     order=21,
+    about=(
+        "ASAS-3, the earlier All Sky Automated Survey, which watched the "
+        "sky south of +28 degrees in V between 2000 and 2009 from Las "
+        "Campanas."),
+    about_links=[
+        ('ASAS', 'https://www.astrouw.edu.pl/asas/'),
+    ],
     # Lightcurve metadata
     votable_file='asas3.vot',
     lc_bands=[

@@ -67,6 +67,13 @@ APPLAUSE_MAX_NEIGHBOURS = 1
     },
     help_text='European plate archive (Dec > -30 deg)',
     order=50,
+    about=(
+        "APPLAUSE, the Archives of Photographic Plates for Astronomical Use "
+        "- the digitised European plate archives, covering much the same "
+        "century as DASCH from the other side of the Atlantic."),
+    about_links=[
+        ('APPLAUSE', 'https://www.plate-archive.org/cms/home/'),
+    ],
     # Lightcurve metadata
     votable_file='applause.vot',
     lc_bands=[

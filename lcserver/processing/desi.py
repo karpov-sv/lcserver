@@ -160,6 +160,14 @@ def _find(ra, dec, sr, log):
     },
     help_text='DESI DR1 spectra, 3600-9800 A, northern sky',
     order=81,
+    about=(
+        "DESI DR1, the spectroscopic survey mapping tens of millions of "
+        "galaxies and stars from Kitt Peak, served through the NOIRLab "
+        "Astro Data Lab."),
+    about_links=[
+        ('DESI DR1', 'https://data.desi.lbl.gov/doc/releases/dr1/'),
+        ('Astro Data Lab', 'https://datalab.noirlab.edu/'),
+    ],
     kind=KIND_SPECTROSCOPY,
     # Spectra rather than a light curve, so no lc_mode is declared
     spectrum_files='desi_*.txt',

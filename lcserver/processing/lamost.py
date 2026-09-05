@@ -204,6 +204,13 @@ def _value(row, key):
     help_text='LAMOST DR11 spectra, northern sky, 3700-9100 A',
     # The spectra sit below the photometry, and together
     order=80,
+    about=(
+        "LAMOST DR11, a spectroscopic survey of the northern sky with a "
+        "four-metre Schmidt telescope, publishing both low and medium "
+        "resolution spectra."),
+    about_links=[
+        ('LAMOST DR11', 'https://www.lamost.org/dr11/'),
+    ],
     kind=KIND_SPECTROSCOPY,
     # Spectra rather than a light curve, so no lc_mode is declared
     spectrum_files='lamost_*.txt',

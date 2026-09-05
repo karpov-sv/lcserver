@@ -265,6 +265,12 @@ def _download(filename):
     },
     help_text='CoRoT, two fields on the Galactic plane from space, 2007-2012',
     order=32,
+    about=(
+        "CoRoT, which watched two small fields near the Galactic plane from "
+        "2007 to 2012 at very high cadence, distributed through VizieR."),
+    about_links=[
+        ('CoRoT at VizieR', 'https://cdsarc.cds.unistra.fr/viz-bin/cat/B/corot'),
+    ],
     # Lightcurve metadata
     votable_file='corot_lc_*.vot',
     lc_flux_column='flux',

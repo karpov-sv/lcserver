@@ -339,6 +339,15 @@ def _chosen(found, log):
     help_text='Reduced spectra from the ESO archive - UVES, X-shooter, FEROS, '
               'HARPS, GIRAFFE and the rest',
     order=85,
+    about=(
+        "Everything ESO has published as a reduced one-dimensional spectrum "
+        "at a position - UVES, X-shooter, FEROS, HARPS, GIRAFFE, ESPRESSO "
+        "and the rest - found through the archive's table service and "
+        "fetched from its data portal."),
+    about_links=[
+        ('ESO Science Portal', 'https://archive.eso.org/scienceportal/home'),
+        ('ESO Science Archive', 'http://archive.eso.org/cms.html'),
+    ],
     kind=KIND_SPECTROSCOPY,
     spectrum_files='eso_*.txt',
     spectrum_palette=['#1a5276', '#1f618d', '#2471a3', '#2e86c1', '#5499c7',

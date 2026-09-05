@@ -172,6 +172,14 @@ def _fetch_record(hip, offsets, log):
     },
     help_text='Hipparcos epoch photometry, Hp band, 1989-1993, brighter than V~12',
     order=26,
+    about=(
+        "The individual transits Hipparcos recorded between 1989 and 1993, "
+        "at millimagnitude precision on bright stars, and the earliest "
+        "space photometry available for most of them."),
+    about_links=[
+        ('Hipparcos', 'https://www.cosmos.esa.int/web/hipparcos'),
+        ('Epoch photometry at VizieR', 'https://cdsarc.cds.unistra.fr/viz-bin/cat/I/239'),
+    ],
     # Lightcurve metadata
     votable_file='hipparcos.vot',
     lc_bands=[

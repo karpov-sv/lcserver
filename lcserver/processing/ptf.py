@@ -33,6 +33,13 @@ from .utils import (SourceError, cleanup_paths, cached_votable_query, irsa_clien
     button_text='Get PTF lightcurve',
     help_text='Palomar Transient Factory optical survey',
     order=11,
+    about=(
+        "The Palomar Transient Factory, ZTF's predecessor on the same "
+        "telescope, observing in g and R between 2009 and 2017."),
+    about_links=[
+        ('PTF', 'https://www.ptf.caltech.edu/'),
+        ('PTF at IRSA', 'https://irsa.ipac.caltech.edu/Missions/ptf.html'),
+    ],
     # Lightcurve metadata
     votable_file='ptf.vot',
     lc_bands=[

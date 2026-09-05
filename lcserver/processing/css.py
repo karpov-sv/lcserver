@@ -51,6 +51,14 @@ CSS_NO_DATA = re.compile(r"not covered by CSS data"
     },
     help_text='Catalina Sky Survey optical transient survey',
     order=22,
+    about=(
+        "The Catalina Sky Survey, whose unfiltered survey for near-Earth "
+        "objects doubles as an eight-year V-band record of everything else "
+        "in its way."),
+    about_links=[
+        ('Catalina Sky Survey', 'https://catalina.lpl.arizona.edu/'),
+        ('CSS data release', 'http://nesssi.cacr.caltech.edu/DataRelease/'),
+    ],
     # Lightcurve metadata
     votable_file='css.vot',
     lc_bands=[

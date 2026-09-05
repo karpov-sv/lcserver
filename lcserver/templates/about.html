@@ -1,0 +1,112 @@
+{% extends "template.html" %}
+
+{% block ptitle %}About the data{% endblock %}
+
+{% block title %}Where the data comes from{% endblock %}
+
+{% block head %}
+  <style>
+   /* The rail of contents the target page builds is not wanted here - this
+      page is short enough to scroll - so the archives are laid out as cards
+      two to a row instead, and each stays one readable column of prose. */
+   .archive {
+     border: 1px solid var(--bs-border-color);
+     border-radius: 0.4rem;
+     padding: 0.75rem 1rem;
+     height: 100%;
+   }
+
+   .archive h5 {
+     margin-bottom: 0.35rem;
+   }
+
+   .archive p {
+     margin-bottom: 0.5rem;
+   }
+
+   /* Links sit on one line under the description, separated rather than
+      bulleted: there are rarely more than two and a list of two is a fuss */
+   .archive-links a:not(:last-child)::after {
+     content: " · ";
+     color: var(--bs-secondary-color);
+   }
+
+   /* The one piece of text on a card that is not ours to paraphrase - it is
+      quoted, and has to be recognisable as a quotation rather than as more
+      description. Hence the rule down its side and the label above it. */
+   .archive-ack {
+     font-size: 0.85em;
+     color: var(--bs-secondary-color);
+     border-left: 2px solid var(--bs-warning-border-subtle, var(--bs-border-color));
+     padding-left: 0.6rem;
+     margin-top: 0.75rem;
+   }
+
+   .archive-ack-label {
+     display: block;
+     font-size: 0.85em;
+     font-weight: 600;
+     text-transform: uppercase;
+     letter-spacing: 0.05em;
+     color: var(--bs-body-color);
+     margin-bottom: 0.15rem;
+   }
+  </style>
+{% endblock %}
+
+{% block content %}
+
+  <p class="lead">
+    LCServer holds no observations of its own. Everything it shows was measured,
+    reduced and published by somebody else, and this page says by whom:
+    {{ nsources }} archives, surveys and catalogues, each fetched directly from
+    its own service whenever a target asks for it.
+  </p>
+
+  <p class="text-secondary">
+    The descriptions below are declared by the data sources themselves, so this
+    page cannot fall behind what the server actually queries. Where an archive
+    asks to be acknowledged in print, its own wording is quoted on its card;
+    use it as it stands in anything published from that data.
+  </p>
+
+  {% for group in groups %}
+    <h2 class="mt-5 pb-1 border-bottom text-secondary"
+        id="group-{{ group.kind }}">{{ group.label }}</h2>
+
+    <div class="row row-cols-1 row-cols-lg-2 g-3 mt-1">
+      {% for entry in group.entries %}
+        <div class="col">
+          <div class="archive">
+            <h5 id="source-{{ entry.source_id }}">{{ entry.name }}</h5>
+
+            <p>{{ entry.about }}</p>
+
+            {% if entry.about_links %}
+              <p class="archive-links small">
+                {% for label, url in entry.about_links %}
+                  <a href="{{ url }}" target="_blank" rel="noopener">{{ label }}</a>
+                {% endfor %}
+              </p>
+            {% endif %}
+
+            {% if entry.acknowledgement %}
+              <div class="archive-ack">
+                <span class="archive-ack-label">Required acknowledgement</span>
+                {{ entry.acknowledgement }}
+              </div>
+            {% endif %}
+          </div>
+        </div>
+      {% endfor %}
+    </div>
+  {% endfor %}
+
+  <p class="text-secondary mt-5">
+    This is not a complete citation list. Most of the surveys above expect the
+    paper describing them to be cited as well, and a few of the catalogues have
+    their own conditions; the links beside each one are where those are stated.
+    Nothing here replaces reading them.
+  </p>
+
+{% endblock %}

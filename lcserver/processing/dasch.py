@@ -93,6 +93,14 @@ DASCH_MAX_LOCAL_RMS = 0.4
     },
     help_text='Harvard plate archive (historical data)',
     order=40,
+    about=(
+        "DASCH, Digital Access to a Sky Century at Harvard - the digitised "
+        "Harvard plate collection, which pushes a light curve back to the "
+        "1880s and is the only way to see what a star did a century ago."),
+    about_links=[
+        ('DASCH', 'https://dasch.cfa.harvard.edu/'),
+        ('Starglass API', 'https://starglass.cfa.harvard.edu/'),
+    ],
     # Lightcurve metadata
     votable_file='dasch.vot',
     lc_bands=[

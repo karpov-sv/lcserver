@@ -59,6 +59,11 @@ KIND_LABELS = {
 # What a run acquires when it is not told otherwise
 KINDS_DEFAULT = (KIND_PHOTOMETRY, KIND_SPECTROSCOPY)
 
+# What the About page calls the steps that are not one kind or the other. Not
+# in KIND_LABELS, which is what the run checkboxes are built from and must
+# stay two: the info step is not something a run can be asked to leave out.
+KIND_ALWAYS_LABEL = 'Identification and reference data'
+
 
 def band(label, mag, err, kind=BAND_NATIVE, filter_column=None, filter_value=None,
          color=None, note=None, combined=False):
@@ -113,6 +118,19 @@ def survey_source(
     form_fields=None,
     help_text='',
     order=50,
+    # For the About page, which is built out of these rather than out of a
+    # written-out list somewhere else: a page listing the archives is only
+    # worth having if it cannot fall behind the sources, and it cannot if
+    # every source carries its own entry.
+    #
+    #   about            - what the archive is, in a sentence or two
+    #   about_links      - [(label, url), ...]: where it lives, its papers
+    #   acknowledgement  - what a paper built on this data has to say. Set
+    #                      only where the archive actually asks for one; an
+    #                      invented acknowledgement is worse than none.
+    about=None,
+    about_links=None,
+    acknowledgement=None,
     # What the source brings back: photometry, or spectroscopy. The two are
     # acquired together but are wanted apart - a run after a lightcurve has no
     # use for eight archives of spectra, and one after a spectrum none for
@@ -315,6 +333,9 @@ def survey_source(
             'help_text': help_text,
             'order': order,
             'kind': kind,
+            'about': about,
+            'about_links': about_links or [],
+            'acknowledgement': acknowledgement,
             'data_files': data_files,
             # Lightcurve metadata
             'votable_file': votable_file,
@@ -374,6 +395,37 @@ def get_all_survey_sources():
     return dict(sorted(SURVEY_SOURCES.items(), key=lambda x: x[1]['order']))
 
 
+def get_about_entries():
+    """The archives this server fetches from, for the About page.
+
+    One entry per source that says anything about itself, in the two groups
+    the target page uses and in registry order within each. A source with no
+    `about` is left out rather than listed blank: the page is a description of
+    the archives, and an entry saying only a name describes nothing.
+
+    Sources with no processing function are in it if they describe themselves.
+    Pan-STARRS and Gaia are fetched by the info step rather than by one of
+    their own, and a page listing where the data comes from would be wrong to
+    leave them out on a distinction the reader cannot see.
+    """
+    groups = []
+
+    # The info step first: what it queries is what everything after it is
+    # matched against, so it belongs at the top rather than under a kind
+    labels = dict({KIND_ALWAYS: KIND_ALWAYS_LABEL}, **KIND_LABELS)
+
+    for kind, label in labels.items():
+        entries = [
+            dict(v, source_id=k) for k, v in get_all_survey_sources().items()
+            if v['kind'] == kind and v.get('about')
+        ]
+
+        if entries:
+            groups.append({'kind': kind, 'label': label, 'entries': entries})
+
+    return groups
+
+
 def get_survey_groups(skip=('info',)):
     """The sources a target page lays out, in their two groups.
 
@@ -419,6 +471,8 @@ def register_lightcurve_source(
     lc_color='#000000',
     lc_mode='magnitude',
     lc_short=False,
+    about=None,
+    about_links=None,
 ):
     """
     Register a lightcurve-only source (no processing function).
@@ -488,6 +542,11 @@ def register_lightcurve_source(
         'order': 999,  # Sort to end
         # A lightcurve is what these are for, whoever wrote it
         'kind': KIND_PHOTOMETRY,
+        # These have no acknowledgement of their own: whoever fetched the
+        # file is the one with something to credit
+        'about': about,
+        'about_links': about_links or [],
+        'acknowledgement': None,
         # Lightcurve metadata
         'votable_file': votable_file,
         'lc_mag_column': lc_mag_column,

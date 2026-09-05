@@ -493,6 +493,17 @@ DUST_3D_MAPS = [
     clears_other_sources=True,
     help_text='Resolve target coordinates and fetch catalog photometry',
     order=1,
+    about=(
+        "Not an archive of its own but the step that asks several: SIMBAD "
+        "for what the target is called and where it is, the AAVSO VSX for "
+        "whether it is a known variable and of what kind, VizieR for "
+        "catalogue photometry, and Gaia DR3 for parallax, proper motion and "
+        "its XP and RVS spectra."),
+    about_links=[
+        ('SIMBAD', 'https://simbad.cds.unistra.fr/simbad/'),
+        ('AAVSO VSX', 'https://vsx.aavso.org/'),
+        ('VizieR', 'https://vizier.cds.unistra.fr/'),
+    ],
     # Not a source itself - it resolves what every source queries by
     kind=KIND_ALWAYS,
     # It resolves the target and describes it, which it can always do; the
@@ -1964,6 +1975,14 @@ surveys.register_lightcurve_source(
     name='Pan-STARRS',
     short_name='Pan-STARRS',
     votable_file='ps1.vot',
+    about=(
+        "Pan-STARRS DR2, the deepest wide-field optical catalogue of the "
+        "northern sky, in grizy. Fetched by the target info step rather "
+        "than by one of its own."),
+    about_links=[
+        ('Pan-STARRS', 'https://outerspace.stsci.edu/spaces/PANSTARRS/overview'),
+        ('Catalogs at MAST', 'https://catalogs.mast.stsci.edu/panstarrs/'),
+    ],
     lc_bands=[
         surveys.band(fn, 'mag_' + fn, 'magerr', surveys.BAND_NATIVE,
                      filter_column='filter', filter_value=fn, color=color,
@@ -1992,6 +2011,14 @@ surveys.register_lightcurve_source(
     name='Gaia DR3',
     short_name='Gaia',
     votable_file='gaia.vot',
+    about=(
+        "Gaia DR3 - astrometry, three-band photometry and per-transit "
+        "measurements for nearly two billion sources, and the parallax most "
+        "distances here rest on. Fetched by the target info step."),
+    about_links=[
+        ('Gaia DR3', 'https://www.cosmos.esa.int/web/gaia/dr3'),
+        ('Gaia archive', 'https://gea.esac.esa.int/archive/'),
+    ],
     lc_bands=[
         surveys.band(band, 'mag', 'magerr', surveys.BAND_NATIVE,
                      filter_column='filter', filter_value=band, color=color,

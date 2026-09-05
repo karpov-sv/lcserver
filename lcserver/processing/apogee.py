@@ -183,6 +183,13 @@ def _download(row):
     },
     help_text='APOGEE DR17 near-infrared spectra, H band, 1.51-1.70 um',
     order=84,
+    about=(
+        "APOGEE DR17, high resolution near-infrared spectroscopy in the H "
+        "band, where the dust of the Galactic plane is a tenth as thick as "
+        "it is in the optical."),
+    about_links=[
+        ('APOGEE DR17', 'https://www.sdss4.org/dr17/irspec/'),
+    ],
     kind=KIND_SPECTROSCOPY,
     spectrum_files='apogee_*.txt',
     spectrum_palette=['#7e5109', '#9c640c', '#b9770e', '#d68910', '#f0b27a'],

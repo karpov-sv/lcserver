@@ -289,6 +289,13 @@ def _lightcurve(url):
     help_text='Kilodegree Extremely Little Telescope, broad R, 2006-2019, '
               'bright stars',
     order=27,
+    about=(
+        "The Kilodegree Extremely Little Telescope - two 42 mm lenses, one "
+        "in Arizona and one in South Africa - watching whole constellations "
+        "of bright stars, published through the NASA Exoplanet Archive."),
+    about_links=[
+        ('KELT time series', 'https://exoplanetarchive.ipac.caltech.edu/cgi-bin/TblView/nph-tblView?app=ExoTbls&config=kelttimeseries'),
+    ],
     # Lightcurve metadata
     votable_file='kelt.vot',
     lc_bands=[

@@ -820,6 +820,15 @@ def _gaia_xp(basepath, log):
     # Last of the spectral block: it is assembled out of other catalogues'
     # photometry rather than observed, and spans all of them
     order=89,
+    about=(
+        "Not one archive but all of them at once: the broadband photometry "
+        "VizieR has gathered at a position, from GALEX in the ultraviolet "
+        "through to WISE in the mid-infrared, assembled into a spectral "
+        "energy distribution."),
+    about_links=[
+        ('VizieR photometry viewer', 'https://vizier.cds.unistra.fr/vizier/sed/'),
+        ('CDS', 'https://cdsarc.cds.unistra.fr/'),
+    ],
     # Assembled out of photometry, but what comes of it is a spectrum
     kind=KIND_SPECTROSCOPY,
     # Measurements and no curve, so the viewer draws them as points and they

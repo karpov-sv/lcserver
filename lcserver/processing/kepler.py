@@ -314,6 +314,14 @@ def _acquire_phase(config, basepath, log, show, phase, coord, sr, cadence,
     },
     help_text='NASA Kepler and its K2 extended mission, 2009-2018',
     order=31,
+    about=(
+        "Kepler, which stared at one field in Cygnus from 2009 to 2013, and "
+        "K2, which went on along the ecliptic afterwards - the most precise "
+        "photometry ever taken of the stars that fell in them."),
+    about_links=[
+        ('Kepler at MAST', 'https://archive.stsci.edu/missions-and-data/kepler'),
+        ('K2 at MAST', 'https://archive.stsci.edu/missions-and-data/k2'),
+    ],
     # Lightcurve metadata
     votable_file='kepler_lc_*.vot',
     lc_flux_column='flux',

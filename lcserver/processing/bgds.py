@@ -225,6 +225,13 @@ def _acquire(session, table, log):
     help_text="Bochum Galactic Disk Survey DR2, r' and i' along the southern "
               "Galactic plane, 2010-2019",
     order=12,
+    about=(
+        "The Bochum Galactic Disk Survey, which monitored a strip of the "
+        "southern Galactic plane in r and i, served as time series by the "
+        "GAVO data centre."),
+    about_links=[
+        ('BGDS at GAVO', 'https://dc.g-vo.org/browse/bgds/q'),
+    ],
     # Lightcurve metadata
     votable_file='bgds.vot',
     lc_bands=[

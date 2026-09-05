@@ -292,6 +292,13 @@ def fram_table(payload):
     },
     help_text='Robotic telescopes of the Pierre Auger Observatory and CTAO',
     order=61,
+    about=(
+        "The FRAM robotic telescopes, built for atmospheric monitoring at "
+        "the Pierre Auger Observatory and the Cherenkov Telescope Array "
+        "sites, whose photometric archive covers the southern sky."),
+    about_links=[
+        ('FRAM archive', 'http://fram.fzu.cz/'),
+    ],
     # Lightcurve metadata
     votable_file='fram.vot',
     lc_bands=[

@@ -114,6 +114,14 @@ def _frame_is_usable(table):
     },
     help_text='WISE and NEOWISE infrared epoch photometry',
     order=70,
+    about=(
+        "The single-exposure infrared photometry of WISE and its NEOWISE "
+        "reactivation, which has revisited the whole sky in W1 and W2 every "
+        "six months since 2010."),
+    about_links=[
+        ('WISE at IRSA', 'https://irsa.ipac.caltech.edu/Missions/wise.html'),
+        ('NEOWISE', 'https://science.nasa.gov/mission/neowise/'),
+    ],
     # Lightcurve metadata
     votable_file='wise.vot',
     lc_bands=[

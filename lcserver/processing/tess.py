@@ -72,6 +72,14 @@ TESS_OWN_READERS = {'TEQUILA': download_tequila_lightcurve,
     },
     help_text='NASA TESS space telescope',
     order=30,
+    about=(
+        "TESS, surveying almost the whole sky in sectors of 27 days since "
+        "2018 at two minute to half hour cadence. Both the mission's own "
+        "light curves and the QLP products, taken from MAST."),
+    about_links=[
+        ('TESS at MAST', 'https://archive.stsci.edu/missions-and-data/tess'),
+        ('TESS mission', 'https://tess.mit.edu/'),
+    ],
     # Lightcurve metadata
     votable_file='tess_lc_*.vot',
     lc_flux_column='flux',

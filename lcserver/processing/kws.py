@@ -60,6 +60,13 @@ KWS_COLOR_DT = 0.01
     },
     help_text='Kamogata Wide-field Survey',
     order=23,
+    about=(
+        "The Kamogata/Kiso/Kyoto Wide-field Survey, a Japanese patrol of "
+        "bright variable stars in V, Ic and B, queried by object name "
+        "rather than by position."),
+    about_links=[
+        ('KWS', 'http://kws.cetus-net.org/~maehara/VSdata.py'),
+    ],
     # Lightcurve metadata
     votable_file='kws.vot',
     lc_bands=[

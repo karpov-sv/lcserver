@@ -22,6 +22,7 @@ from django.contrib.auth import views as auth_views
 
 from . import views
 from . import views_celery
+from . import views_about
 from . import views_cutouts
 from . import views_lightcurve
 from . import views_models
@@ -32,6 +33,9 @@ urlpatterns = [
     path('', views.index, name='index'),
 
     # Cutouts - a standalone utility, not tied to the targets
+    # Where the data comes from - built from the source registry
+    path('about/', views_about.about, name='about'),
+
     path('cutouts/', views_cutouts.cutouts, name='cutouts'),
     path('cutouts/ps1', views_cutouts.cutouts_ps1, name='cutouts_ps1'),
 

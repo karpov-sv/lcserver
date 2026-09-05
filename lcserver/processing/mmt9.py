@@ -38,6 +38,13 @@ from .utils import (SourceError, cleanup_paths, cached_votable_query, log_bands,
     },
     help_text='Russian wide-field optical survey',
     order=60,
+    about=(
+        "Mini-MegaTORTORA, a nine-channel wide-field monitoring system in "
+        "the northern Caucasus, watching large parts of the sky at high "
+        "time resolution."),
+    about_links=[
+        ('Mini-MegaTORTORA', 'http://survey.favor2.info/'),
+    ],
     # Lightcurve metadata
     votable_file='mmt9.vot',
     lc_bands=[

@@ -169,6 +169,13 @@ def _download_lightcurve(session, obj_id, lct_id):
     },
     help_text='Optical Monitoring Camera aboard INTEGRAL, V band, since 2003',
     order=24,
+    about=(
+        "The Optical Monitoring Camera aboard INTEGRAL, which has watched a "
+        "pre-selected list of targets in V from 2002 onwards whenever the "
+        "spacecraft pointed near them."),
+    about_links=[
+        ('OMC Archive', 'https://sdc.cab.inta-csic.es/omc/'),
+    ],
     # Lightcurve metadata
     votable_file='omc.vot',
     lc_bands=[
