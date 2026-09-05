@@ -29,7 +29,6 @@ from .utils import cleanup_paths, plot_with_errors
     order=100,
     # Template metadata
     template_layout='custom',
-    declination_min=-30,
     main_plot='combined_short_lc.png',
     additional_plots=['combined_lc.png'],
 )
