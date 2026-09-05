@@ -1076,7 +1076,11 @@ The synthetic photometry made from the same spectra leaves the fit, being the sa
          const note = [grid.note,
                        grid.has_spectra ? '' : 'no spectra, so no line',
                        grid.has_xp ? ''
-                           : 'no Gaia XP bins - "manage.py sedgrid --xp" writes them']
+                           : 'no Gaia XP bins - "manage.py sedgrid --xp" writes them',
+                       (grid.axis_logg && grid.axis_logg !== 'logg')
+                           ? `second axis is ${grid.axis_logg}, not a gravity,`
+                             + ' so the gravity prior is left off it'
+                           : '']
              .filter(Boolean).join(' - ');
 
          const div = document.createElement('div');

@@ -54,10 +54,10 @@ NO_FLUX = -99.0
 SPECTRA_RANGE_UM = (0.005, 100.0)
 SPECTRA_RESOLUTION = 1000
 
-# A row of the parameter table: the name, the temperature, the gravity and the
-# luminosity, with the columns between them skipped
+# A row of the parameter table: the name, the temperature, the transformed
+# radius, the mass, the gravity and the luminosity
 TABLE_ROW = re.compile(
-    r'\s+(\S+)\s+([\d.]+)\s+[\d.eE+-]+\s+[\d.]+\s+([\d.]+)\s+([-\d.]+)')
+    r'\s+(\S+)\s+([\d.]+)\s+([\d.eE+-]+)\s+([\d.]+)\s+([\d.]+)\s+([-\d.]+)')
 
 
 def grid_name(path):
@@ -70,10 +70,10 @@ def grid_name(path):
 
 
 def read_parameters(path):
-    """The grid's own table of what each model is.
+    """The grid's own table of what each model is, row by row.
 
-    Returns a list of (model, teff, logg, log L), in the order the table has
-    them - which is the order the models are written in.
+    In the order the table has them, which is the order the models are
+    written in.
     """
     table = os.path.join(path, 'modelparameters.txt')
     if not os.path.exists(table):
@@ -83,13 +83,50 @@ def read_parameters(path):
     for line in open(table):
         match = TABLE_ROW.match(line)
         if match and '-' in match.group(1):
-            models.append((match.group(1), float(match.group(2)),
-                           float(match.group(3)), float(match.group(4))))
+            models.append({'name': match.group(1),
+                           'teff': float(match.group(2)),
+                           'r_trans': float(match.group(3)),
+                           'mass': float(match.group(4)),
+                           'logg': float(match.group(5)),
+                           'log_l': float(match.group(6))})
 
     if not models:
         raise SourceError(f'nothing readable in {table}')
 
     return models
+
+
+# What a grid varies beside its temperature, and what to call it. PoWR's OB
+# grids vary the gravity; its Wolf-Rayet grids vary the transformed radius, a
+# wind density in disguise, and give a gravity that follows from the
+# temperature and nothing else.
+GRAVITY = 'logg'
+TRANSFORMED = 'log Rt'
+
+
+def second_axis(models):
+    """Which quantity the download actually varies, read off the table.
+
+    A grid whose gravity takes more than one value at some temperature varies
+    the gravity: that is the OB grids, where the second axis is what it looks
+    like. A Wolf-Rayet grid has one gravity per temperature - it is fixed by
+    the luminosity and the temperature, both of which the grid holds constant
+    - and a dozen transformed radii at each. Storing those under the gravity
+    would put every model of a temperature at one point, and a grid of two
+    hundred models would interpolate as a grid of seventeen.
+
+    So the axis is read from the models rather than from the grid's name, and
+    what it is gets written into the file, since a number reported as a
+    gravity that is a wind density is worse than no number.
+    """
+    gravities = {}
+    for model in models:
+        gravities.setdefault(model['teff'], set()).add(model['logg'])
+
+    if max(len(_) for _ in gravities.values()) > 1:
+        return GRAVITY
+
+    return TRANSFORMED
 
 
 def read_model(path, model):
@@ -165,14 +202,23 @@ def ingest(path, cube_path, spectra_path, name, label=None, description=None,
     models = read_parameters(path)
     bands = passbands.filter_set()
     axis = spectra_axis()
+    varies = second_axis(models)
 
     log(f'{len(models)} models in {os.path.basename(os.path.normpath(path))}, '
         f'{len(bands)} passbands, spectra on {len(axis)} wavelengths')
 
+    if varies == TRANSFORMED:
+        span = np.log10([_['r_trans'] for _ in models])
+        log(f'  one gravity per temperature, so the second axis is the '
+            f'transformed radius: log Rt {span.min():.2f} to {span.max():.2f} '
+            f'over {len(set(_["teff"] for _ in models))} temperatures')
+
     teff, logg, feh = [], [], []
     fluxes, spectra, checks = [], [], []
 
-    for n, (model, t, g, log_l) in enumerate(models):
+    for n, entry in enumerate(models):
+        model, t, log_l = entry['name'], entry['teff'], entry['log_l']
+
         read = read_model(path, model)
         if read is None:
             log(f'  {model}: no file for it, skipped')
@@ -183,7 +229,8 @@ def ingest(path, cube_path, spectra_path, name, label=None, description=None,
         flux_um = surface_flux(wave_aa, flux_10pc, t, log_l)
 
         teff.append(t)
-        logg.append(g)
+        logg.append(entry['logg'] if varies == GRAVITY
+                    else float(np.log10(entry['r_trans'])))
         feh.append(0.0)
         fluxes.append(passbands.convolve(wave_aa, flux_um, bands))
         spectra.append(np.interp(axis, wave_aa * 1e-4, flux_um, left=0.0, right=0.0))
@@ -206,6 +253,7 @@ def ingest(path, cube_path, spectra_path, name, label=None, description=None,
                 teff=teff, logg=logg, feh=feh, fluxes=fluxes, bands=bands,
                 wave_um=axis, spectra=spectra,
                 label=label, description=description,
+                axis_logg=None if varies == GRAVITY else varies,
                 source=f'PoWR, {os.path.basename(os.path.normpath(path))}',
                 reference='https://www.astro.physik.uni-potsdam.de/PoWR/')
 

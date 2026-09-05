@@ -431,7 +431,7 @@ class Command(BaseCommand):
         self.stdout.write('')
 
         offered = {g['name'] for g in sedfit.offered_grids()}
-        header = f"{'grid':12s}{'Teff, K':>16}  {'spectra':<9}{'reach':>7}  label"
+        header = f"{'grid':16s}{'Teff, K':>16}  {'spectra':<9}{'reach':>7}  label"
         self.stdout.write(header)
 
         for name in sorted(registry):
@@ -444,7 +444,7 @@ class Command(BaseCommand):
             reach = f"{entry['reach_um']:.1f} um" if entry['reach_um'] else ''
 
             self.stdout.write(
-                f"{name:12s}{span:>16}  {spectra:<9}{reach:>7}  "
+                f"{name:16s}{span:>16}  {spectra:<9}{reach:>7}  "
                 f"{entry['label'] or ''}"
                 + ('' if name in offered else '   (not offered - says nothing'
                                               ' about itself)'))

@@ -25,7 +25,7 @@ import h5py
 
 def write(cube_path, spectra_path, name, teff, logg, feh, fluxes, bands,
           wave_um=None, spectra=None, label=None, description=None,
-          reach_um=None, source=None, reference=None):
+          reach_um=None, axis_logg=None, source=None, reference=None):
     """One grid, as the pair of files the application reads."""
     lattice = as_lattice(teff, logg, feh, fluxes)
 
@@ -37,6 +37,13 @@ def write(cube_path, spectra_path, name, teff, logg, feh, fluxes, bands,
             h.attrs['description'] = description
         if reach_um:
             h.attrs['reach_um'] = float(reach_um)
+
+        # What the second axis holds, where it is not a gravity. The datasets
+        # are named for the parameters a fit varies and cannot be renamed per
+        # grid; what the numbers in them mean can be, and has to be, or a wind
+        # density gets reported as a surface gravity.
+        if axis_logg:
+            h.attrs['axis_logg'] = str(axis_logg)
         if source:
             h.attrs['source'] = source
         if reference:

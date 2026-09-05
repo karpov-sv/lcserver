@@ -105,9 +105,14 @@ def compare(cube_path, spectra_path, name, verbose=None):
     """What the bins say against what the grid's own filters say.
 
     Not a check that reproduces a number - nothing here was built from a cube
-    of bins before - but a check that they are the same star: a bin and the
-    filter it sits inside should agree to the few per cent a filter's width
-    accounts for, and a factor is a factor.
+    of bins before - but a check that they are the same star and the same
+    order. A bin is thirty nanometres and a filter is a hundred and more, at a
+    different mean wavelength on a sloping continuum, so a fifth either way is
+    ordinary. Larger differences are ordinary too where a line is: on a WC
+    grid a bin between the carbon lines is a fifth of the r band that
+    contains them, which is the emission and not a mistake. What this catches
+    is a factor of ten - a unit, a normalisation, a wavelength read as
+    Angstrom that was microns.
     """
     from ..processing import sedfit
 
@@ -119,7 +124,8 @@ def compare(cube_path, spectra_path, name, verbose=None):
     at = (grid.teff[len(grid.teff) // 2], float(np.median(grid.logg)),
           float(np.median(grid.feh)))
 
-    log(f'\n  at {at[0]:.0f} K, log g {at[1]:.2f}, [Fe/H] {at[2]:+.2f}:')
+    log(f'\n  at {at[0]:.0f} K, {grid.axis_logg} {at[1]:.2f},'
+        f' [Fe/H] {at[2]:+.2f}:')
     for band, near in (('SDSS_g', 'GAIA_XP_455'), ('GROUND_JOHNSON_V', 'GAIA_XP_545'),
                        ('SDSS_r', 'GAIA_XP_635'), ('SDSS_i', 'GAIA_XP_755')):
         if band not in grid.covers or near not in bins.covers:

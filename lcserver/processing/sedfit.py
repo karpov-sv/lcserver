@@ -92,6 +92,11 @@ class Grid:
 
         with h5py.File(path, 'r') as h:
             self.layout = str(h.attrs.get('layout', 'lattice'))
+            # Almost always a surface gravity, and named for one throughout;
+            # on PoWR's Wolf-Rayet grids it is the transformed radius, whose
+            # models have one gravity per temperature and would collapse onto
+            # a line if it were stored as one
+            self.axis_logg = str(h.attrs.get('axis_logg', 'logg'))
             self.logg = np.asarray(h['logg'][:], dtype=float)
             self.teff = np.asarray(h['teff'][:], dtype=float)
             self.feh = np.asarray(h['feh'][:], dtype=float)
@@ -258,6 +263,7 @@ class CompositeGrid:
         self.base, self.extra = base, extra
         self.name = base.name
         self.teff, self.logg, self.feh = base.teff, base.logg, base.feh
+        self.axis_logg = base.axis_logg
 
         self.filters = list(base.filters) + [b for b in extra.filters
                                              if b not in base.column]
@@ -566,6 +572,8 @@ def log_parameters(summary, log):
     log(f"\n  {'parameter':<10}{'plot row':>11}{'median':>11}"
         f"{'-1 sigma':>11}{'+1 sigma':>11}{'3 sigma range':>22}")
 
+    axis = summary.get('axis_logg') or 'logg'
+
     for name in PARAMETERS + ('theta_mas', 'lum_lsun'):
         row = summary.get(name)
         if not row:
@@ -573,8 +581,9 @@ def log_parameters(summary, log):
 
         fmt = LABELS.get(name, (None, '{:.4g}'))[1]
         value = best.get(name)
+        shown = axis if name == 'logg' else name
 
-        log(f"  {name:<10}"
+        log(f"  {shown:<10}"
             f"{(fmt.format(value) if value is not None else '-'):>11}"
             f"{fmt.format(row['median']):>11}"
             f"{fmt.format(row['median'] - row['lo']):>11}"
@@ -1598,13 +1607,14 @@ def grid_registry():
         stem = os.path.splitext(os.path.basename(name))[0]
         entry = {'name': LEGACY_NAMES.get(stem.lower(), stem.lower()),
                  'path': name, 'label': None, 'description': None,
-                 'reach_um': None}
+                 'reach_um': None, 'axis_logg': 'logg'}
 
         try:
             with h5py.File(name, 'r') as h:
                 for key in ('name', 'label', 'description'):
                     if key in h.attrs:
                         entry[key] = str(h.attrs[key])
+                entry['axis_logg'] = str(h.attrs.get('axis_logg', 'logg'))
                 if 'reach_um' in h.attrs:
                     entry['reach_um'] = float(h.attrs['reach_um'])
                 teff = np.asarray(h['teff'][:], dtype=float) if 'teff' in h else None
@@ -1658,7 +1668,8 @@ def offered_grids():
         out.append({'name': grid['name'], 'label': grid['label'],
                     'note': ', '.join(_ for _ in (span, grid['description']) if _),
                     'has_spectra': has_spectra(grid['name']),
-                    'has_xp': bool(grid.get('xp'))})
+                    'has_xp': bool(grid.get('xp')),
+                    'axis_logg': grid.get('axis_logg') or 'logg'})
 
     return out
 
@@ -2228,7 +2239,15 @@ def target_sed_fit(config, basepath='.', outpath=None, selection=None,
         priors['teff'] = tuple(options.get('teff_prior')
                                or ('loguniform', 2000.0, 70000.0))
         if options.get('logg_prior'):
-            priors['logg'] = tuple(options['logg_prior'])
+            # On a grid whose second axis is not a gravity, a gravity prior is
+            # not a statement about the star and would cut the grid where it
+            # happened to fall. The axis keeps its own extent, and it is said.
+            if grid.axis_logg == 'logg':
+                priors['logg'] = tuple(options['logg_prior'])
+            else:
+                log(f"\n{name}: its second axis is {grid.axis_logg}, not a"
+                    f" gravity - the gravity prior is left off it and the axis"
+                    f" keeps the grid's own extent")
 
         missing = sorted({b for b in bands if b not in grid.covers})
         if missing:
@@ -2243,7 +2262,9 @@ def target_sed_fit(config, basepath='.', outpath=None, selection=None,
                   nlive=options.get('nlive', 500), seed=options.get('seed', 0),
                   verbose=False)
         run['wave_drawn_um'] = drawn
+        run['axis_logg'] = grid.axis_logg
         summary = summarise(run, grid)
+        summary['axis_logg'] = grid.axis_logg
         summary['shrink'] = shrinkage(run, priors['teff'])
         summary['residuals'] = residual_table(run, summary, grid)
         runs.append((run, grid))
@@ -2950,7 +2971,9 @@ def draw_corner(run, path, name=None):
     if len(columns) < 2:
         return None
 
-    labels = [LABELS[PARAMETERS[i]][0] for i in columns]
+    axis = run.get('axis_logg') or 'logg'
+    labels = [(axis if PARAMETERS[i] == 'logg' and axis != 'logg'
+               else LABELS[PARAMETERS[i]][0]) for i in columns]
     data = run['samples'][:, columns]
 
     filename = os.path.join(path, f'corner_{name or run["grid"]}.png')

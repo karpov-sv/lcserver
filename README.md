@@ -299,6 +299,8 @@ python manage.py sedgrid --split --to ~/sedgrids
 python manage.py sedgrid --split --to ~/sedgrids --only btsettl tlusty
 python manage.py sedgrid --ingest-powr ~/Downloads/griddl-gal-ob-vd3-sed \
     --to data/grids --label 'PoWR Gal OB Vd3' --description 'Galactic OB stars'
+python manage.py sedgrid --ingest-powr ~/Downloads/griddl-wne-sed \
+    --to data/grids --label 'PoWR WNE' --description 'early WN, Galactic'
 python manage.py sedgrid --ingest-tlusty ~/Downloads/obstar_merged_3d.ascii \
     --to data/grids
 python manage.py sedgrid --ingest-cdbs ~/tmp/kurucz/.../k93models --to data/grids
@@ -316,7 +318,13 @@ python manage.py sedgrid --xp                 # or --xp tlusty bosz
 download - one file per model, the star as seen from ten parsecs - into a cube
 convolved through the same passbands every other grid was built with, plus the
 spectra to draw it from. It appears on the form as soon as it is written; there
-is nothing else to edit.
+is nothing else to edit. It reads the OB grids and the Wolf-Rayet ones alike,
+and works out from the download's own table which quantity it varies beside the
+temperature: gravity for the OB grids, and for the WR grids the **transformed
+radius**, a wind density in disguise, since those hold luminosity fixed and give
+one gravity per temperature. Where that happens the file says so, the fit leaves
+any gravity prior off that axis, and every log and figure names it `log Rt`
+rather than reporting a wind density as a surface gravity.
 
 `--ingest-tlusty` reads a [TLUSTY](https://tlusty.oca.eu/) OB-star grid from the
 single merged file it is published in for Cloudy - which is what astroARIADNE's
