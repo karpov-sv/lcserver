@@ -1117,6 +1117,7 @@ The synthetic photometry made from the same spectra leaves the fit, being the sa
 
      fitRunning(true);
      setFitStatus('Starting...');
+     clearFitRun();
 
      fetch('/targets/{{ target_id }}/fit_sed/', {
          method: 'POST',
@@ -1143,12 +1144,43 @@ The synthetic photometry made from the same spectra leaves the fit, being the sa
      }))
      .then(data => {
          setFitStatus('Fitting - this takes tens of seconds per grid');
+         showFitLog(data.run_id);
          waitForFit(data.run_id);
      })
      .catch(err => {
          setFitStatus(err.message, true);
          fitRunning(false);
      });
+ }
+
+ // What a run leaves on the page, put away when the next one starts. Without
+ // this the previous run's log, figures and model curves stay up for the
+ // minute or two the new one takes, and there is no moment at which the page
+ // visibly becomes the new answer.
+ function clearFitRun() {
+     openRun = null;
+     fitResult = null;
+     fitSpectra = {};
+
+     document.getElementById('fit-run-block').innerHTML = '';
+     document.getElementById('fit-result').innerHTML = '';
+     document.getElementById('fit-results').style.display = 'none';
+     document.getElementById('fit-results-when').textContent = '';
+
+     redraw();
+ }
+
+ // An empty log block for the run that is starting, which the state poll then
+ // fills: the same <pre> the target page updates in place, found by the file
+ // it names. So the log of a fit arrives as it is written, and the wait shows
+ // what the fit is doing rather than a spinner.
+ function showFitLog(runId) {
+     document.getElementById('fit-results').style.display = 'block';
+     document.getElementById('fit-results-when').textContent =
+         runWhen(runId) + ' - running';
+     document.getElementById('fit-run-block').innerHTML =
+         '<pre class="target-log" data-logfile="sedfit/' + runId + '/fit.log"'
+         + ' style="white-space: pre-wrap;"></pre>';
  }
 
  // The button carries the state, as it does in the light curve viewer: there
@@ -1173,6 +1205,10 @@ The synthetic photometry made from the same spectra leaves the fit, being the sa
          fetch('/targets/{{ target_id }}/state')
              .then(r => r.json())
              .then(data => {
+                 // The log as far as it has been written, rendered by the
+                 // same code the target page uses on a running step
+                 updateFitLog(data.logs);
+
                  if (data.celery_id) return;
 
                  clearInterval(fitPoll);
@@ -1182,6 +1218,24 @@ The synthetic photometry made from the same spectra leaves the fit, being the sa
              })
              .catch(() => {});
      }, 3000);
+ }
+
+ // Whatever of the state's logs belongs to a block on this page. Scrolled to
+ // the end unless the reader has scrolled away from it, which is what the
+ // target page does with the same blocks.
+ function updateFitLog(logs) {
+     Object.entries(logs || {}).forEach(([file, html]) => {
+         // The name is a path of ours - letters, digits, slashes and dots -
+         // so it goes into the selector as it is
+         const pre = document.querySelector(
+             `.target-log[data-logfile="${file}"]`);
+         if (!pre || pre.innerHTML === html) return;
+
+         const atBottom =
+             pre.scrollHeight - pre.scrollTop - pre.clientHeight < 4;
+         pre.innerHTML = html;
+         if (atBottom) pre.scrollTop = pre.scrollHeight;
+     });
  }
 
  function loadFitResult(runId) {

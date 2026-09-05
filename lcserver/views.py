@@ -735,7 +735,38 @@ def live_logs(target):
         if state == 'running' or recent < LIVE_LOG_SECONDS:
             files.append(name)
 
+    # And the fits, which are not sources and have no source_state: each run
+    # writes into a directory of its own, and the ones being written are the
+    # ones written recently. Included on the same terms as a source's log, so
+    # the panel watching a fit sees it grow rather than nothing for a minute.
+    files.extend(running_fit_logs(target))
+
     return files
+
+
+def running_fit_logs(target, within=LIVE_LOG_SECONDS):
+    """The logs of fits being written, as paths inside the target.
+
+    Every recent one and not just the newest. A target takes one task at a
+    time, so there is normally one; the page picks its own out by name, and
+    sending it a run it is not watching costs a rendered log it ignores.
+    Sending only the newest would cost a page the log it is waiting for.
+    """
+    import glob
+
+    now = time.time()
+    found = []
+
+    for path in glob.glob(os.path.join(target.path(), 'sedfit', '*', 'fit.log')):
+        try:
+            written = os.path.getmtime(path)
+        except OSError:
+            continue
+
+        if now - written <= within:
+            found.append((written, os.path.relpath(path, target.path())))
+
+    return [name for _, name in sorted(found, reverse=True)]
 
 
 def target_state(request, id):

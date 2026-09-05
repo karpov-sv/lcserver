@@ -44,6 +44,7 @@ Two numbers come out beside the parameters and are worth as much:
 
 import glob
 import os
+import time
 
 import numpy as np
 
@@ -395,8 +396,15 @@ def default_priors(grid, distance=None, distance_err=None, av_max=1.0):
 
 # ---------------------------------------------------------------------- fit
 
+# How often a sampler that is running says so, in seconds. The line goes into
+# the run's own log, which is what a page watching a fit is reading, so it is
+# sparse enough to be worth keeping afterwards: a fit of several minutes leaves
+# a dozen lines saying how it got there, not a thousand saying it is alive.
+PROGRESS_SECONDS = 10.0
+
+
 def fit(bands, wave_um, flux, flux_err, grid, priors,
-        nlive=500, dlogz=0.5, seed=None, verbose=True):
+        nlive=500, dlogz=0.5, seed=None, verbose=True, progress=None):
     """Sample the posterior for one grid. Returns whole rows, never marginals.
 
     The result carries ``samples`` as (n, 7) - equal-weight draws from the
@@ -433,11 +441,38 @@ def fit(bands, wave_um, flux, flux_err, grid, priors,
         return float(-0.5 * np.sum((flux - model) ** 2 / sigma2
                                    + np.log(2 * np.pi * sigma2)))
 
+    # Nested sampling converges on the evidence rather than after a fixed
+    # number of steps, so how long it will take is not known when it starts.
+    # What is known at every iteration is how far the remaining evidence is
+    # from the tolerance it is going to stop at, and that is what is reported.
+    def announce(results, niter, ncall, *args, **kwargs):
+        now = time.time()
+        if now - announce.last < PROGRESS_SECONDS:
+            return
+
+        announce.last = now
+
+        # The sampler's own record of how much evidence it thinks is still
+        # out there, against the tolerance it will stop at. Above a million
+        # it means nothing has been bracketed yet, which dynesty itself
+        # prints as infinity.
+        left = getattr(results, 'delta_logz', None)
+        target = kwargs.get('dlogz')
+
+        line = f"    {niter} iterations, {ncall} likelihood calls"
+        if isinstance(left, float) and np.isfinite(left) and left < 1e6:
+            line += f", dlogz {left:.2f} of {target or dlogz:.2f} to go"
+
+        progress(line)
+
+    announce.last = time.time()
+
     sampler = dynesty.NestedSampler(
         log_likelihood, prior_transform, len(PARAMETERS),
         nlive=nlive, bound='multi', sample='rwalk',
         rstate=np.random.default_rng(seed))
-    sampler.run_nested(dlogz=dlogz, print_progress=verbose)
+    sampler.run_nested(dlogz=dlogz, print_progress=bool(verbose or progress),
+                       print_func=announce if progress else None)
 
     results = sampler.results
     weights = np.exp(results.logwt - results.logz[-1])
@@ -2260,7 +2295,7 @@ def target_sed_fit(config, basepath='.', outpath=None, selection=None,
         log(f"\nfitting {name}: Teff {grid.teff.min():.0f}-{grid.teff.max():.0f} K")
         run = fit(bands, wave, flux, err, grid, priors,
                   nlive=options.get('nlive', 500), seed=options.get('seed', 0),
-                  verbose=False)
+                  verbose=False, progress=log)
         run['wave_drawn_um'] = drawn
         run['axis_logg'] = grid.axis_logg
         summary = summarise(run, grid)
