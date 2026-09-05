@@ -3,6 +3,36 @@
 
 <script language="javascript">
 
+ // The other images a thumbnail belongs with, as the list of {url, title}
+ // popupImage wants.
+ //
+ // Read off the page rather than passed in: a section's images are rendered
+ // one include at a time and none of them knows what the others are, so
+ // handing each the whole list would mean building it in five layout
+ // templates. The group is the nearest container that holds them - whatever
+ // carries data-popup-group, or else the row the thumbnails are laid out in,
+ // every layout here putting one column per image inside one row.
+ //
+ // Only images of the same kind are collected. A FITS preview is opened with
+ // a stretch and a grid that a PNG has no use for, and those stay as they are
+ // while the source changes, so stepping from one into the other would show
+ // the second image under the first one's settings.
+ popupSiblings = function(el)
+ {
+   var group = el.closest('[data-popup-group]') || el.closest('.row');
+
+   if(!group)
+     return null;
+
+   var kind = el.dataset.popupKind || '';
+
+   return Array.from(group.querySelectorAll('[data-popup-url]'))
+     .filter(function(other) { return (other.dataset.popupKind || '') === kind; })
+     .map(function(other) {
+       return {url: other.dataset.popupUrl, title: other.dataset.popupTitle};
+     });
+ }
+
  // The dialog may be given the whole set of images this one belongs to, as a
  // list of {url, title} with the index of the one clicked, and then gets a
  // pair of buttons that step through them without leaving it
@@ -17,7 +47,15 @@
 
    // Nothing to step through unless there is more than this one image
    siblings = (siblings && siblings.length > 1) ? siblings : null;
-   var current = index || 0;
+
+   // Which of them was clicked. Found by its url where the caller did not
+   // say, so that a call site only has to hand over the set.
+   var current = index;
+
+   if(siblings && current === undefined)
+     current = Math.max(0, siblings.findIndex(function(s) { return s.url === url; }));
+
+   current = current || 0;
 
    var body = $("<div/>", {class: "text-center"});
    var params = {class:"img-fluid center-block popup-image " + extraClass, src:url};
@@ -59,6 +97,22 @@
        className: "btn-secondary me-auto",
        callback: function() { show(current + 1); return false; }
      };
+
+     // The arrow keys do what the buttons do. A dialog that steps through a
+     // set of images is expected to answer them, and reaching for the mouse
+     // between every spectrum of a run of twenty is the thing this is for.
+     var onKey = function(e) {
+       if(e.key === 'ArrowLeft')
+         show(current - 1);
+       else if(e.key === 'ArrowRight')
+         show(current + 1);
+       else
+         return;
+
+       e.preventDefault();
+     };
+
+     $(document).on('keydown.popupImage', onKey);
    }
 
    if(ok){
@@ -75,6 +129,12 @@
    var dialog = bootbox.dialog(params);
 
    dialog.find('.modal-dialog').addClass('modal-fullscreen-xl-down');
+
+   // Bound on the document rather than the dialog, which does not have the
+   // focus while the image does, so it has to be let go of again by hand
+   dialog.on('hidden.bs.modal', function() {
+     $(document).off('keydown.popupImage');
+   });
 
    // FIXME: prevent updating already created overlays?..
    if(typeof overlay_stdview_images === 'function')

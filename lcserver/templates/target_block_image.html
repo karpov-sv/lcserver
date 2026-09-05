@@ -4,9 +4,17 @@
   {% if fits %}
 
     <!-- FITS files -->
+    {% comment %}
+      data-popup-* is what the dialog gathers the rest of the section by, so
+      that its Prev and Next step through the images beside this one. See
+      popupSiblings() in popup_image.html.
+    {% endcomment %}
     <img src="{% url 'target_preview' target.id fits %}?width=256&timestamp={{ target.completed|unix }}"
          class="figure-img img-fluid rounded mb-0" style="max-width: 256px;"
-         onclick="popupImage(event, '{% url 'target_preview' target.id fits %}?timestamp={{ target.modified|unix }}', '{{ fits }}', true, 'stdview-image', {'data-stretch':1, {% if target.config.target_ra or target.config.target_dec %}'data-mark-ra':{{ target.config.target_ra }}, 'data-mark-dec':{{ target.config.target_dec }},{% endif %} 'data-grid':1, 'data-zoom':1, {% if obj %}'data-obj':1,{%endif %}})"/>
+         data-popup-kind="fits"
+         data-popup-url="{% url 'target_preview' target.id fits %}?timestamp={{ target.modified|unix }}"
+         data-popup-title="{{ fits }}"
+         onclick="popupImage(event, this.dataset.popupUrl, this.dataset.popupTitle, true, 'stdview-image', {'data-stretch':1, {% if target.config.target_ra or target.config.target_dec %}'data-mark-ra':{{ target.config.target_ra }}, 'data-mark-dec':{{ target.config.target_dec }},{% endif %} 'data-grid':1, 'data-zoom':1, {% if obj %}'data-obj':1,{%endif %}}, popupSiblings(this))"/>
 
     <figcaption class="figure-caption text-center text-break mt-0 mb-3">
       <small><a href="{% url 'target_download' target.id fits %}">{{ fits }}</a></small>
@@ -22,7 +30,10 @@
     <img src="{% url 'target_view' target.id image %}?timestamp={{ target.completed|unix }}"
          class="figure-img img-fluid rounded mb-0" {% if width %}style="max-width: {{ width }};"{% endif %}
          {% if not noclick %}
-         onclick="popupImage(event, '{% url 'target_view' target.id image %}?timestamp={{ target.completed|unix }}', '{{ name|default:image }}', true)"
+         data-popup-kind="image"
+         data-popup-url="{% url 'target_view' target.id image %}?timestamp={{ target.completed|unix }}"
+         data-popup-title="{{ name|default:image }}"
+         onclick="popupImage(event, this.dataset.popupUrl, this.dataset.popupTitle, true, '', {}, popupSiblings(this))"
          {% endif %}
          />
 
