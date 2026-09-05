@@ -23,8 +23,9 @@ GET for the session and its CSRF token, a POST of the coordinates, and the
 result table read out of the HTML that comes back. That is more fragile than a
 TAP query and cannot be helped - it is the only way in.
 
-Publishing anything based on these spectra carries an acknowledgement, which
-IACOB_ACKNOWLEDGEMENT below records and every run of this step logs.
+Publishing anything based on these spectra carries an acknowledgement. It is
+declared with the rest of the source's About metadata below, and shown on the
+About page beside every other archive that asks for one.
 """
 
 import os
@@ -59,18 +60,6 @@ IACOB_URL = 'https://research.iac.es/proyecto/iacob/iacobcat/'
 IACOB_FILE = 'https://research.iac.es/proyecto/iacob/iacobcat/myspec/download-file/{}/0'
 
 IACOB_TIMEOUT = 300
-
-# What every paper using these spectra has to say, quoted here so that a user
-# who exports one from this server finds it without having to go looking
-IACOB_ACKNOWLEDGEMENT = (
-    "The IACOB spectroscopic database is based on observations made with the"
-    " Nordic Optical Telescope, operated by the Nordic Optical Telescope"
-    " Scientific Association, and the Mercator Telescope, operated by the"
-    " Flemish Community, both at the Observatorio del Roque de los Muchachos"
-    " (La Palma, Spain) of the Instituto de Astrofisica de Canarias."
-    " In addition, the paper must reference Simon-Diaz et al."
-    " (2011a, 2011b, 2015)."
-)
 
 # Matching radius, in arcsec. Wider than it looks like it should be, and wider
 # than the ESO step's five: IACOB carries a catalogue position for each star
@@ -433,7 +422,14 @@ def _fetch(session, file_id):
     about_links=[
         ('IACOB database', 'https://research.iac.es/proyecto/iacob/iacobcat/'),
     ],
-    acknowledgement=IACOB_ACKNOWLEDGEMENT,
+    acknowledgement=(
+        "The IACOB spectroscopic database is based on observations made with "
+        "the Nordic Optical Telescope, operated by the Nordic Optical "
+        "Telescope Scientific Association, and the Mercator Telescope, "
+        "operated by the Flemish Community, both at the Observatorio del "
+        "Roque de los Muchachos (La Palma, Spain) of the Instituto de "
+        "Astrofisica de Canarias. In addition, the paper must reference "
+        "Simon-Diaz et al. (2011a, 2011b, 2015)."),
     kind=KIND_SPECTROSCOPY,
     spectrum_files='iacob_*.txt',
     # Continuum normalised, so every one of them runs about one where the
@@ -597,5 +593,3 @@ def target_iacob(config, basepath=None, verbose=True, show=False):
         log(f"    Spectrum plotted in file:{stem}.png")
         log(f"    Spectrum written to file:{stem}.vot")
         log(f"    Spectrum written to file:{stem}.txt")
-
-    log(f"\n{IACOB_ACKNOWLEDGEMENT}")
