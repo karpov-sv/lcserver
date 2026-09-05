@@ -175,9 +175,10 @@ Plots follow the theme the reader is in.
 - Python 3.11
 - Redis on `localhost`, database `1` — Celery's broker, result backend and cache
 - The packages in `requirements.txt`
-- For the photosphere fit, `astroARIADNE`, which is not on PyPI and is
-  installed from its repository. The model grids and pyphot's filter profiles
-  come with it, and nothing else of it is used — the cubes are read directly.
+- For the photosphere fit, a directory of model grids. `astroARIADNE`, which is
+  not on PyPI, is where the first of them came from; once they have been read
+  and written out here it is not wanted again, and nothing in this application
+  imports it.
 - Optionally `dustmaps`, with `dustmaps.edenhofer2023.fetch()` and
   `dustmaps.bayestar.fetch()`, for extinction resolved in distance
 
@@ -189,15 +190,19 @@ python manage.py migrate
 python manage.py createsuperuser
 ```
 
-For the photosphere fit, the model grids as well:
+For the photosphere fit, some model grids. Any directory of them will do —
+`sedgrid --ingest-*` builds them from what the groups publish — and the quickest
+way to a first one is astroARIADNE, which ships a set:
 
 ```sh
 pip install git+https://github.com/jvines/astroARIADNE.git
 ```
 
 That is 46 MB of HDF5 cubes, installed beside the package, and they are found
-there without being told. Without the package the rest of the application is
-unaffected; the fit is the only thing that asks for it.
+there without being told. `sedgrid --split` writes them out in this
+application's own layout, after which the package can go: nothing here imports
+it, and the passbands the cubes are keyed by are kept in
+`lcserver/processing/filters.py` rather than borrowed from it.
 
 `astroARIADNE.fetch.fetch_spectra_cache()` fetches a further 2.8 GB of the
 spectra those cubes were convolved from, which is what lets a model be drawn as
@@ -441,3 +446,16 @@ Adding a survey means writing `processing/xxx.py` with a `target_xxx()`
 function and decorating it with `@survey_source(...)`. The form, the button,
 the task, the section on the page, its place in a full run and its entry in the
 cache panel are all derived from that registration; nothing else needs editing.
+
+## Licence
+
+MIT — see [LICENSE](LICENSE).
+
+One part of this is somebody else's and says so where it sits: the passband
+curves in `lcserver/processing/filters.h5` were collected by
+[astroARIADNE](https://github.com/jvines/astroARIADNE) (MIT, © 2019 Jose Vines)
+from the [SVO Filter Profile Service](http://svo2.cab.inta-csic.es/theory/fps/),
+whose curves they are. `lcserver/processing/filters.py` carries the notice.
+
+No astronomical data is kept here. The model grids and everything under
+`targets/` are fetched and converted, not redistributed.

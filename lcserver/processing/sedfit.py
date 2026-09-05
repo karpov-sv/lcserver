@@ -5,7 +5,7 @@ What is fitted is one model atmosphere, reddened and put at a distance:
     interpolate a model grid at (Teff, log g, [Fe/H]), redden by Av, dilute by
     (R/d)^2, and compare with the observed flux band by band.
 
-The grids come from astroARIADNE - each is an HDF5 cube of per-filter fluxes on
+The grids began as astroARIADNE's - each is an HDF5 cube of per-filter fluxes on
 a (log g, Teff, [Fe/H]) lattice, built by convolving model spectra through
 ninety-odd passbands, and reproducing that would mean redoing several hundred
 gigabytes of convolution. Nothing else of that package is used: the cubes are
@@ -54,6 +54,8 @@ from scipy import stats
 
 import extinction
 
+from .filters import (FILTER_NAMES, get_filter, is_ab, pivot_aa, vega_zero_jy,
+                      width_aa)
 from .utils import SourceError
 
 
@@ -1600,9 +1602,10 @@ LEGACY_NAMES = {'phoenixv2': 'phoenix', 'atmo2020': 'atmo'}
 def grids_dir():
     """Where the model cubes live.
 
-    Ours by configuration if the SEDFIT_GRIDS setting says so, and otherwise
-    wherever astroARIADNE was installed - the package is a dependency for its
-    grids and for pyphot's filter profiles, and for nothing else.
+    Ours by configuration if the SEDFIT_GRIDS setting says so. Failing that,
+    wherever astroARIADNE was installed, which is where the first of these
+    grids came from - the only thing that package is still wanted for, and
+    only until its files have been read once and written out here.
     """
     from django.conf import settings
 
@@ -1610,7 +1613,11 @@ def grids_dir():
     if configured:
         return configured
 
-    from astroARIADNE.config import gridsdir
+    try:
+        from astroARIADNE.config import gridsdir
+    except ImportError:
+        raise SourceError('no model grids: set SEDFIT_GRIDS to the directory '
+                          'they are in')
 
     return gridsdir
 
@@ -1975,7 +1982,6 @@ def read_sed_points(path, points=None, extra=None,
     promoted or demoted behind the caller's back.
     """
     from astropy.table import Table, vstack
-    from astroARIADNE.phot_utils import _get_filter
 
     points = set(points) if points is not None else None
 
@@ -2010,7 +2016,7 @@ def read_sed_points(path, points=None, extra=None,
             entry['note'] = 'no model filter of this name'
             continue
 
-        pivot = _get_filter(band).lpivot.to('AA').value
+        pivot = pivot_aa(band)
         entry['wave_um'] = pivot * 1e-4
         entry['wave_drawn_um'] = float(row['wavelength']) * 1e-4
 
@@ -2511,35 +2517,18 @@ def known_bands():
     The grids' own filter set, less the ones no grid actually models - there is
     no use offering a band the fit would refuse.
     """
-    from astroARIADNE.config import filter_names
-    from astroARIADNE.phot_utils import _get_filter
-
     bands = []
-    for band in filter_names:
+    for band in FILTER_NAMES:
         if band in NOT_PHOTOSPHERE:
             continue
         try:
-            pivot = float(_get_filter(band).lpivot.to('AA').value)
+            pivot = pivot_aa(band)
         except Exception:
             continue
         bands.append({'band': band, 'wavelength': pivot,
-                      'system': 'AB' if _is_ab(band) else 'Vega'})
+                      'system': 'AB' if is_ab(band) else 'Vega'})
 
     return sorted(bands, key=lambda b: b['wavelength'])
-
-
-def _is_ab(band):
-    """Whether this band's magnitudes are AB rather than Vega.
-
-    Asked of the photometry library rather than decided here: it splits the two
-    on a list of name prefixes that has moved before now - SkyMapper was on the
-    Vega branch until mid-2026 - so a copy kept here would go quietly stale.
-    Convert magnitude zero and see which zero point comes back.
-    """
-    from astroARIADNE import phot_utils
-
-    return not np.isclose(phot_utils.mag_to_flux(0.0, 0.0, band)[0],
-                          phot_utils.get_zero_flux(band))
 
 
 def magnitude_to_flux(band, mag, mag_err=None):
@@ -2550,10 +2539,8 @@ def magnitude_to_flux(band, mag, mag_err=None):
     wavelength is the one that makes <f_lambda> = <f_nu> c / lambda^2 true for
     a photon-counting filter, which is the convention the grids are on.
     """
-    from astroARIADNE.phot_utils import _get_filter
-
-    pivot = float(_get_filter(band).lpivot.to('AA').value)
-    zero = 3631.0 if _is_ab(band) else float(_get_filter(band).Vega_zero_Jy.value)
+    pivot = pivot_aa(band)
+    zero = 3631.0 if is_ab(band) else vega_zero_jy(band)
 
     fnu = zero * 10 ** (-0.4 * float(mag)) * 1e-23
     flux = fnu * C_AA / pivot ** 2
@@ -2588,9 +2575,7 @@ def add_extra_point(basepath, band, value, error=None, unit='mag'):
     if unit == 'mag':
         wavelength, flux, flux_error = magnitude_to_flux(band, value, error)
     elif unit == 'flux':
-        from astroARIADNE.phot_utils import _get_filter
-
-        wavelength = float(_get_filter(band).lpivot.to('AA').value)
+        wavelength = pivot_aa(band)
         flux = float(value)
         flux_error = float(error) if error else None
     else:
@@ -2640,10 +2625,8 @@ def remove_extra_point(basepath, band):
 
 def _get_bandwidth(band):
     """The band's width, for drawing it as the range of wavelength it is."""
-    from astroARIADNE.phot_utils import _get_filter
-
     try:
-        return float(_get_filter(band).width.to('AA').value)
+        return width_aa(band)
     except Exception:
         return 0.0
 
