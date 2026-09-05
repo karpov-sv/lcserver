@@ -76,6 +76,9 @@ ASAS_SATURATION = 11.5
         ('ASAS-SN', 'https://asas-sn.osu.edu/'),
         ('ASAS-SN variable stars', 'https://asas-sn.osu.edu/variables'),
     ],
+    acknowledgement=(
+        "When using ASAS-SN Sky Patrol V2.0 data in publications, cite Hart "
+        "et al. (2023) and Shappee et al. (2014)."),
     # Lightcurve metadata
     votable_file='asas.vot',
     lc_bands=[

@@ -830,6 +830,11 @@ def _gaia_xp(basepath, log):
         ('VizieR photometry viewer', 'https://vizier.cds.unistra.fr/vizier/sed/'),
         ('CDS', 'https://cdsarc.cds.unistra.fr/'),
     ],
+    acknowledgement=(
+        "This research has made use of the VizieR catalogue access tool, "
+        "CDS, Strasbourg, France (DOI: 10.26093/cds/vizier). The original "
+        "description of the VizieR service was published in 2000, A&AS 143, "
+        "23."),
     # Assembled out of photometry, but what comes of it is a spectrum
     kind=KIND_SPECTROSCOPY,
     # Measurements and no curve, so the viewer draws them as points and they

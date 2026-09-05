@@ -74,6 +74,14 @@ APPLAUSE_MAX_NEIGHBOURS = 1
     about_links=[
         ('APPLAUSE', 'https://www.plate-archive.org/cms/home/'),
     ],
+    acknowledgement=(
+        "Funding for APPLAUSE has been provided by DFG (German Research "
+        "Foundation, Grant), Leibniz Institute for Astrophysics Potsdam "
+        "(AIP), Dr. Remeis Sternwarte Bamberg (University "
+        "Nuernberg/Erlangen), the Hamburger Sternwarte (University of "
+        "Hamburg) and Tartu Observatory. Plate material also has been made "
+        "available from Thueringer Landessternwarte Tautenburg, and from "
+        "the archives of the Vatican Observatory."),
     # Lightcurve metadata
     votable_file='applause.vot',
     lc_bands=[

@@ -2031,6 +2031,14 @@ surveys.register_lightcurve_source(
         ('Gaia DR3', 'https://www.cosmos.esa.int/web/gaia/dr3'),
         ('Gaia archive', 'https://gea.esac.esa.int/archive/'),
     ],
+    acknowledgement=(
+        "This work presents results from the European Space Agency (ESA) "
+        "space mission Gaia. Gaia data are being processed by the Gaia Data "
+        "Processing and Analysis Consortium (DPAC). Funding for the DPAC is "
+        "provided by national institutions, in particular the institutions "
+        "participating in the Gaia MultiLateral Agreement (MLA). The Gaia "
+        "mission website is https://www.cosmos.esa.int/gaia. The Gaia "
+        "archive website is https://archives.esac.esa.int/gaia."),
     lc_bands=[
         surveys.band(band, 'mag', 'magerr', surveys.BAND_NATIVE,
                      filter_column='filter', filter_value=band, color=color,
