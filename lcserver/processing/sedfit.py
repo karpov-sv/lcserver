@@ -54,8 +54,8 @@ from scipy import stats
 
 import extinction
 
-from .filters import (FILTER_NAMES, get_filter, is_ab, pivot_aa, vega_zero_jy,
-                      width_aa)
+from .filters import (FILTER_NAMES, get_filter, has_zero_point, is_ab,
+                      pivot_aa, vega_cutoff_aa, vega_zero_jy, width_aa)
 from .utils import SourceError
 
 
@@ -2516,6 +2516,10 @@ def known_bands():
 
     The grids' own filter set, less the ones no grid actually models - there is
     no use offering a band the fit would refuse.
+
+    ``magnitude`` is whether a point in it may be given as one. Two submillimetre
+    bands lie past the end of the reference Vega spectrum and have no zero point
+    to convert through; a flux in them is as good as any other.
     """
     bands = []
     for band in FILTER_NAMES:
@@ -2526,7 +2530,8 @@ def known_bands():
         except Exception:
             continue
         bands.append({'band': band, 'wavelength': pivot,
-                      'system': 'AB' if is_ab(band) else 'Vega'})
+                      'system': 'AB' if is_ab(band) else 'Vega',
+                      'magnitude': has_zero_point(band)})
 
     return sorted(bands, key=lambda b: b['wavelength'])
 
@@ -2538,7 +2543,20 @@ def magnitude_to_flux(band, mag, mag_err=None):
     band and as good as the library's Vega spectrum for the others. The pivot
     wavelength is the one that makes <f_lambda> = <f_nu> c / lambda^2 true for
     a photon-counting filter, which is the convention the grids are on.
+
+    Where there is no Vega spectrum across the band there is no zero point to
+    go through, and the one the library returns is its blue edge's - so the
+    magnitude is refused rather than converted. The flux of such a point is
+    not in doubt and can be given directly; the submillimetre is published in
+    Jansky rather than as a magnitude, so nothing is actually lost.
     """
+    if not has_zero_point(band):
+        raise SourceError(
+            f'{band} has no usable zero point: the reference Vega spectrum '
+            f'stops at {vega_cutoff_aa() * 1e-4:.0f} um and the band lies '
+            f'beyond it, so a magnitude in it cannot be turned into a flux. '
+            f'Give the measurement as a flux instead.')
+
     pivot = pivot_aa(band)
     zero = 3631.0 if is_ab(band) else vega_zero_jy(band)
 

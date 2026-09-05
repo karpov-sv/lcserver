@@ -29,7 +29,8 @@ import numpy as np
 
 import h5py
 
-from .filters import FILTER_NAMES, is_ab, pivot_aa, vega_zero_jy
+from .filters import (FILTER_NAMES, has_zero_point, is_ab, pivot_aa,
+                      vega_zero_jy)
 from .sedfit import (AB_ZERO_JY, C_AA, PARSEC, R_SUN, attenuation,
                      grid_registry)
 from .utils import SourceError
@@ -60,11 +61,12 @@ def bands():
     mean the same thing. `ext` is the band's attenuation at Av = 1: the slope
     a page reddens with, and the same number the likelihood is evaluated with.
 
-    A band is `usable` when a magnitude can be formed in it at all. One cannot
-    for Herschel SPIRE PLW: it is a Vega band whose curve runs out past where
-    the library's Vega spectrum is defined, so its zero point integrates to
-    exactly zero. A grid may hold a perfectly good flux there - BT-Settl does,
-    for thirteen thousand models - and no magnitude can be made of it.
+    A band is `usable` when a magnitude can be formed in it at all, which
+    filters.has_zero_point decides and two submillimetre bands fail: their
+    curves lie past the end of the reference Vega spectrum, so there is no
+    zero point to read a magnitude against. A grid may hold a perfectly good
+    flux there - BT-Settl does, for thirteen thousand models - and no
+    magnitude can be made of it.
     """
     out = []
 
@@ -83,7 +85,7 @@ def bands():
             'wavelength': pivot,
             'system': 'AB' if is_ab(band) else 'Vega',
             'zero_jy': zero,
-            'usable': bool(zero > 0),
+            'usable': has_zero_point(band),
             'ext': float(attenuation(np.array([pivot * 1e-4]), 1.0)[0]),
         })
 
@@ -135,7 +137,8 @@ def photometry(name):
     flux = flux[:, keep]
 
     pivot = np.array([table[b]['wavelength'] for b in names])
-    zero = np.array([table[b]['zero_jy'] for b in names])
+    zero = np.array([table[b]['zero_jy'] if table[b]['usable'] else 0.0
+                     for b in names])
 
     # Surface f_lambda per micron, to f_lambda per Angstrom at ten parsecs,
     # to f_nu in Jansky, to a magnitude on the band's own zero point

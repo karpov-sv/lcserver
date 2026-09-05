@@ -49,6 +49,7 @@ The same notice is written into the attributes of ``filters.h5``, so that the
 data carries where it came from wherever the file goes.
 """
 
+import functools
 import os
 
 import numpy as np
@@ -159,5 +160,73 @@ def width_aa(band):
 
 
 def vega_zero_jy(band):
-    """The band's Vega zero point in Jansky, for a magnitude that is not AB."""
+    """The band's Vega zero point in Jansky, for a magnitude that is not AB.
+
+    Trustworthy only where has_zero_point() says so - the library computes one
+    for every band and says nothing about the ones it cannot.
+    """
     return float(get_filter(band).Vega_zero_Jy.value)
+
+
+@functools.lru_cache(maxsize=1)
+def vega_cutoff_aa():
+    """Where the library's reference Vega spectrum stops, in Angstrom.
+
+    Just short of 300 microns. Everything blueward of the far infrared is a
+    long way inside it and this never comes up; the submillimetre bands are
+    not, and there the number decides whether a magnitude means anything.
+    """
+    import pyphot
+
+    return float(np.asarray(pyphot.Vega().wavelength.to('AA').value,
+                            dtype=float).max())
+
+
+@functools.lru_cache(maxsize=256)
+def vega_coverage(band):
+    """How much of a band's photon throughput the Vega spectrum reaches, 0 to 1.
+
+    A zero point is the Vega spectrum averaged over the band, and the library
+    computes it whether or not it has a spectrum to average: past the red end
+    the flux is taken as zero, so what comes back is the blue edge of the band
+    standing in for the whole of it. Nothing marks that - the number is
+    finite, plausible and wrong - so the overlap is measured here instead.
+
+    Weighted as pyphot weights the zero point itself, by lambda times the
+    transmission, so this is the fraction of that integral that is real.
+    """
+    filter = get_filter(band)
+
+    wave = np.asarray(filter.wavelength.to('AA').value, dtype=float)
+    weight = np.asarray(filter.transmit, dtype=float) * wave
+
+    integrate = getattr(np, 'trapezoid', None) or np.trapz
+
+    total = integrate(weight, wave)
+    if not total > 0:
+        return 0.0
+
+    inside = integrate(np.where(wave <= vega_cutoff_aa(), weight, 0.0), wave)
+
+    return float(inside / total)
+
+
+# How much of a band the Vega spectrum must reach for its zero point to be the
+# band's rather than its blue edge's. A band a fraction of a per cent short is
+# short in the tail of its own transmission, where the weight is negligible;
+# SPIRE PMW is ninety-six per cent short and its zero point is twice what it
+# should be, which no reader would have any way of noticing.
+VEGA_COVERAGE_MIN = 0.995
+
+
+def has_zero_point(band):
+    """Whether a magnitude in this band can be turned into a flux at all.
+
+    Always for an AB band, whose zero point is a defined constant. For a Vega
+    band, only where there is a Vega spectrum across it: SPIRE PMW and PLW
+    are past the end of the one there is, and a magnitude in them means
+    nothing. Their fluxes are perfectly good - the submillimetre is published
+    in Jansky and not as a magnitude anyway - so it is the magnitude that is
+    refused and not the band.
+    """
+    return bool(is_ab(band) or vega_coverage(band) >= VEGA_COVERAGE_MIN)

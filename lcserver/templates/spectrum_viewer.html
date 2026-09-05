@@ -1046,9 +1046,46 @@ The synthetic photometry made from the same spectra leaves the fit, being the sa
      fitBands.forEach(band => {
          const option = document.createElement('option');
          option.value = band.band;
-         option.textContent = `${band.band} - ${(band.wavelength / 1e4).toFixed(3)} um, ${band.system}`;
+         // A band with no zero point takes a flux and not a magnitude, which
+         // is worth saying in the list rather than after the point is refused
+         option.textContent = `${band.band} - ${(band.wavelength / 1e4).toFixed(3)} um, `
+                            + (band.magnitude === false ? 'flux only' : band.system);
          picker.appendChild(option);
      });
+
+     picker.addEventListener('change', bandUnits);
+
+     // What the reader chose for themselves, as against what a flux-only band
+     // forced on them. Without keeping the two apart, glancing at such a band
+     // and picking another leaves the unit on flux, and the next magnitude is
+     // entered as one - silently, which is the whole failure being fixed here.
+     document.getElementById('add-unit').addEventListener('change', function() {
+         if (!this.querySelector('option[value="mag"]').disabled)
+             chosenUnit = this.value;
+     });
+
+     bandUnits();
+ }
+
+ // What the unit returns to once a band allows a magnitude again
+ let chosenUnit = 'mag';
+
+ // The submillimetre bands lie past the end of the reference Vega spectrum, so
+ // there is no zero point to read a magnitude in them against. The flux is as
+ // good as any other and is how such a measurement is published, so the unit
+ // is moved to it rather than the band being refused.
+ function bandUnits() {
+     const chosen = document.getElementById('add-band').value;
+     const unit = document.getElementById('add-unit');
+     const band = fitBands.find(b => b.band === chosen);
+     const magnitude = !band || band.magnitude !== false;
+
+     unit.querySelector('option[value="mag"]').disabled = !magnitude;
+     unit.title = magnitude ? ''
+                : chosen + ' has no zero point - the reference Vega spectrum '
+                  + 'stops short of the band - so it takes a flux';
+
+     unit.value = magnitude ? chosenUnit : 'flux';
  }
 
  function editPoints(body) {
