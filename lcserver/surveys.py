@@ -36,6 +36,30 @@ BAND_DERIVED = 'derived'
 BAND_KINDS_SHOWN = (BAND_NATIVE, BAND_CALIBRATED)
 
 
+# What a source brings back, and what a run may therefore ask for. The
+# catalogue SED counts as spectroscopy: it is assembled out of catalogue
+# photometry, but what comes of it is a spectrum, read in the spectral viewer
+# and fitted with a model atmosphere, so it belongs with the spectra rather
+# than with the lightcurves it is nothing like.
+KIND_PHOTOMETRY = 'photometry'
+KIND_SPECTROSCOPY = 'spectroscopy'
+
+# Not a source of its own, but a step every run needs whichever kind it asked
+# for: the info step, which resolves the coordinates all the rest query by.
+# The combined plot is not one of these - it draws the photometry and nothing
+# else, so it goes with it and a spectroscopy-only run has no use for it.
+KIND_ALWAYS = 'always'
+
+# In the order the page lays them out, and the words it uses for them
+KIND_LABELS = {
+    KIND_PHOTOMETRY: 'Photometry',
+    KIND_SPECTROSCOPY: 'Spectroscopy',
+}
+
+# What a run acquires when it is not told otherwise
+KINDS_DEFAULT = (KIND_PHOTOMETRY, KIND_SPECTROSCOPY)
+
+
 def band(label, mag, err, kind=BAND_NATIVE, filter_column=None, filter_value=None,
          color=None, note=None, combined=False):
     """One displayable band of a source.
@@ -89,6 +113,13 @@ def survey_source(
     form_fields=None,
     help_text='',
     order=50,
+    # What the source brings back: photometry, or spectroscopy. The two are
+    # acquired together but are wanted apart - a run after a lightcurve has no
+    # use for eight archives of spectra, and one after a spectrum none for
+    # twenty years of photometry - so a run can ask for either. 'always' is for
+    # the steps that are not a source of their own and belong to every run
+    # whichever is asked for; the info step is the one of those.
+    kind=KIND_PHOTOMETRY,
     # What the source is here to bring back. A run that ends without any of
     # these found nothing, however cleanly it finished - which is how a step
     # that came back empty is told apart from one that came back with data.
@@ -283,6 +314,7 @@ def survey_source(
             'form_fields': form_fields or {},
             'help_text': help_text,
             'order': order,
+            'kind': kind,
             'data_files': data_files,
             # Lightcurve metadata
             'votable_file': votable_file,
@@ -340,6 +372,37 @@ def get_survey_source(source_id):
 def get_all_survey_sources():
     """Get all survey sources sorted by order."""
     return dict(sorted(SURVEY_SOURCES.items(), key=lambda x: x[1]['order']))
+
+
+def get_survey_groups(skip=('info',)):
+    """The sources a target page lays out, in their two groups.
+
+    Returns one entry per kind, in the order KIND_LABELS gives, as
+    ``{'kind', 'label', 'sources'}`` with sources as (source_id, config) pairs
+    in registry order. KIND_ALWAYS has no group of its own - the info step is
+    the whole of it, and the page draws that itself - and neither has a kind
+    with nothing in it.
+
+    The combined plot ends the photometry rather than the page, which is where
+    grouping puts it: it is a summary of the photometry above it, and it read
+    oddly below eight archives of spectra it has nothing to do with.
+
+    Deliberately not the order get_all_survey_sources() returns. That one is
+    what the combined figure assigns its colours by, and a source's colour is
+    meant to hold still from one target to the next.
+    """
+    groups = []
+
+    for kind, label in KIND_LABELS.items():
+        sources = [(k, v) for k, v in get_all_survey_sources().items()
+                   if v['kind'] == kind
+                   and v.get('processing_function') is not None
+                   and k not in skip]
+
+        if sources:
+            groups.append({'kind': kind, 'label': label, 'sources': sources})
+
+    return groups
 
 
 def register_lightcurve_source(
@@ -423,6 +486,8 @@ def register_lightcurve_source(
         'form_fields': {},
         'help_text': '',
         'order': 999,  # Sort to end
+        # A lightcurve is what these are for, whoever wrote it
+        'kind': KIND_PHOTOMETRY,
         # Lightcurve metadata
         'votable_file': votable_file,
         'lc_mag_column': lc_mag_column,
@@ -436,16 +501,35 @@ def register_lightcurve_source(
     }
 
 
-def get_survey_ids_for_everything():
-    """Get list of survey IDs for 'everything' batch operation."""
+def get_survey_ids_for_everything(kinds=None):
+    """Get list of survey IDs for 'everything' batch operation.
+
+    ``kinds`` is which of KIND_PHOTOMETRY and KIND_SPECTROSCOPY the run is to
+    acquire, and defaults to both. The steps marked KIND_ALWAYS are in it
+    whatever is asked for - the info step resolves the coordinates every source
+    queries by, so a run without it would have nothing to query with. Asking
+    for neither kind leaves that alone, and there is nothing to run.
+    """
+    kinds = set(kinds if kinds is not None else KINDS_DEFAULT)
+
+    def wanted(k):
+        entry = SURVEY_SOURCES[k]
+        return (entry.get('processing_function') is not None
+                and entry['kind'] in kinds | {KIND_ALWAYS})
+
+    if not kinds:
+        return []
+
     # Exclude 'info' and 'combined' initially, add them at start/end
     # Also exclude sources without processing functions (lightcurve-only sources)
     surveys = [
         k for k in SURVEY_SOURCES.keys()
-        if k not in ['info', 'combined']
-        and SURVEY_SOURCES[k].get('processing_function') is not None
+        if k not in ['info', 'combined'] and wanted(k)
     ]
-    return ['info'] + sorted(surveys, key=lambda k: SURVEY_SOURCES[k]['order']) + ['combined']
+    surveys = sorted(surveys, key=lambda k: SURVEY_SOURCES[k]['order'])
+
+    return (['info'] + surveys
+            + (['combined'] if wanted('combined') else []))
 
 
 # Colours for the combined light curve, as (darker, lighter) pairs - one pair

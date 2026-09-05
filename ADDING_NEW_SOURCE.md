@@ -89,6 +89,11 @@ def target_gaia(config, basepath='.', verbose=None, show=False):
 
 #### Optional Fields
 
+- **`kind`** (str): What the source brings back - `KIND_PHOTOMETRY` (the
+  default) or `KIND_SPECTROSCOPY`. The page groups its sections under the two
+  headings and badges each with it, and the checkboxes beside *Run everything*
+  let a run ask for either on its own. `KIND_ALWAYS` is for a step belonging to
+  every run whichever kind it asked for; the info step is the only one.
 - **`form_fields`** (dict): Custom form fields (see below)
 
 ### Form Fields

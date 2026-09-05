@@ -6,10 +6,17 @@
 {# A running chain attempts every step regardless of per-survey conditions, so show them all until it ends #}
 {% if source_config|survey_condition_met:target or running_chain %}
   <hr>
-  {# data-toc marks the section for the contents list, which shows its state #}
+  {% comment %}
+    data-toc marks the section for the contents list, which shows its state.
+    data-toc-group is what it rules a line between, one kind and the next.
+  {% endcomment %}
   <h3 id="section-{{ source_id }}" data-toc="{{ source_config.short_name }}"
       data-toc-title="{{ source_config.name }}" data-toc-source="{{ source_id }}"
-      data-toc-state="{{ target|source_state:source_id }}">{{ source_config.name }}</h3>
+      data-toc-group="{{ kind }}"
+      data-toc-state="{{ target|source_state:source_id }}">{{ source_config.name }}
+    <span class="badge bg-light text-secondary fw-normal align-middle pull-right"
+          style="font-size: 0.5em;">{{ kind_label }}</span>
+  </h3>
 
   {% if user_may_submit and form %}
     <form action="" method="POST" class="mb-2">

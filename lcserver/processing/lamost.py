@@ -28,7 +28,7 @@ from astroquery.vizier import Vizier
 # STDPipe
 from stdpipe import plots
 
-from ..surveys import survey_source, get_output_files
+from ..surveys import survey_source, get_output_files, KIND_SPECTROSCOPY
 from .utils import (cleanup_paths, cached_votable_query, plot_with_errors,
                     write_spectrum)
 
@@ -204,6 +204,7 @@ def _value(row, key):
     help_text='LAMOST DR11 spectra, northern sky, 3700-9100 A',
     # The spectra sit below the photometry, and together
     order=80,
+    kind=KIND_SPECTROSCOPY,
     # Spectra rather than a light curve, so no lc_mode is declared
     spectrum_files='lamost_*.txt',
     # A target may have several - low and medium resolution, and more than one

@@ -32,7 +32,7 @@ from astropy import units as u
 # STDPipe
 from stdpipe import plots
 
-from ..surveys import survey_source, get_output_files
+from ..surveys import survey_source, get_output_files, KIND_SPECTROSCOPY
 from .utils import (SourceError, cleanup_paths, cached_votable_query,
                     break_at_gaps, write_spectrum,
                     SPECTRUM_FLUX_UNIT, SPECTRUM_WAVELENGTH_UNIT)
@@ -339,6 +339,7 @@ def _chosen(found, log):
     help_text='Reduced spectra from the ESO archive - UVES, X-shooter, FEROS, '
               'HARPS, GIRAFFE and the rest',
     order=85,
+    kind=KIND_SPECTROSCOPY,
     spectrum_files='eso_*.txt',
     spectrum_palette=['#1a5276', '#1f618d', '#2471a3', '#2e86c1', '#5499c7',
                       '#7fb3d5', '#a9cce3'],

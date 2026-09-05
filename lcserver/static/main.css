@@ -224,6 +224,15 @@ span.asteriskField {
   text-overflow: ellipsis;
 }
 
+/* Between one kind of source and the next - photometry above, spectroscopy
+   below. Its own border rather than one on the entry beneath it, so that the
+   line stays put when that entry is the active one and takes a coloured edge */
+.toc-rule {
+  height: 0;
+  margin: 0.3rem 0.25rem;
+  border-top: 1px solid var(--bs-border-color);
+}
+
 .toc-state {
   flex: 0 0 auto;
   font-size: 0.75rem;

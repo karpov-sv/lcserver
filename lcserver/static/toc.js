@@ -49,7 +49,25 @@ document.addEventListener('DOMContentLoaded', function() {
   var list = document.createElement('ul');
   list.className = 'nav flex-column';
 
+  // The kind the last entry belonged to, so that the rail can be ruled where
+  // it changes. Only between two kinds, not before the first: the sections
+  // above the sources - the info step - carry no kind at all, and a line
+  // under them would be marking the wrong thing.
+  var lastGroup = null;
+
   headings.forEach(function(heading) {
+    var group = heading.dataset.tocGroup;
+
+    if (group && lastGroup && group !== lastGroup) {
+      var rule = document.createElement('li');
+      rule.className = 'toc-rule';
+      rule.setAttribute('aria-hidden', 'true');
+      list.appendChild(rule);
+    }
+
+    if (group)
+      lastGroup = group;
+
     var item = document.createElement('li');
     item.className = 'nav-item';
 

@@ -25,7 +25,7 @@ from astroquery.sdss import SDSS
 # STDPipe
 from stdpipe import plots
 
-from ..surveys import survey_source, get_output_files
+from ..surveys import survey_source, get_output_files, KIND_SPECTROSCOPY
 from .utils import (SourceError, cleanup_paths, cached_votable_query,
                     write_spectrum)
 
@@ -184,6 +184,7 @@ def _fetch_spectrum(row):
     help_text=f'SDSS DR{SDSS_DR} optical spectra, 3600-10400 A',
     # First of the spectra, being the largest collection of them
     order=79,
+    kind=KIND_SPECTROSCOPY,
     spectrum_files='sdss_*.txt',
     # A target may have several, one per time a fibre was put on it
     spectrum_palette=['#5b2c6f', '#7d3c98', '#9b59b6', '#af7ac5', '#c39bd3'],

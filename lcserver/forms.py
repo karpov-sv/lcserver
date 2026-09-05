@@ -111,6 +111,24 @@ def create_survey_form(source_id, survey_config):
             title = forms.CharField(max_length=150, required=False, label="Optional title or comment")
             g_minus_r = forms.FloatField(required=False, label="(g - r) color")
             B_minus_V = forms.FloatField(required=False, label="(B - V) color")
+            # What 'Run everything' acquires. Both on is what it has always
+            # done; turning one off leaves a whole class of sources out of the
+            # run. Named for the kinds in surveys.py rather than built from
+            # them - there are two of them, and there is no sense in which a
+            # third would appear without this form wanting a say in where it
+            # goes.
+            kind_photometry = forms.BooleanField(
+                required=False, initial=True, label='Photometry',
+                widget=forms.CheckboxInput(attrs={
+                    'title': "Include the lightcurve sources in 'Run everything'",
+                }),
+            )
+            kind_spectroscopy = forms.BooleanField(
+                required=False, initial=True, label='Spectroscopy',
+                widget=forms.CheckboxInput(attrs={
+                    'title': "Include the spectral sources in 'Run everything'",
+                }),
+            )
             refresh_cache = refresh_cache_field()
 
             def __init__(self, *args, **kwargs):
@@ -131,7 +149,9 @@ def create_survey_form(source_id, survey_config):
                     Row(
                         Column('g_minus_r', css_class="col-auto"),
                         Column('B_minus_V', css_class="col-auto"),
-                        Column('refresh_cache', css_class="col-auto ms-auto me-1"),
+                        Column('kind_photometry', css_class="col-auto ms-3 mb-1"),
+                        Column('kind_spectroscopy', css_class="col-auto mb-1"),
+                        Column('refresh_cache', css_class="col-auto ms-auto me-1 mb-1"),
                         css_class='align-items-end g-2'
                     ),
                 )
@@ -240,7 +260,7 @@ def create_survey_form(source_id, survey_config):
             if isinstance(self.fields[name], forms.CharField):
                 width = 'col-12 col-sm'
             elif name == 'refresh_cache':
-                width = 'col-auto ms-auto me-1'
+                width = 'col-auto ms-auto me-1 mb-1'
             else:
                 width = 'col-auto'
 

@@ -23,7 +23,7 @@ from astroquery.vizier import Vizier
 # STDPipe
 from stdpipe import catalogs, resolve, plots
 
-from ..surveys import survey_source, get_all_output_files
+from ..surveys import survey_source, get_all_output_files, KIND_ALWAYS
 from .utils import (cleanup_paths, cached_votable_query, write_spectrum,
                     log_bands, log_conversion, assumed_color, plot_with_errors,
                     r_to_g, R_TO_G_FORMULA,
@@ -493,6 +493,8 @@ DUST_3D_MAPS = [
     clears_other_sources=True,
     help_text='Resolve target coordinates and fetch catalog photometry',
     order=1,
+    # Not a source itself - it resolves what every source queries by
+    kind=KIND_ALWAYS,
     # It resolves the target and describes it, which it can always do; the
     # photometry and the spectrum below are what it finds along the way
     data_files=[],

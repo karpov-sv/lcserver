@@ -38,7 +38,7 @@ from astroquery.vizier import Vizier
 # STDPipe
 from stdpipe import plots
 
-from ..surveys import survey_source, get_output_files
+from ..surveys import survey_source, get_output_files, KIND_SPECTROSCOPY
 from .utils import (SourceError, cleanup_paths, cached_votable_query,
                     flambda_from_fnu, shared_cache_dir, write_spectrum)
 
@@ -820,6 +820,8 @@ def _gaia_xp(basepath, log):
     # Last of the spectral block: it is assembled out of other catalogues'
     # photometry rather than observed, and spans all of them
     order=89,
+    # Assembled out of photometry, but what comes of it is a spectrum
+    kind=KIND_SPECTROSCOPY,
     # Measurements and no curve, so the viewer draws them as points and they
     # keep the full weight of anything else it shows
     spectrum_points='sed*.txt',

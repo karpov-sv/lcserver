@@ -57,7 +57,7 @@ from astropy.time import Time
 # STDPipe
 from stdpipe import plots
 
-from ..surveys import survey_source, get_output_files
+from ..surveys import survey_source, get_output_files, KIND_SPECTROSCOPY
 from .utils import (SourceError, cleanup_paths, cached_votable_query,
                     quality_field, quality_level, flambda_from_fnu,
                     write_spectrum,
@@ -977,6 +977,7 @@ def _preview(results, basepath, name, show, log):
     },
     help_text='SPHEREx QR2 spectrophotometry, all sky, 0.75-5 um',
     order=82,
+    kind=KIND_SPECTROSCOPY,
     # Spectrophotometry rather than a light curve, so no lc_mode is declared.
     #
     # The curve is matched by the wildcard, which is also what names it in the

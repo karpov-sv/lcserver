@@ -193,51 +193,52 @@
         data-toc-state="{{ target|source_state:'info' }}">Basic info</h3>
 
     {% if user_may_submit %}
-      <form action="" method="POST" class="mb-2">
+      <form action="" method="POST" class="mt-2 mb-2">
         <fieldset class="small" {% if target.celery_id %}disabled{% endif %}>
           {% crispy form_target_info %}
 
-          <button type="submit" name="action" value="target_info" class="btn btn-primary">Get info</button>
+          <div class="mt-2">
+            <button type="submit" name="action" value="target_info" class="btn btn-primary me-4">Get info</button>
 
-          <button type="submit" name="action" value="target_everything" class="btn btn-secondary">Run everything</button>
+            <button type="submit" name="action" value="target_everything" class="btn btn-secondary">Run everything</button>
 
-          <a href="{% url 'target_lightcurve' id=target.id %}" class="btn btn-info ms-4" title="Interactive light curve viewer">
-            <i class="fa fa-line-chart"></i> Light curves
-          </a>
-
-          {% if has_spectra %}
-            <a href="{% url 'target_spectrum' id=target.id %}" class="btn btn-info ms-2" title="Interactive spectral viewer">
-              <i class="fa fa-bar-chart"></i> Spectra
+            <a href="{% url 'target_lightcurve' id=target.id %}" class="btn btn-info ms-4" title="Interactive light curve viewer">
+              <i class="fa fa-line-chart"></i> Light curves
             </a>
-          {% endif %}
 
-          <button type="submit" name="action" value="cleanup_target" class="btn btn-danger ms-4"
-                  title="Delete all processing results and configurations">Cleanup</button>
-
-          <!-- Unsafe controls -->
-          <button class="btn btn-light collapse-chevron-horizontal collapsed ms-4 me-4" type="button"
-                  data-bs-toggle="collapse"
-                  data-bs-target="#unsafeButtons"
-                  aria-expanded="false"
-                  aria-controls="unsafeButtons"
-                  title="Show / hide unsafe controls">
-          </button>
-
-          <span id="unsafeButtons" class="collapse collapse-horizontal collapsed">
-            {% if cache_entries %}
-              <!-- Cache panel hide/show -->
-              <button type="button" class="btn btn-light collapse-chevron collapsed"
-                      data-bs-toggle="collapse"
-                      data-bs-target="#cachePanel"
-                      aria-expanded="false"
-                      aria-controls="cachePanel"
-                      title="Show cached survey replies">Cache&nbsp;</button>
+            {% if has_spectra %}
+              <a href="{% url 'target_spectrum' id=target.id %}" class="btn btn-info ms-2" title="Interactive spectral viewer">
+                <i class="fa fa-bar-chart"></i> Spectra
+              </a>
             {% endif %}
 
-            <button type="submit" name="action" value="delete_target" class="btn btn-danger"
-                    title="Permanently delete this target">Delete target</button>
-          </span>
+            <!-- Unsafe controls -->
+            <button class="btn btn-light collapse-chevron-horizontal collapsed ms-4 me-4" type="button"
+                    data-bs-toggle="collapse"
+                    data-bs-target="#unsafeButtons"
+                    aria-expanded="false"
+                    aria-controls="unsafeButtons"
+                    title="Show / hide unsafe controls">
+            </button>
 
+            <span id="unsafeButtons" class="collapse collapse-horizontal collapsed">
+              <button type="submit" name="action" value="cleanup_target" class="btn btn-danger me-4"
+                      title="Delete all processing results and configurations">Cleanup</button>
+
+              {% if cache_entries %}
+                <!-- Cache panel hide/show -->
+                <button type="button" class="btn btn-light collapse-chevron collapsed"
+                        data-bs-toggle="collapse"
+                        data-bs-target="#cachePanel"
+                        aria-expanded="false"
+                        aria-controls="cachePanel"
+                        title="Show cached survey replies">Cache&nbsp;</button>
+              {% endif %}
+
+              <button type="submit" name="action" value="delete_target" class="btn btn-danger"
+                      title="Permanently delete this target">Delete target</button>
+            </span>
+          </div>
         </fieldset>
       </form>
 
@@ -343,13 +344,16 @@
 
 
     <!-- Survey Data Sources -->
-    {# Auto-generated survey sections from registry #}
-    {% for source_id, source_config in survey_sources.items %}
-      {% if source_config.processing_function and source_id != 'info' %}
-        {% with form=survey_forms|get_form:source_id %}
+    {# Auto-generated survey sections from registry, in their two groups #}
+    {% for group in survey_groups %}
+      <!-- <h2 class="mt-5 pb-1 border-bottom text-secondary"
+      id="group-{{ group.kind }}">{{ group.label }}</h2> -->
+
+      {% for source_id, source_config in group.sources %}
+        {% with form=survey_forms|get_form:source_id kind_label=group.label kind=group.kind %}
           {% include "survey_section.html" %}
         {% endwith %}
-      {% endif %}
+      {% endfor %}
     {% endfor %}
 
   {% endif %}

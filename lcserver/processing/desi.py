@@ -27,7 +27,7 @@ from astropy import units as u
 # STDPipe
 from stdpipe import plots
 
-from ..surveys import survey_source, get_output_files
+from ..surveys import survey_source, get_output_files, KIND_SPECTROSCOPY
 from .utils import (SourceError, cleanup_paths, cached_votable_query,
                     write_spectrum)
 
@@ -160,6 +160,7 @@ def _find(ra, dec, sr, log):
     },
     help_text='DESI DR1 spectra, 3600-9800 A, northern sky',
     order=81,
+    kind=KIND_SPECTROSCOPY,
     # Spectra rather than a light curve, so no lc_mode is declared
     spectrum_files='desi_*.txt',
     spectrum_palette=['#16a085', '#27ae60', '#1abc9c', '#2ecc71'],

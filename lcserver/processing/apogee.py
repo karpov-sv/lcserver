@@ -30,7 +30,7 @@ from astroquery.vizier import Vizier
 # STDPipe
 from stdpipe import plots
 
-from ..surveys import survey_source, get_output_files
+from ..surveys import survey_source, get_output_files, KIND_SPECTROSCOPY
 from .utils import (SourceError, cleanup_paths, cached_votable_query,
                     break_at_gaps, plot_with_errors, write_spectrum)
 
@@ -183,6 +183,7 @@ def _download(row):
     },
     help_text='APOGEE DR17 near-infrared spectra, H band, 1.51-1.70 um',
     order=84,
+    kind=KIND_SPECTROSCOPY,
     spectrum_files='apogee_*.txt',
     spectrum_palette=['#7e5109', '#9c640c', '#b9770e', '#d68910', '#f0b27a'],
     template_layout='complex',

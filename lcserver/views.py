@@ -527,10 +527,24 @@ def targets(request, id=None):
                     messages.success(request, f"Started cleanup for target {target.id}")
 
                 elif action == 'target_everything':
+                    # Which kinds to acquire, from the two boxes beside the
+                    # colours. They are ordinary fields of the info form, so
+                    # the run remembers what it was last asked for.
+                    kinds = [_ for _ in surveys.KIND_LABELS
+                             if form.cleaned_data.get(f'kind_{_}')]
+
+                    if not kinds:
+                        messages.error(request, "Nothing to run - neither"
+                                       " photometry nor spectroscopy is ticked")
+                        return HttpResponseRedirect(request.path_info)
+
                     # Use run_target_steps for proper chain management
-                    steps = surveys.get_survey_ids_for_everything()
+                    steps = surveys.get_survey_ids_for_everything(kinds)
                     celery_tasks.run_target_steps(target, steps)
-                    messages.success(request, f"Started doing everything for target {target.id}")
+                    messages.success(
+                        request, f"Started acquiring"
+                        f" {' and '.join(surveys.KIND_LABELS[_].lower() for _ in kinds)}"
+                        f" for target {target.id}")
 
                 # Check if it's a survey source action
                 elif action and action.startswith('target_'):
@@ -573,6 +587,8 @@ def targets(request, id=None):
         # Display target
         context['target'] = target
         context['survey_sources'] = surveys.get_all_survey_sources()
+        # The same sources, in the two groups the page lays them out in
+        context['survey_groups'] = surveys.get_survey_groups()
 
         # A chain is running, so every step in it will become active in turn.
         # Sections render their log placeholders upfront, which lets the state
