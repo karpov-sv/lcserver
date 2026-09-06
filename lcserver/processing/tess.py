@@ -219,13 +219,29 @@ def target_tess(config, basepath=None, verbose=True, show=False):
     tnames = np.array(res.target_name, dtype=object)
     tnames[np.asarray(res.author) == 'TEQUILA'] = 'TEQUILA source'
 
-    for tname in np.unique(tnames):
+    # How far each group is, as the nearest of its matches - a group holds one
+    # match per sector rather than one match
+    tdists = {tname: np.min(res[tnames == tname].distance.value)
+              for tname in np.unique(tnames)}
+
+    # Which group each sector was taken from, so that a further one does not
+    # repeat it. A TESS pixel is 21 arcsec, so a second catalogue entry inside
+    # the search radius is not a second star - it is the same blend measured
+    # at another position, through the aperture its own magnitude asks for,
+    # and where it is the fainter entry that aperture is the smaller and the
+    # photometry the worse. Its file would also collide with the nearer
+    # group's whenever the two settle on the same pipeline.
+    written = {}
+
+    for tname in sorted(tdists, key=lambda tname: tdists[tname]):
         idx = tnames == tname
-        # The nearest of them, as a group holds one match per sector rather
-        # than one match
-        log(f"\nTESS target {tname} at {np.min(res[idx].distance.value):.1f} arcsec")
+        log(f"\nTESS target {tname} at {tdists[tname]:.1f} arcsec")
 
         for mission in np.unique(res[idx].mission):
+            if mission in written:
+                log(f"  {mission}: already taken from {written[mission]}, skipping")
+                continue
+
             idx1 = idx & (res.mission == mission)
             tmin = Time(np.min(res.table['t_min'][idx1]), format='mjd')
             tmax = Time(np.max(res.table['t_max'][idx1]), format='mjd')
@@ -309,3 +325,6 @@ def target_tess(config, basepath=None, verbose=True, show=False):
 
                 if is_done:
                     break
+
+            if is_done:
+                written[mission] = tname
