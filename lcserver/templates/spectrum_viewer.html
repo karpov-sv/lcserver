@@ -13,14 +13,6 @@
 <script src="{% static 'plot_resize.js' %}"></script>
 
 <style>
-.control-panel {
-    background-color: var(--bs-light);
-    border: 1px solid var(--bs-border-color);
-    border-radius: 0.375rem;
-    padding: 1rem;
-    margin-bottom: 1rem;
-}
-
 .spectrum-control {
     display: flex;
     align-items: center;
@@ -328,17 +320,14 @@ The synthetic photometry made from the same spectra leaves the fit, being the sa
   and staying put when those are folded away.
 {% endcomment %}
 <div id="fit-results" style="display: none;">
-  <hr>
-  <h3 class="mb-2">Photospheric model fit at
+  <h3 class="mb-4">Photospheric model fit at
     <span id="fit-results-when"></span>
     <!-- <small class="text-body-secondary fs-6" id="fit-results-when"></small> -->
   </h3>
 
-  <div id="fit-result"></div>
+  <div id="fit-result" class="mb-4"></div>
 
-  <hr style="border-style: dotted">
-
-  <div id="fit-run-block"></div>
+  <div id="fit-run-block" class="mb-4"></div>
 </div>
 
 <script>

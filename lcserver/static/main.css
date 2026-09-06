@@ -84,6 +84,18 @@
     content:'\f054';
 }
 
+/* The box a set of controls sits in. The two viewers each had their own copy
+   of this; it is here so that the target page's sections can be the same box,
+   and so that one change to it changes all three. --bs-light is redefined by
+   dark.css, so the panel follows the theme without a rule of its own. */
+.control-panel {
+    background-color: var(--bs-light);
+    border: 1px solid var(--bs-border-color);
+    border-radius: 0.375rem;
+    padding: 1rem;
+    margin-bottom: 1rem;
+}
+
 .panel-toggle {
     cursor: pointer;
     user-select: none;

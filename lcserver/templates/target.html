@@ -188,12 +188,18 @@
       {% endif %}
     </div>
 
-    <hr>
+    {% comment %}
+      The first of the panels, and the same box every source section is in:
+      the name of the step and what it is asked for, with the output below it
+      rather than inside it.
+    {% endcomment %}
+    <div class="control-panel">
     <h3 id="section-info" data-toc="Info" data-toc-source="info"
+        {% if not user_may_submit %}class="mb-0"{% endif %}
         data-toc-state="{{ target|source_state:'info' }}">Basic info</h3>
 
     {% if user_may_submit %}
-      <form action="" method="POST" class="mt-2 mb-2">
+      <form action="" method="POST" class="mt-2 mb-0">
         <fieldset class="small" {% if target.celery_id %}disabled{% endif %}>
           {% crispy form_target_info %}
 
@@ -213,7 +219,7 @@
             {% endif %}
 
             <!-- Unsafe controls -->
-            <button class="btn btn-light collapse-chevron-horizontal collapsed ms-4 me-4" type="button"
+            <button class="btn btn-outline-secondary collapse-chevron-horizontal collapsed ms-4 me-4" type="button"
                     data-bs-toggle="collapse"
                     data-bs-target="#unsafeButtons"
                     aria-expanded="false"
@@ -222,12 +228,12 @@
             </button>
 
             <span id="unsafeButtons" class="collapse collapse-horizontal collapsed">
-              <button type="submit" name="action" value="cleanup_target" class="btn btn-danger me-4"
+              <button type="submit" name="action" value="cleanup_target" class="btn btn-danger me-2"
                       title="Delete all processing results and configurations">Cleanup</button>
 
               {% if cache_entries %}
                 <!-- Cache panel hide/show -->
-                <button type="button" class="btn btn-light collapse-chevron collapsed"
+                <button type="button" class="btn btn-outline-secondary me-2 collapse-chevron collapsed"
                         data-bs-toggle="collapse"
                         data-bs-target="#cachePanel"
                         aria-expanded="false"
@@ -285,10 +291,10 @@
         </div>
       {% endif %}
     {% endif %}
+    </div>
 
 
     <!-- Basic info -->
-    <hr style="border-style: dotted">
     <div class="row mb-2">
       {% if 'info.log' in files or target.state == 'acquiring info' or running_chain %}
         <div class="col-md">

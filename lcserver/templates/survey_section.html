@@ -5,35 +5,43 @@
 
 {# A running chain attempts every step regardless of per-survey conditions, so show them all until it ends #}
 {% if source_config|survey_condition_met:target or running_chain %}
-  <hr>
   {% comment %}
+    The name of the source and what it is asked for go in one panel, as the
+    controls of the two viewers do - the box is what separates one section
+    from the next, so there is no rule above it and none between the form and
+    the output below.
+
     data-toc marks the section for the contents list, which shows its state.
     data-toc-group is what it rules a line between, one kind and the next.
   {% endcomment %}
-  <h3 id="section-{{ source_id }}" data-toc="{{ source_config.short_name }}"
-      data-toc-title="{{ source_config.name }}" data-toc-source="{{ source_id }}"
-      data-toc-group="{{ kind }}"
-      data-toc-state="{{ target|source_state:source_id }}">{{ source_config.name }}
-    <span class="badge bg-light text-secondary fw-normal align-middle pull-right"
-          style="font-size: 0.5em;">{{ kind_label }}</span>
-  </h3>
+  <div class="control-panel">
+    <h3 id="section-{{ source_id }}" data-toc="{{ source_config.short_name }}"
+        data-toc-title="{{ source_config.name }}" data-toc-source="{{ source_id }}"
+        data-toc-group="{{ kind }}"
+        {% if not user_may_submit or not form %}class="mb-0"{% endif %}
+        data-toc-state="{{ target|source_state:source_id }}">{{ source_config.name }}
+      {# bg-body rather than bg-light: the panel it now sits on is bg-light, and a badge the colour of its background is not a badge #}
+      <span class="badge bg-body text-secondary border fw-normal align-middle pull-right"
+            style="font-size: 0.5em; position:relative; top: -2em; left: 2em;">{{ kind_label }}</span>
+    </h3>
 
-  {% if user_may_submit and form %}
-    <form action="" method="POST" class="mb-2">
-      <fieldset class="small" {% if target.celery_id %}disabled{% endif %}>
-        {% crispy form %}
-        <button type="submit" name="action" value="target_{{ source_id }}"
-                class="btn {{ source_config.button_class }}">
-          {{ source_config.button_text }}
-        </button>
-      </fieldset>
-    </form>
-  {% endif %}
+    {% if user_may_submit and form %}
+      <form action="" method="POST" class="mb-0">
+        <fieldset class="small" {% if target.celery_id %}disabled{% endif %}>
+          {% crispy form %}
+          <div class="mt-2">
+            <button type="submit" name="action" value="target_{{ source_id }}"
+                    class="btn {{ source_config.button_class }}">
+              {{ source_config.button_text }}
+            </button>
+          </div>
+        </fieldset>
+      </form>
+    {% endif %}
+  </div>
 
   {# Rendered also while the step is pending or running, so that the log poller always has an element to update #}
   {% if source_config.log_file in files or target.state == source_config.state_acquiring or running_chain %}
-    <hr style="border-style: dotted">
-
     {% if source_config.template_layout == 'simple' %}
       {% include "survey_layout_simple.html" %}
     {% elif source_config.template_layout == 'with_cutout' %}
