@@ -180,9 +180,9 @@
 
       <div class="text-center mb-3">
         {% if is_target_browser %}
-          <img src="{% url 'target_view' id=target_id path=path %}" class="img-fluid img-thumbnail" alt="{{ path }}" style="max-height: 800px;"/>
+          <img src="{% url 'target_view' id=target_id path=path %}" class="img-fluid" alt="{{ path }}" style="max-width: 100%;"/>
         {% else %}
-          <img src="#" class="img-fluid img-thumbnail" alt="{{ path }}" style="max-height: 800px;"/>
+          <img src="#" class="img-fluid" alt="{{ path }}" style="max-width: 100%;"/>
         {% endif %}
       </div>
 

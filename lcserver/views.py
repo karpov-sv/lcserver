@@ -105,6 +105,18 @@ def list_files(request, path='', base=settings.TARGETS_PATH):
             except:
                 pass
 
+        # NumPy data
+        elif context['mime'] == 'application/x-numpy-data':
+            try:
+                data = np.load(fullpath)
+                if data.ndim == 2 and data.shape[0] < data.shape[1]:
+                    # Transpose for better readability
+                    data = data.T
+                context['table'] = Table(rows=data)
+                context['mode'] = 'table'
+            except:
+                pass
+
         # FITS files
         elif 'fits' in context['mime'] or 'FITS' in context['magic_info'] or os.path.splitext(path)[1].lower().startswith('.fit'):
             context['mode'] = 'fits'

@@ -16,9 +16,20 @@ from astropy.io import fits
 register = template.Library()
 
 
-def target_file_link(m, target=None):
+def target_file_link(m, target=None, base=''):
+    """A `file:` reference in a log, as a link to the file it names.
+
+    Resolved against the directory the log itself is in, not the target root.
+    Every log at the top level is unaffected - their directory is the root -
+    and one written into a subdirectory can go on naming its neighbours the
+    way every other log does. An SED fit writes its figures beside its log in
+    `sedfit/<run>/`, and `file:corner_btsettl.png` there means the one in that
+    run rather than a file of that name that would have to be at the root and
+    never is.
+    """
     name = m.group(2)
-    url = reverse('target_files', kwargs={'id':target.id, 'path':name})
+    url = reverse('target_files',
+                  kwargs={'id': target.id, 'path': os.path.join(base, name)})
 
     return r"<a href='" + url + "'>" + name + r"</a>"
 
@@ -70,7 +81,8 @@ def target_file_contents(target, filename, highlight=False):
         # stops at the plus, fails to reach an extension, and the whole link
         # goes unrecognised rather than merely being cut short.
         contents = re.sub(r"\b(file:([\w.+-]+\.\w+))\b",
-                          partial(target_file_link, target=target),
+                          partial(target_file_link, target=target,
+                                  base=os.path.dirname(filename)),
                           contents, flags=re.MULTILINE)
 
         contents = re.sub(r"\b(cache:([\w.+-]+\.\w+))\b",

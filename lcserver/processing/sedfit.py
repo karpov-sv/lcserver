@@ -461,7 +461,7 @@ def fit(bands, wave_um, flux, flux_err, grid, priors,
         left = getattr(results, 'delta_logz', None)
         target = kwargs.get('dlogz')
 
-        line = f"    {niter} iterations, {ncall} likelihood calls"
+        line = f"  {niter} iterations, {ncall} likelihood calls"
         if isinstance(left, float) and np.isfinite(left) and left < 1e6:
             line += f", dlogz {left:.2f} of {target or dlogz:.2f} to go"
 
@@ -1104,59 +1104,59 @@ def add_excess_residuals(table, models):
 
 def log_excess(table, models, log):
     """The excess as a table, and what shape it came out as."""
-    log('\n  infrared excess, against the photosphere the fit predicts')
+    log('\ninfrared excess, against the photosphere the fit predicts')
     # Two significances, and they answer different questions: how far the
     # point is from the photosphere, which is whether there is an excess at
     # all, and how far it is from the photosphere and the fitted excess
     # together, which is whether the shape that won describes it.
-    log(f"    {'band':<16}{'lam um':>8}{'observed':>11}{'photosphere':>12}"
+    log(f"  {'band':<16}{'lam um':>8}{'observed':>11}{'photosphere':>12}"
         f"{'ratio':>8}{'sigma':>8}{'from fit':>10}")
 
     for entry in table:
         if not entry['quantified']:
-            log(f"    {entry['band'] or '':<16}{entry['wave_um']:8.2f}"
+            log(f"  {entry['band'] or '':<16}{entry['wave_um']:8.2f}"
                 f"{entry['observed']:11.3e}{'-':>12}{'-':>8}{'-':>8}{'-':>10}")
             continue
 
         left = entry.get('fit_sigma')
-        log(f"    {entry['band'] or '':<16}{entry['wave_um']:8.2f}"
+        log(f"  {entry['band'] or '':<16}{entry['wave_um']:8.2f}"
             f"{entry['observed']:11.3e}{entry['model']:12.3e}"
             f"{entry['ratio']:8.2f}{entry['sigma']:+8.1f}"
             + (f"{left:+10.1f}" if left is not None else f"{'-':>10}"))
 
     if not models:
-        log('    fewer than two bands to compare shapes on')
+        log('  fewer than two bands to compare shapes on')
         return
 
     p = models['probability']
-    log(f"\n    shape, on {models['bands']} band(s):  none {p['none']:.3f}"
+    log(f"\n  shape, on {models['bands']} band(s):  none {p['none']:.3f}"
         f"  free-free {p['freefree']:.3f}  blackbody {p['blackbody']:.3f}")
 
     ln = models['ln_bayes']['freefree_over_blackbody']
     if ln is not None:
-        log(f"      log Bayes factor, free-free over blackbody {ln:+.1f}")
+        log(f"    log Bayes factor, free-free over blackbody {ln:+.1f}")
 
     # Which shape wins is one question, and whether it fits is another. Two
     # parameters through four catalogue points measured years apart will not
     # go through them all, and saying so is worth more than the ratio alone.
     best = models[models['preferred']] if models['preferred'] != 'none' else None
     if best is not None and models['bands'] > 2:
-        log(f"      the preferred shape leaves chi2 {best['chi2']:.1f}"
+        log(f"    the preferred shape leaves chi2 {best['chi2']:.1f}"
             f" on {models['bands'] - 2} degree(s) of freedom")
 
     ff = models['freefree']
-    log(f"      free-free   F_nu ~ nu^({ff['alpha']:+.2f} +/- {ff['alpha_err']:.2f}),"
+    log(f"    free-free   F_nu ~ nu^({ff['alpha']:+.2f} +/- {ff['alpha_err']:.2f}),"
         f"  {ff['amplitude']:.3e} at {models['reference_um']:.2f} um")
 
     bb = models['blackbody']
-    line = (f"      blackbody   T_dust {bb['t_dust']:.0f}"
+    line = (f"    blackbody   T_dust {bb['t_dust']:.0f}"
             f" +/- {bb['t_dust_err']:.0f} K")
     if 'l_dust_over_lstar' in bb:
         line += f",  L_dust/L_star {bb['l_dust_over_lstar']:.2e}"
     log(line)
 
     if bb.get('above_ceiling'):
-        log('        - which is more than any debris disc is seen to have'
+        log('      - which is more than any debris disc is seen to have'
             ' at that temperature')
 
 
@@ -1445,43 +1445,49 @@ def compare_xp(xp, run, grid, theta, ndraw=400, seed=0):
 def log_xp(result, log):
     """The comparison as a table, and what the numbers in it mean."""
     fitted = result['n_fitted']
-    log(f"\n  Gaia XP spectrum in {result['bin_nm']:.0f} nm bins, against what"
+    log(f"\nGaia XP spectrum in {result['bin_nm']:.0f} nm bins, against what"
         f" the fit predicts in them")
-    log(f"    (errors are the spectrum's own, {result['systematic']:.0%} of"
+    log(f"(errors are the spectrum's own, {result['systematic']:.0%} of"
         f" calibration, and how loosely the posterior predicts the bin -"
         f" {100 * result['spread']:.1f}% of it in the median)")
 
-    log(f"    {'lam nm':>8}{'observed':>12}{'model':>12}{'ratio':>8}{'sigma':>8}"
+    log(f"  {'lam nm':>8}{'observed':>12}{'model':>12}{'ratio':>8}{'sigma':>8}"
         f"{'fitted':>9}")
     for b in result['bins']:
-        log(f"    {b['wave_um'] * 1e3:8.0f}{b['observed'] * PER_AA:12.3e}"
+        log(f"  {b['wave_um'] * 1e3:8.0f}{b['observed'] * PER_AA:12.3e}"
             + (f"{b['model'] * PER_AA:12.3e}{b['ratio']:8.2f}{b['sigma']:+8.1f}"
                if b['ratio'] else f"{'-':>12}{'-':>8}{'-':>8}")
             + f"{'yes' if b['fitted'] else '-':>9}")
 
-    log(f"\n    chi2 {result['chi2']:.1f} on {result['n']} bins;"
+    log(f"\nchi2 {result['chi2']:.1f} on {result['n']} bins;"
         f" the spectrum sits {100 * (result['offset'] - 1):+.1f}% on the model,"
         f" scatter {100 * result['scatter']:.1f}%")
 
+    # Where the fitted bands reach and where they do not, as two lines rather
+    # than one sentence: the two numbers are there to be compared, and each
+    # says what it is a percentage of, so neither has to be read together with
+    # the line above. Outside rather than beyond - the bins the fitted bands
+    # do not cover are as often blueward of them as redward.
     if result.get('offset_within') is not None and result['n_beyond']:
-        log(f"      {100 * (result['offset_within'] - 1):+.1f}% over the"
-            f" {result['n_within']} bins the fitted bands span, and"
-            f" {100 * (result['offset_beyond'] - 1):+.1f}% over the"
-            f" {result['n_beyond']} beyond them - which is the model past its"
-            f" data rather than the model against it")
+        log(f"  inside the fitted bands, {result['n_within']} bins:"
+            f" the spectrum sits"
+            f" {100 * (result['offset_within'] - 1):+.1f}% on the model")
+        log(f"  outside them, {result['n_beyond']} bins:"
+            f" {100 * (result['offset_beyond'] - 1):+.1f}%"
+            f" - the model past its data, not against it")
 
-    log(f"    with that offset taken out, chi2 {result['chi2_shape']:.1f}"
+    log(f"with that offset taken out, chi2 {result['chi2_shape']:.1f}"
         f" - which is the shape, and is what a fit would be working to")
-    log(f"    worst bin {result['worst']['wave_um'] * 1e3:.0f} nm at"
+    log(f"worst bin {result['worst']['wave_um'] * 1e3:.0f} nm at"
         f" {result['worst']['sigma']:+.1f} sigma")
 
     # Which of the two things this is has to be said, since a chi2 in a log
     # invites the assumption that it was minimised
     if fitted:
-        log(f"    {fitted} of these bins were fitted, so this is partly the"
+        log(f"{fitted} of these bins were fitted, so this is partly the"
             f" fit describing what it was shown")
     else:
-        log('    the spectrum was not fitted - this is a check on the fit,'
+        log('the spectrum was not fitted - this is a check on the fit,'
             ' not part of it')
 
 
@@ -2298,7 +2304,8 @@ def target_sed_fit(config, basepath='.', outpath=None, selection=None,
         rows.sort(key=lambda r: (r['wave_um'] is None, r['wave_um'] or 0))
 
     used = [r for r in rows if r['used']]
-    log(f"\n{len(used)} of {len(rows)} points from {source}"
+    log("\n---- Data points ----\n")
+    log(f"{len(used)} of {len(rows)} points from {source}"
         + (f" and {sum(1 for r in rows if is_xp(r['band']))} bins of the Gaia"
            f" XP spectrum" if fit_xp else ''))
     for r in rows:
@@ -2359,7 +2366,9 @@ def target_sed_fit(config, basepath='.', outpath=None, selection=None,
             log(f"\n{name}: {reason} - skipped")
             continue
 
-        log(f"\nfitting {name}: Teff {grid.teff.min():.0f}-{grid.teff.max():.0f} K")
+        log(f"\n---- Fitting {name} ----\n")
+        log(f"Teff {grid.teff.min():.0f}-{grid.teff.max():.0f} K,"
+            f" {len(grid.teff)} models")
         run = fit(bands, wave, flux, err, grid, priors,
                   nlive=options.get('nlive', 500), seed=options.get('seed', 0),
                   verbose=False, progress=log)
@@ -2372,7 +2381,7 @@ def target_sed_fit(config, basepath='.', outpath=None, selection=None,
         runs.append((run, grid))
         summaries[grid.name] = summary
 
-        log(f"  log Z {run['logz']:.2f} +/- {run['logz_err']:.2f}"
+        log(f"log Z {run['logz']:.2f} +/- {run['logz_err']:.2f}"
             f"   chi2 {summary['chi2']:.1f} on {len(bands)} bands"
             f"   prior shrinkage {100*summary['shrink']:.0f}%")
         log_parameters(summary, log)
@@ -2418,7 +2427,16 @@ def target_sed_fit(config, basepath='.', outpath=None, selection=None,
 
     os.makedirs(outpath, exist_ok=True)
     for run, grid in runs:
-        np.save(os.path.join(outpath, f'samples_{grid.name}.npy'), run['samples'])
+        # Named before anything is written under it. Unheaded, this pass put
+        # three identical-looking XP tables one after another, each identified
+        # only by the line that came after it - so the first was read as
+        # belonging to the grid named at the end of it, which was the next one.
+        log(f"\n---- {grid.name}: posterior, Gaia XP and model spectrum ----\n")
+
+        samples = os.path.join(outpath, f'samples_{grid.name}.npy')
+        np.save(samples, run['samples'])
+        log(f"{len(run['samples'])} posterior samples written to"
+            f" file:{os.path.basename(samples)}")
 
         # What Gaia measured over the optical, against what this fit predicts
         # in the same bins. It needs no spectrum and no node: the bins are
@@ -2431,9 +2449,9 @@ def target_sed_fit(config, basepath='.', outpath=None, selection=None,
                 summaries[grid.name]['xp'] = compare_xp(xp, run, grid, theta)
                 log_xp(summaries[grid.name]['xp'], log)
             except SourceError as e:
-                log(f'\n  no Gaia XP comparison for {grid.name}: {e}')
+                log(f'\nno Gaia XP comparison for {grid.name}: {e}')
             except Exception as e:
-                log(f'\n  Gaia XP comparison failed: {type(e).__name__}: {e}')
+                log(f'\nGaia XP comparison failed: {type(e).__name__}: {e}')
 
         # The model as a spectrum, at the row it is drawn at, kept with the run
         # so that neither the figure nor the viewer has to go back to a cache
@@ -2449,20 +2467,21 @@ def target_sed_fit(config, basepath='.', outpath=None, selection=None,
             # Worth saying: a reader who has seen a line under one grid will
             # wonder where it went under the next
             near = 'no spectra' if not has_spectra(grid.name) else \
-                'no spectrum near this fit' 
-            log(f"\n  {near} for {grid.name} - it is drawn per band"
+                'no spectrum near this fit'
+            log(f"\n{near} for {grid.name} - it is drawn per band"
                 f" and not as a line")
             continue
 
-        np.save(os.path.join(outpath, f'model_{grid.name}.npy'),
-                np.vstack([spectrum['wave_um'],
-                           spectrum['observed']]).astype('float32'))
-        log(f"\n  {grid.name} spectrum: nearest node is"
+        model = os.path.join(outpath, f'model_{grid.name}.npy')
+        np.save(model, np.vstack([spectrum['wave_um'],
+                                  spectrum['observed']]).astype('float32'))
+        log(f"\n{grid.name} spectrum: nearest node is"
             f" {spectrum['teff']:.0f} K,"
             f" log g {spectrum['logg']:.1f}, [Fe/H] {spectrum['feh']:+.1f}")
         if spectrum.get('correction'):
-            log(f"    put on the fit's own scale, which the cube says is"
+            log(f"  put on the fit's own scale, which the cube says is"
                 f" {100 * (spectrum['correction'] - 1):+.1f}% from that node")
+        log(f"  written to file:{os.path.basename(model)}")
 
     # Written after the runs rather than before them, since what those learn -
     # which node the spectrum came from, how the XP spectrum compares - belongs
@@ -2470,30 +2489,40 @@ def target_sed_fit(config, basepath='.', outpath=None, selection=None,
     with open(os.path.join(outpath, 'fit.json'), 'w') as f:
         json.dump(result, f, indent=1, default=float)
 
+    log("\n---- Generated output files ----\n")
+    log("the fit's inputs, options and every number above, in file:fit.json")
+
     # Drawn last, and never allowed to lose a run: the fit is the thing, and a
     # figure that will not render is not a reason to throw away an hour of
     # sampling. Whichever ones worked are on disk and the viewer finds them.
     if options.get('figures', True):
+        def drawn(what, filename):
+            """A figure, named the way every other log names what it wrote."""
+            if filename:
+                log(f"{what} in file:{os.path.basename(filename)}")
+
         for run, grid in runs:
             try:
-                draw_sed(run, grid, summaries[grid.name], outpath, xp=xp)
+                drawn(f'{grid.name} fitted SED plotted',
+                      draw_sed(run, grid, summaries[grid.name], outpath, xp=xp))
             except Exception as e:
                 log(f'SED plot for {grid.name} failed: {type(e).__name__}: {e}')
 
             try:
-                draw_corner(run, outpath)
+                drawn(f'{grid.name} posterior plotted',
+                      draw_corner(run, outpath))
             except Exception as e:
                 log(f'corner plot for {grid.name} failed: {type(e).__name__}: {e}')
 
         try:
-            draw_histograms([run for run, _ in runs], outpath)
+            drawn('every grid\'s posteriors over each other, plotted',
+                  draw_histograms([run for run, _ in runs], outpath))
         except Exception as e:
             log(f'histograms failed: {type(e).__name__}: {e}')
 
-        log(f"\ndrew {len(glob.glob(os.path.join(outpath, '*.png')))} figure(s)")
-
     if len(summaries) > 1:
-        log(f"\ngrid-to-grid Teff spread {result['spread']['teff']:.0f} K")
+        log("\n---- Cross model comparison ----\n")
+        log(f"grid-to-grid Teff spread {result['spread']['teff']:.0f} K")
 
     return result
 
@@ -3107,11 +3136,16 @@ def draw_histograms(runs, path, name='histograms.png'):
     if not shown:
         return None
 
-    columns = 4
+    # As square as the count allows, rather than a fixed four across. The nine
+    # parameters a full run has are the case that matters, and nine in fours
+    # is a row of four, a row of four and a row of one - three empty panels,
+    # and each of the nine narrower than it needs to be to show a distribution
+    # with two grids overlaid. Three by three uses the same figure better.
+    columns = int(np.ceil(np.sqrt(len(shown))))
     rows = int(np.ceil(len(shown) / columns))
     filename = os.path.join(path, name)
 
-    with plots.figure_saver(filename, figsize=(3.2 * columns, 2.6 * rows)) as fig:
+    with plots.figure_saver(filename, figsize=(3.9 * columns, 3.1 * rows)) as fig:
         axes = fig.subplots(rows, columns, squeeze=False).ravel()
 
         for ax, parameter in zip(axes, shown):
@@ -3155,14 +3189,27 @@ def draw_histograms(runs, path, name='histograms.png'):
                                 useMathText=True)
             ax.xaxis.get_offset_text().set_fontsize(8)
 
-        for ax in axes[len(shown):]:
+        spare = list(axes[len(shown):])
+        for ax in spare:
             ax.set_visible(False)
 
-        # One legend for the figure: the grids are the same in every panel
+        # One legend for the figure: the grids are the same in every panel.
+        # Where the panels fill the grid exactly - nine parameters in three by
+        # three, which is the usual run - there is no corner left to put it in
+        # and it would sit on top of the luminosity. So it goes into a spare
+        # panel when the count leaves one, and below the figure when it does
+        # not; savefig's tight bounding box grows to include it either way.
         handles, labels_ = axes[0].get_legend_handles_labels()
         if len(handles) > 1:
-            fig.legend(handles, labels_, loc='lower right', fontsize=9,
-                       frameon=False)
+            if spare:
+                spare[0].set_visible(True)
+                spare[0].axis('off')
+                spare[0].legend(handles, labels_, loc='center', fontsize=10,
+                                frameon=False)
+            else:
+                fig.legend(handles, labels_, loc='upper center',
+                           bbox_to_anchor=(0.5, 0.0), ncol=min(len(handles), 4),
+                           fontsize=10, frameon=False)
 
     return filename
 
