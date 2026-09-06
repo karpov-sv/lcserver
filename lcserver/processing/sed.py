@@ -25,12 +25,10 @@ and each is matched to its own nearest source.
 """
 
 import os
-import io
 import re
 import collections
 
 import numpy as np
-import requests
 
 from astropy.table import Table, vstack
 from astroquery.vizier import Vizier
@@ -40,7 +38,8 @@ from stdpipe import plots
 
 from ..surveys import survey_source, get_output_files, KIND_SPECTROSCOPY
 from .utils import (SourceError, cleanup_paths, cached_votable_query,
-                    flambda_from_fnu, shared_cache_dir, write_spectrum)
+                    fetch_votable, flambda_from_fnu, shared_cache_dir,
+                    write_spectrum)
 
 
 # VizieR's SED service, which its photometry viewer is a page around
@@ -273,18 +272,13 @@ def _query(ra, dec, sr, basepath, log, refresh):
                               'VizieR SED photometry', refresh=refresh) as cache:
         if not cache.hit:
             log(f"within {sr:.1f} arcsec")
-            res = requests.get(SED_URL, timeout=180,
-                               params={'-c': f'{ra} {dec:+f}', '-c.rs': sr})
 
-            if res.status_code != 200:
-                raise SourceError(f"the SED service answered {res.status_code}")
-
-            try:
-                from astropy.io.votable import parse
-                table = parse(io.BytesIO(res.content)).get_first_table().to_table()
-            except Exception as e:
-                raise SourceError(f"the SED service returned something that is "
-                                  f"not a VOTable ({e})")
+            # This endpoint is the reason fetch_votable checks for a closing
+            # tag: it answers 200 with a half-written table often enough, and
+            # then serves that same half from its cache until the URL changes
+            table = fetch_votable(
+                SED_URL, params={'-c': f'{ra} {dec:+f}', '-c.rs': sr},
+                service='the SED service', log=log).to_table()
 
             if len(table):
                 cache.save(table)

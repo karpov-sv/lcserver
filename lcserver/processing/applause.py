@@ -6,7 +6,6 @@ European plate archive lightcurves for Dec > -30 deg.
 
 import os
 import numpy as np
-import requests
 
 from astropy.table import Table
 from astropy.time import Time
@@ -18,7 +17,7 @@ from stdpipe import plots
 
 from .. import surveys
 from ..surveys import survey_source, get_output_files
-from .utils import (cleanup_paths, parse_votable_lenient, cached_votable_query,
+from .utils import (cleanup_paths, fetch_votable, cached_votable_query,
                     quality_field, quality_level, log_bands, log_conversion,
                     plot_with_errors,
                     QUALITY_STANDARD, QUALITY_RELAXED, QUALITY_PUBLISHED)
@@ -179,13 +178,15 @@ def target_applause(config, basepath=None, verbose=True, show=False):
             # TODO: more intelligent error handling?
             job.raise_if_error()
 
-            # Parse VOTable with lenient error handling
-            # The APPLAUSE TAP service sometimes returns malformed XML with undefined entities
-            result_url = job.result_uri
-            response = requests.get(result_url, timeout=300)
-
-            # Use helper function to parse potentially malformed VOTable
-            applause = parse_votable_lenient(response.content)
+            # The APPLAUSE TAP service sometimes returns malformed XML with
+            # undefined entities, so the parse is the lenient one. That parse
+            # repairs an unclosed document as readily as an unescaped entity,
+            # which is why fetching it goes through the helper: a reply cut
+            # short has to be caught before the repair silently accepts it as
+            # a short table.
+            applause = fetch_votable(job.result_uri, timeout=300,
+                                     service='the APPLAUSE TAP service',
+                                     lenient=True, log=log).to_table()
 
             if applause is not None and len(applause):
                 cache.save(applause)

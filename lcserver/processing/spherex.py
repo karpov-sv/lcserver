@@ -59,8 +59,8 @@ from stdpipe import plots
 
 from ..surveys import survey_source, get_output_files, KIND_SPECTROSCOPY
 from .utils import (SourceError, cleanup_paths, cached_votable_query,
-                    quality_field, quality_level, flambda_from_fnu,
-                    write_spectrum,
+                    fetch_votable, quality_field, quality_level,
+                    flambda_from_fnu, write_spectrum,
                     QUALITY_STANDARD, QUALITY_RELAXED, QUALITY_PUBLISHED)
 
 
@@ -647,21 +647,11 @@ def _query_images(ra, dec, basepath, log, refresh):
     with cached_votable_query(cache_name, basepath, log,
                               'SPHEREx image list', refresh=refresh) as cache:
         if not cache.hit:
-            res = requests.get(SPHEREX_SIA, timeout=300, params={
+            table = fetch_votable(SPHEREX_SIA, timeout=300, params={
                 'COLLECTION': SPHEREX_COLLECTION,
                 'POS': f'circle {ra} {dec} {SPHEREX_SIA_RADIUS}',
                 'RESPONSEFORMAT': 'VOTABLE',
-            })
-
-            if res.status_code != 200:
-                raise SourceError(f"IRSA answered {res.status_code} to the "
-                                  "image search")
-
-            from astropy.io.votable import parse
-            from io import BytesIO
-
-            votable = parse(BytesIO(res.content))
-            table = votable.get_first_table()
+            }, service='IRSA', log=log)
 
             # The service returns its columns positionally named, so they are
             # put back before anything reads them by name

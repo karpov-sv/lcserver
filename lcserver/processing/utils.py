@@ -2,6 +2,7 @@
 
 import os
 import glob
+import time
 import shutil
 import re
 import warnings
@@ -589,6 +590,15 @@ def parse_votable_lenient(xml_content):
     >>> response = requests.get(tap_service_url)
     >>> table = parse_votable_lenient(response.content)
     """
+    return _parse_lenient(xml_content).get_first_table().to_table()
+
+
+def _parse_lenient(xml_content):
+    """The repair itself, as the whole document rather than its first table.
+
+    `fetch_votable` wants what the strict parser gives it - the table element,
+    fields and all - so the repairing and the taking of the table are apart.
+    """
     try:
         from lxml import etree
         # Primary method: Use lxml's recovery parser to fix malformed XML
@@ -596,16 +606,123 @@ def parse_votable_lenient(xml_content):
         tree = etree.fromstring(xml_content, parser=parser)
         # Convert back to bytes for astropy
         fixed_xml = etree.tostring(tree, encoding='utf-8')
-        votable = votable_parse(BytesIO(fixed_xml), verify='ignore')
+        return votable_parse(BytesIO(fixed_xml), verify='ignore')
     except ImportError:
         # Fallback method: Manually clean undefined entities with regex
         import re
         xml_str = xml_content.decode('utf-8', errors='ignore')
         # Remove undefined entities (keep only standard XML entities)
         xml_str = re.sub(r'&(?!amp;|lt;|gt;|quot;|apos;)[a-zA-Z0-9_]+;', '', xml_str)
-        votable = votable_parse(BytesIO(xml_str.encode('utf-8')), verify='ignore')
+        return votable_parse(BytesIO(xml_str.encode('utf-8')), verify='ignore')
 
-    return votable.get_first_table().to_table()
+
+def fetch_votable(url, params=None, timeout=180, service='the service',
+                  lenient=False, log=None, attempts=3):
+    """GET a VOTable from a service, refusing one it cut short.
+
+    A service can answer 200, close the connection cleanly, and still have
+    stopped writing in the middle of its table - no closing tags, no error,
+    nothing at the HTTP layer to notice. VizieR's SED endpoint does exactly
+    this, and then caches the half-written document against the request URL,
+    so every identical retry replays it. That is the case this exists for: a
+    plain retry cannot work, because the URL is the cache key. A retry with
+    one extra parameter is a different key, and comes back whole.
+
+    So a reply that does not end in a closing VOTABLE tag is not parsed. It is
+    asked for again under a URL the service has not seen, up to `attempts`
+    times, and only what comes back last is parsed. The check is therefore
+    allowed to be wrong: a document it misjudges costs one more request and is
+    still parsed and returned. Only a document that is both unclosed and
+    unparseable raises.
+
+    The order matters most where a lenient parse is asked for. lxml's recovery
+    mode closes an unclosed document for you and returns the rows that did
+    arrive, cheerfully and without a word - so on a truncated reply the
+    lenient path is not an error to be caught but silent data loss, and the
+    only place to catch it is before the parser sees it.
+
+    Parameters
+    ----------
+    url : str
+        The service endpoint.
+    params : dict, optional
+        Query parameters, passed to requests.
+    timeout : float
+        Seconds to wait, per attempt.
+    service : str
+        What to call it when something goes wrong.
+    lenient : bool
+        Repair malformed XML before parsing, for a service that emits
+        undefined entities. See `parse_votable_lenient`.
+    log : callable, optional
+        Where to say that a reply arrived truncated and is being asked for
+        again. Silence otherwise - a query that works says nothing.
+    attempts : int
+        How many times to ask in total. The first goes out exactly as given,
+        so an unremarkable query is one request and hits the service's cache
+        like any other; only a retry carries the extra parameter.
+
+    Returns
+    -------
+    astropy.io.votable.tree.TableElement
+        The first table of the document. Call `.to_table()` for the rows;
+        `.fields` is there for a service that names its columns positionally.
+    """
+    content = None
+
+    for attempt in range(max(1, attempts)):
+        ask = dict(params or {})
+        if attempt:
+            # Anything the service has not been asked before. It is ignored by
+            # every endpoint here, which is the point: the reply is the same
+            # reply, computed again rather than remembered.
+            ask['_retry'] = f'{time.time():.6f}'
+
+        res = requests.get(url, timeout=timeout, params=ask)
+
+        if res.status_code != 200:
+            raise SourceError(f'{service} answered {res.status_code}')
+
+        content = res.content
+
+        if _looks_whole(content) or not _looks_votable(content):
+            # Whole, or not a VOTable at all. The second is a service saying
+            # something else entirely - an HTML error page, usually - and
+            # asking it again under another URL will not change its mind.
+            break
+
+        if log and attempt + 1 < max(1, attempts):
+            log(f'  {service} returned a truncated document '
+                f'({len(content)} bytes) - asking again')
+
+    try:
+        if lenient:
+            return _parse_lenient(content).get_first_table()
+
+        return votable_parse(BytesIO(content)).get_first_table()
+    except Exception as e:
+        if _looks_votable(content) and not _looks_whole(content):
+            raise SourceError(f'{service} returned a truncated VOTable '
+                              f'({len(content)} bytes, no closing tag) and '
+                              f'went on returning one when asked again')
+
+        raise SourceError(f'{service} returned something that is not a '
+                          f'VOTable ({e})')
+
+
+def _looks_whole(content):
+    """Whether a reply ends where a VOTable ends."""
+    return content.rstrip()[-10:].lower() == b'</votable>'
+
+
+def _looks_votable(content):
+    """Whether a reply ever began one.
+
+    Only the head is searched: a service answering with an error page says so
+    in its first bytes, and a megabyte of rows need not be scanned to find out
+    that the first hundred of them opened a VOTABLE.
+    """
+    return b'<votable' in content[:4096].lower()
 
 
 def shared_cache_dir(basepath):

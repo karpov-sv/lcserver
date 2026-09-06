@@ -95,6 +95,7 @@ from .utils import (
     source_failure,
     failure_message,
     parse_votable_lenient,
+    fetch_votable,
     cleanup_paths,
     print_to_file,
     pickle_to_file,
@@ -140,6 +141,7 @@ from .combined import target_combined
 __all__ = [
     # Utilities
     'parse_votable_lenient',
+    'fetch_votable',
     'cleanup_paths',
     'print_to_file',
     'pickle_to_file',
