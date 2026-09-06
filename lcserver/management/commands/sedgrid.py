@@ -49,8 +49,8 @@ class Command(BaseCommand):
 
         parser.add_argument(
             '--ingest-btsettl', dest='btsettl', default=None,
-            help="BT-Settl's medium-resolution grid file - its spectra only, "
-                 'the cube here already being the wider grid')
+            help="BT-Settl's medium-resolution grid file - the whole grid, "
+                 'cube and spectra both')
 
         parser.add_argument(
             '--ingest-bosz', dest='bosz', default=None,
@@ -213,11 +213,12 @@ class Command(BaseCommand):
         self.written(name, cube, spectra, target)
 
     def ingest_btsettl(self, options):
-        """Write BT-Settl's spectra beside the cube that is already here.
+        """Turn BT-Settl's medium-resolution grid file into a cube and spectra.
 
-        Only the spectra: the grid file covers rather more than half of the
-        cube's models, and a cube from it would lose the cool and metal-poor
-        ends that are the reason for having this grid at all.
+        The cube it replaces is astroARIADNE's, which covers half again as many
+        models and cannot say where any of them came from. The comparison
+        afterwards is over the models the two share, and is what says the flux
+        was read the same way.
         """
         from lcserver.ingest import btsettl
 
@@ -226,17 +227,29 @@ class Command(BaseCommand):
             raise CommandError(f'{source} is not a file')
 
         target, name = self.where(options, default='btsettl')
-        spectra = os.path.join(target, f'{name}.spectra.h5')
+        cube, spectra = self.paths(target, name, options['force'])
 
-        if os.path.exists(spectra) and not options['force']:
-            raise CommandError(f'{spectra} is already there - --force to '
-                               f'write over it')
+        installed = (sedfit.grid_registry().get(name) or {}).get('path')
 
-        btsettl.ingest(source, spectra, name=name, verbose=self.stdout.write)
+        btsettl.ingest(source, cube, spectra, name=name,
+                       label=options['label'] or 'BT-Settl',
+                       description=options['description']
+                       or 'PHOENIX with dust settling and clouds, on the '
+                          'AGSS2009 abundances, and the widest wavelength '
+                          'range here - a nanometre to a millimetre',
+                       verbose=self.stdout.write)
 
-        self.stdout.write(self.style.SUCCESS(
-            f'\n{name}: {os.path.getsize(spectra) / 1e6:.1f} MB of spectra '
-            f'in {target}'))
+        if installed and os.path.abspath(installed) != os.path.abspath(cube):
+            # Across the range rather than at the hot end the default asks
+            # about: this grid is here for the cool stars as much as for
+            # anything, and one metal-poor point because the metallicity axis
+            # is the other one the two cubes are sampled differently on
+            store.compare(cube, installed, verbose=self.stdout.write,
+                          at=((3000., 5.0, 0.0), (4500., 4.5, 0.0),
+                              (6000., 4.5, 0.0), (10000., 4.0, 0.0),
+                              (30000., 4.5, 0.0), (5000., 4.5, -2.0)))
+
+        self.written(name, cube, spectra, target)
 
     def ingest_bosz(self, options):
         """Turn a BOSZ download into a cube and a spectrum file.
