@@ -1,4 +1,5 @@
 {% extends "template.html" %}
+{% load humanize %}
 
 {% block ptitle %}About the data{% endblock %}
 
@@ -55,6 +56,29 @@
       it keeps the label's colour rather than the muted one around it */
    .archive-ack-label::marker {
      color: var(--bs-body-color);
+   }
+
+   /* A grid card says a few numbers an archive card has no equivalent of -
+      how far it reaches in temperature, how many models that is, what else
+      came with them. They are facts rather than prose, so they are set apart
+      from the description as a strip rather than written into a sentence. */
+   .archive-facts {
+     font-size: 0.85em;
+     color: var(--bs-secondary-color);
+     margin-bottom: 0.5rem;
+   }
+
+   .archive-facts span:not(:last-child)::after {
+     content: " · ";
+   }
+
+   /* Which of the publisher's downloads the cube was built from. Of no
+      interest to most readers and the whole of the answer for one rebuilding
+      it, so it is present and quiet rather than absent. */
+   .archive-provenance {
+     font-size: 0.85em;
+     color: var(--bs-secondary-color);
+     font-family: var(--bs-font-monospace);
    }
   </style>
 {% endblock %}
@@ -114,11 +138,65 @@
     </div>
   {% endfor %}
 
+  {% if grids %}
+    <h2 class="mt-5 pb-1 border-bottom text-secondary" id="group-grids">
+      Model atmospheres
+    </h2>
+
+    <p class="mt-3">
+      The archives above are what was observed. These are what it is compared
+      with: grids of model spectra, computed and published by the groups named
+      below, which the SED fit interpolates between to arrive at a
+      temperature, a gravity and a reddening. A fitted parameter is a statement about a grid as much as
+      about a star, and the grid is the part of it a reader cannot see - so
+      each one is named here, and the
+      <a href="{% url 'models' %}">model explorer</a> shows what any of them
+      actually says.
+    </p>
+
+    <div class="row row-cols-1 row-cols-lg-2 g-3 mt-1">
+      {% for grid in grids %}
+        <div class="col">
+          <div class="archive">
+            <h5 id="grid-{{ grid.name }}">{{ grid.label }}</h5>
+
+            <p>{{ grid.description|capfirst }}.</p>
+
+            <div class="archive-facts">
+              {% if grid.teff_lo %}
+                <span>{{ grid.teff_lo|floatformat:0|intcomma }} -
+                      {{ grid.teff_hi|floatformat:0|intcomma }} K</span>
+              {% endif %}
+              {% if grid.nmodels %}
+                <span>{{ grid.nmodels|intcomma }} models</span>
+              {% endif %}
+              {% if grid.reach_um %}
+                <span>out to {{ grid.reach_um|floatformat:1 }} &micro;m</span>
+              {% endif %}
+              {% if grid.has_spectra %}<span>spectra</span>{% endif %}
+              {% if grid.has_xp %}<span>Gaia XP</span>{% endif %}
+            </div>
+
+            <p class="archive-links small">
+              <a href="{{ grid.reference }}" target="_blank"
+                 rel="noopener">{{ grid.publisher|default:"Where it comes from" }}</a>
+            </p>
+
+            {% if grid.dataset %}
+              <div class="archive-provenance">{{ grid.dataset }}</div>
+            {% endif %}
+          </div>
+        </div>
+      {% endfor %}
+    </div>
+  {% endif %}
+
   <p class="text-secondary mt-5">
     This is not a complete citation list. Most of the surveys above expect the
-    paper describing them to be cited as well, and a few of the catalogues have
-    their own conditions; the links beside each one are where those are stated.
-    Nothing here replaces reading them.
+    paper describing them to be cited as well, every one of the model grids
+    does, and a few of the catalogues have their own conditions; the links
+    beside each one are where those are stated. Nothing here replaces reading
+    them.
   </p>
 
 {% endblock %}

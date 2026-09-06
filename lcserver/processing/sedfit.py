@@ -1649,23 +1649,35 @@ def grid_registry():
         stem = os.path.splitext(os.path.basename(name))[0]
         entry = {'name': LEGACY_NAMES.get(stem.lower(), stem.lower()),
                  'path': name, 'label': None, 'description': None,
-                 'reach_um': None, 'axis_logg': 'logg'}
+                 'source': None, 'reference': None,
+                 'reach_um': None, 'axis_logg': 'logg', 'nmodels': None}
 
         try:
             with h5py.File(name, 'r') as h:
-                for key in ('name', 'label', 'description'):
+                # `source` and `reference` are where the models were computed
+                # and by whom, which is nothing the fit needs and the whole of
+                # what a page crediting them does
+                for key in ('name', 'label', 'description', 'source',
+                            'reference'):
                     if key in h.attrs:
                         entry[key] = str(h.attrs[key])
                 entry['axis_logg'] = str(h.attrs.get('axis_logg', 'logg'))
                 if 'reach_um' in h.attrs:
                     entry['reach_um'] = float(h.attrs['reach_um'])
                 teff = np.asarray(h['teff'][:], dtype=float) if 'teff' in h else None
+                # Every axis of the flux block but the last, which is the
+                # passbands: the models themselves for a scattered grid, and
+                # the three axes of the box for a lattice
+                shape = h['flux'].shape if 'flux' in h else None
         except (OSError, KeyError):
             continue
 
         if teff is not None and len(teff):
             entry['teff_lo'] = float(teff.min())
             entry['teff_hi'] = float(teff.max())
+
+        if shape:
+            entry['nmodels'] = int(np.prod(shape[:-1]))
 
         # What the file did not say, for the grids that came with no way to
         knows = KNOWN_GRIDS.get(entry['name'])
@@ -1712,6 +1724,55 @@ def offered_grids():
                     'has_spectra': has_spectra(grid['name']),
                     'has_xp': bool(grid.get('xp')),
                     'axis_logg': grid.get('axis_logg') or 'logg'})
+
+    return out
+
+
+def described_grids():
+    """The grids a page can credit, in temperature order.
+
+    Stricter than `offered_grids()`, and for a different reason. That one asks
+    whether a grid can be put in front of someone choosing between them, which
+    a name is nearly enough for. This one asks whether it can be written about:
+    who computed the models, where they were got from, and where that is stated
+    by the people whose work it is. A grid that cannot answer all three is left
+    out rather than credited by half, since half a credit reads as the whole of
+    what is owed.
+
+    So a grid appears here by carrying its own attributes, exactly as a survey
+    appears on the same page by declaring `about` in its `@survey_source`.
+    Re-ingesting one is what adds it; nothing here is a list to come and edit.
+    """
+    grids = [g for g in grid_registry().values()
+             if g['label'] and g['description'] and g['reference']]
+    grids.sort(key=lambda g: g.get('teff_lo') or 0)
+
+    out = []
+    for grid in grids:
+        # `source` is written as who published it and which of their downloads
+        # it was, in that order: 'STScI CDBS, ck04models'. The first half is
+        # the credit and belongs where a reader looks for one; the second is
+        # the identifier for whoever rebuilds the cube, and is worth keeping
+        # but not worth saying twice. A source with no comma is all credit.
+        publisher, _, dataset = (grid['source'] or '').partition(', ')
+
+        out.append({
+            'name': grid['name'],
+            'label': grid['label'],
+            'description': grid['description'],
+            'publisher': publisher or None,
+            'dataset': dataset or None,
+            'reference': grid['reference'],
+            'teff_lo': grid.get('teff_lo'),
+            'teff_hi': grid.get('teff_hi'),
+            'nmodels': grid.get('nmodels'),
+            'reach_um': grid['reach_um'],
+            # Whether it can be drawn as a line and fitted to an XP spectrum,
+            # both of which are files beside the cube and neither of which
+            # every grid here has
+            'has_spectra': has_spectra(grid['name']),
+            'has_xp': bool(grid.get('xp')),
+        })
 
     return out
 
