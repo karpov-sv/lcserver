@@ -42,6 +42,50 @@ TESS_AUTHORS = ['TESS-SPOC', 'QLP', 'SPOC']
 TESS_OWN_READERS = {'TEQUILA': download_tequila_lightcurve,
                     'TARS': download_tars_lightcurve}
 
+# What QLP calls its detrended flux, newest name first - the column is
+# det_flux from sector 56 on and kspsap_flux before it
+QLP_DETRENDED_COLUMNS = ['det_flux', 'kspsap_flux']
+
+
+def unmask(lc):
+    """Spell the gaps in the flux as NaN rather than as a mask.
+
+    lightkurve hands a column back masked where the file stored it masked,
+    and normalize() scales by np.nanmedian, which does not honour a mask -
+    it reads what the mask hides and answers nan, or the median of the wrong
+    points. The flux a pipeline is read with arrives as plain NaN, so put
+    the one moved in beside it on the same footing.
+    """
+    for name in ('flux', 'flux_err'):
+        column = lc[name]
+        unit = getattr(column, 'unit', None)
+        values = np.ma.filled(np.ma.asarray(column), np.nan)
+        lc[name] = values * unit if unit is not None else values
+
+    return lc
+
+
+def select_detrended_flux(lc, log):
+    """Put the pipeline's corrected flux in the ``flux`` column.
+
+    lightkurve reads pdcsap_flux for the SPOC pipelines, which is the
+    corrected one, but sap_flux for QLP, which is not - a QLP light curve so
+    read is the raw aperture photometry, with the scattered light ramps still
+    in it, and carries the detrended column's uncertainties beside it. Move it
+    onto what QLP detrended. Every original column stays in the table.
+    """
+    if lc.meta.get('AUTHOR') != 'QLP':
+        return lc
+
+    for column in QLP_DETRENDED_COLUMNS:
+        if column in lc.colnames:
+            log(f"    Reading QLP {column}, not the raw {lc.meta.get('FLUX_ORIGIN')}")
+            return unmask(lc.select_flux(column))
+
+    log("    Warning: QLP lightcurve has no detrended flux column")
+
+    return lc
+
 
 @survey_source(
     name='TESS',
@@ -204,6 +248,8 @@ def target_tess(config, basepath=None, verbose=True, show=False):
 
                     if not lc:
                         continue
+
+                    lc = select_detrended_flux(lc, log)
 
                     # What the pipeline made of the sector itself, where it
                     # says so - TARS looks for rotation and publishes the
