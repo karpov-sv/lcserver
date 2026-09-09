@@ -22,6 +22,19 @@ from . import surveys
 from .processing.utils import mission_quality_mask, quality_level
 
 
+def json_safe(values):
+    """An array as a list JSON can carry, with what it cannot as null.
+
+    NaN is not JSON, however readily Python writes and reads it again: a
+    browser's JSON.parse refuses the whole document over one of them. It
+    reaches here through the uncertainties - a source may know a magnitude
+    without knowing how well it is known, which is most of what the AAVSO
+    holds from before uncertainties were asked for - so those become null,
+    which every consumer of this already understands as a point with no bar.
+    """
+    return [None if not np.isfinite(v) else float(v) for v in values]
+
+
 def load_magnitude_data(basepath):
     """Load magnitude-based light curve data from multiple surveys"""
     lightcurve_data = []
@@ -84,7 +97,7 @@ def load_magnitude_data(basepath):
                     'color': band.get('color') or color,
                     'mjd': x[idx].tolist(),
                     'mag': y[idx].tolist(),
-                    'magerr': dy[idx].tolist(),
+                    'magerr': json_safe(dy[idx]),
                     'n_points': int(np.sum(idx)),
                 })
 
@@ -234,7 +247,7 @@ def load_flux_data(basepath, config=None):
                     'color': color,
                     'mjd': x[idx].tolist(),
                     'flux': flux_normalized[idx].tolist(),
-                    'flux_err': flux_err_normalized[idx].tolist(),
+                    'flux_err': json_safe(flux_err_normalized[idx]),
                     'n_points': int(np.sum(idx)),
                 }
 

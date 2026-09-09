@@ -472,6 +472,24 @@ function initializeControls() {
     });
 }
 
+// Whether a point's uncertainty is known to sit inside the filter's threshold.
+// Written out rather than left to `err <= max`, because an unknown
+// uncertainty arrives as null and null coerces to zero: the least known
+// points on the plot would pass every filter, and pass it as though they were
+// the best measured. The AAVSO has a century of estimates with no quoted
+// error, so this is not a corner case there.
+function withinMaxError(err, maxError) {
+    return err !== null && err <= maxError;
+}
+
+// How the hover says an uncertainty. Formatted here rather than in the hover
+// template, which has no way to spell "not known": a null formatted as a
+// number reads as "\u00b1 0.000", which claims a perfect measurement for the
+// one point that carries no claim at all.
+function errorLabel(err) {
+    return err === null ? '(no quoted uncertainty)' : '\u00b1 ' + err.toFixed(3);
+}
+
 // Calculate phase from MJD
 function calculatePhase(mjd, period, epoch) {
     return ((mjd - epoch) % period) / period;
@@ -595,13 +613,13 @@ function updatePlot() {
             const hasMaxErrorFilter = isMagnitudeMode && state.maxError !== null;
 
             for (let i = 0; i < totalPoints; i++) {
-                if (!hasMaxErrorFilter || phaseData.errs[i] <= state.maxError) {
+                if (!hasMaxErrorFilter || withinMaxError(phaseData.errs[i], state.maxError)) {
                     xData.push(phaseData.phases[i]);
                     yData.push(phaseData.values[i] + state.offset);
                     errData.push(phaseData.errs[i]);
                     customData.push([
                         phaseData.mjds[i],
-                        phaseData.errs[i],
+                        errorLabel(phaseData.errs[i]),
                         phaseData.phases[i]
                     ]);
                 }
@@ -613,7 +631,7 @@ function updatePlot() {
                 '<b>%{fullData.name}</b><br>' +
                 'Phase: %{customdata[2]:.4f}<br>' +
                 'MJD: %{customdata[0]:.2f}<br>' +
-                valueLabel + ': %{y:.3f} ± %{customdata[1]:.3f}<br>' +
+                valueLabel + ': %{y:.3f} %{customdata[1]}<br>' +
                 '<extra></extra>';
         } else {
             // Time mode
@@ -630,29 +648,29 @@ function updatePlot() {
             if (useMJDMode) {
                 // Use MJD directly (no datetime conversion needed)
                 for (let i = 0; i < totalPoints; i++) {
-                    if (!hasMaxErrorFilter || series[errKey][i] <= state.maxError) {
+                    if (!hasMaxErrorFilter || withinMaxError(series[errKey][i], state.maxError)) {
                         xData.push(series.mjd[i]);
                         yData.push(series[dataKey][i] + state.offset);
                         errData.push(series[errKey][i]);
-                        customData.push([series.mjd[i], series[errKey][i]]);
+                        customData.push([series.mjd[i], errorLabel(series[errKey][i])]);
                     }
                 }
 
                 hoverTemplate =
                     '<b>%{fullData.name}</b><br>' +
                     'MJD: %{x:.2f}<br>' +
-                    valueLabel + ': %{y:.3f} ± %{customdata[1]:.3f}<br>' +
+                    valueLabel + ': %{y:.3f} %{customdata[1]}<br>' +
                     '<extra></extra>';
             } else {
                 // Convert MJD to dates (computed once and cached)
                 const datetimes = ensureDatetimes(series);
 
                 for (let i = 0; i < totalPoints; i++) {
-                    if (!hasMaxErrorFilter || series[errKey][i] <= state.maxError) {
+                    if (!hasMaxErrorFilter || withinMaxError(series[errKey][i], state.maxError)) {
                         xData.push(datetimes[i]);
                         yData.push(series[dataKey][i] + state.offset);
                         errData.push(series[errKey][i]);
-                        customData.push([series.mjd[i], series[errKey][i]]);
+                        customData.push([series.mjd[i], errorLabel(series[errKey][i])]);
                     }
                 }
 
@@ -660,7 +678,7 @@ function updatePlot() {
                     '<b>%{fullData.name}</b><br>' +
                     'Time: %{x}<br>' +
                     'MJD: %{customdata[0]:.2f}<br>' +
-                    valueLabel + ': %{y:.3f} ± %{customdata[1]:.3f}<br>' +
+                    valueLabel + ': %{y:.3f} %{customdata[1]}<br>' +
                     '<extra></extra>';
             }
 
