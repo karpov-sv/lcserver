@@ -113,6 +113,7 @@ from .mmt9 import target_mmt9
 from .fram import target_fram
 from .css import target_css
 from .kws import target_kws
+from .aavso import target_aavso
 from .ptf import target_ptf
 from .bgds import target_bgds
 from .wise import target_wise
@@ -154,6 +155,7 @@ __all__ = [
     'target_asas',
     'target_css',
     'target_kws',
+    'target_aavso',
     'target_ptf',
     'target_bgds',
     'target_tess',

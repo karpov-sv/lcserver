@@ -35,6 +35,7 @@ model atmosphere grids as are worth asking.
 | ZTF | g, r — colour-corrected per epoch |
 | ASAS-SN | V and g |
 | KWS | Kamogata, V and Ic |
+| AAVSO | a century of observer-contributed photometry, by name; needs an API key |
 | OMC | INTEGRAL Optical Monitoring Camera, V, since 2003 |
 | MMT9 | Mini-MegaTORTORA, white light |
 | FRAM | B, V, R, I from the Pierre Auger Observatory and CTAO telescopes |
@@ -267,6 +268,7 @@ Read from the environment or a `.env` file, via `python-decouple`:
 | `SEDFIT_GRIDS` | the grid directory; unset, astroARIADNE's own is read |
 | `SEDFIT_SPECTRA` | astroARIADNE's single spectra cache, for grids whose spectra do not sit beside them |
 | `CELERY_CONCURRENCY` | how many sources are acquired at once, default `4` |
+| `AAVSO_TOKEN` | key for the AAVSO API; without it the AAVSO step finds nothing |
 
 The sources of one target are acquired in parallel, so `CELERY_CONCURRENCY` is
 also the number of simultaneous queries pointed at external services. Several

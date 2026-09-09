@@ -165,6 +165,16 @@ SEDFIT_GRIDS = config('SEDFIT_GRIDS', default='')
 # it is installed; without either, a fit still runs and draws no line.
 SEDFIT_SPECTRA = config('SEDFIT_SPECTRA', default='')
 
+# The key the AAVSO International Database is read with. Its API answers 401
+# without one, and there is no anonymous route to the photometry: the search
+# page hands out the first twenty-five rows and puts a CAPTCHA in front of the
+# second page. Keys come from the account settings page at aavso.org. Left
+# unset, the AAVSO step records that it has no key and finishes with no data.
+# One key, one throttle: the archive counts every request to it against the
+# same allowance, whichever endpoint they went to.
+AAVSO_TOKEN = config('AAVSO_TOKEN', default='')
+
+
 # Messages
 from django.contrib.messages import constants as messages
 
