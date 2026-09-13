@@ -272,6 +272,7 @@
           <select class="form-select form-select-sm mb-2" id="spectra-form">
             <option value="lf">&#955; F<sub>&#955;</sub></option>
             <option value="f">F<sub>&#955;</sub></option>
+            <option value="fnu">F<sub>&#957;</sub></option>
           </select>
           <div class="form-check">
             <input class="form-check-input" type="checkbox" id="spectra-bands">
@@ -1024,6 +1025,14 @@
        var wave = answer.wave_um;
        var traces = [];
 
+       // F_nu = F_lambda lambda^2 / c: with F_lambda per micron and lambda in
+       // microns that is 1e-4/c to erg/s/cm2/Hz. Peak-normalised spectra are
+       // unitless already, and keep the bare lambda^2
+       var toNu = norm === 'peak' ? 1.0 : 1e-4 / 2.99792458e10;
+       var factor = wave.map(function(w){
+         return form === 'lf' ? w : form === 'fnu' ? w * w * toNu : 1;
+       });
+
        var span = extent(answer.spectra.map(function(s){
          return s[$('#spectra-along').val()];
        })) || [0, 1];
@@ -1049,7 +1058,7 @@
              if(f === null)
                return null;
 
-             return f * scale * (form === 'lf' ? wave[i] : 1);
+             return f * scale * factor[i];
            }),
            mode: 'lines',
            line: {color: tint, width: 1},
@@ -1092,7 +1101,8 @@
        var unit = {
          peak: 'normalised to the peak',
          bol: 'per unit bolometric flux',
-         raw: 'erg/s/cm²/µm at the surface',
+         raw: form === 'fnu' ? 'erg/s/cm²/Hz at the surface'
+                             : 'erg/s/cm²/µm at the surface',
        }[norm];
 
        return {
@@ -1103,7 +1113,7 @@
          },
          yaxis: {
            type: 'log',
-           title: {text: (form === 'lf' ? 'λ Fλ, ' : 'Fλ, ') + unit},
+           title: {text: {lf: 'λ Fλ, ', f: 'Fλ, ', fnu: 'Fν, '}[form] + unit},
            showgrid: true, gridcolor: theme.gridcolor, zeroline: false,
          },
          yaxis2: {
