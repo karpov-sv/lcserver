@@ -30,7 +30,7 @@ The module is organized into separate files:
 - eso.py: reduced spectra from the ESO archive
 - iacob.py: continuum normalised spectra of massive OB stars
 - desi.py: DESI DR1 spectra
-- spherex.py: SPHEREx QR2 near-infrared spectrophotometry
+- spherex.py: SPHEREx QR2+QR3 near-infrared spectrophotometry
 - sed.py: broadband catalogue photometry from VizieR, as an SED
 - kepler.py: Kepler lightcurve acquisition, both the original mission and K2
 - corot.py: CoRoT lightcurve acquisition

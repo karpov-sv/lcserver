@@ -60,7 +60,7 @@ pair of axes — the whole record, and the recent years on their own.
 | LAMOST | DR11, northern sky, 3700–9100 Å |
 | DESI | DR1, 3600–9800 Å, northern sky |
 | APOGEE | DR17, H band, 1.51–1.70 µm |
-| SPHEREx | QR2 spectrophotometry, all sky, 0.75–5 µm |
+| SPHEREx | QR2+QR3 spectrophotometry, all sky, 0.75–5 µm |
 | ESO archive | reduced UVES, X-shooter, FEROS, HARPS, GIRAFFE and the rest |
 | Gaia | DR3 XP and RVS, fetched by the info step |
 

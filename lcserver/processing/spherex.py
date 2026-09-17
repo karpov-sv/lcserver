@@ -16,11 +16,11 @@ it, which is why this is registered as a spectrum and not as photometry.
 IRSA publishes only the Level 2 spectral images - there is no catalogue of
 extracted spectra to query - so the measurements are made here. The obvious way
 is IRSA's own cutout service, but it cannot select FITS extensions, and every
-cutout therefore carries the file's 121-plane PSF cube: 4.9 MB per exposure of
-which a few kB is the data. Three hundred exposures is then 1.7 GB and ten
-minutes. So the images are read over HTTP byte ranges instead, taking the few
-rows of IMAGE, VARIANCE and FLAGS that the source falls on, which is some
-300 kB per exposure and a minute and a half for the same target.
+cutout therefore carries the file's PSF: 4.9 MB per exposure of which a few kB
+is the data. Three hundred exposures is then 1.7 GB and ten minutes. So the
+images are read over HTTP byte ranges instead, taking the few rows of IMAGE,
+VARIANCE and FLAGS that the source falls on, which is some 300 kB per exposure
+and a minute and a half for the same target.
 
 To know where those rows are without reading the whole file, one exposure of
 each detector and pipeline version is walked extension by extension, and what
@@ -30,6 +30,15 @@ and not the positions: the first header of a file is a block longer in some
 exposures than in others, within one detector and version, so where the data
 starts is taken from each file itself. See _survey_file for what reusing it
 instead does, which is to measure a patch of empty sky and call it the target.
+
+Two releases are read, and both are needed: QR3 does not supersede QR2 but
+continues it, beginning where QR2 stops in July 2026, so a spectrum reaching
+the present is made of the two together. They are not the same files. QR3
+compresses the mask, replaces the cube of PSFs with a table of them, and writes
+what the mask bits mean under different keywords - and each of those three,
+left unhandled, is a silent wrong answer rather than a failure: no masking at
+all, no aperture correction, a plane of variance read out of the wrong place.
+Which is why what the code does not recognise, here, it refuses.
 
 The photometry works in the units the images come in - microns, and uJy, which
 is what an aperture sum of MJy/sr naturally is - and the two tables that leave
@@ -64,15 +73,34 @@ from .utils import (SourceError, cleanup_paths, cached_votable_query,
                     QUALITY_STANDARD, QUALITY_RELAXED, QUALITY_PUBLISHED)
 
 
-# Where the spectral images are listed. SIA2 rather than TAP: the collection is
-# the whole of the query, and the reply carries the access URLs directly.
-SPHEREX_SIA = 'https://irsa.ipac.caltech.edu/SIA'
-SPHEREX_COLLECTION = 'spherex_qr2'
+# Where the spectral images are listed. TAP rather than the SIA service the
+# obvious reading of the archive would use: SIA knows only the QR2 collection,
+# and has not been extended to QR3 - a SIA query for it comes back empty at
+# positions TAP has three dozen exposures of. The CAOM tables behind TAP carry
+# every release, and their artifact rows name the files directly, where
+# ObsCore's own access_url is a datalink document that would have to be
+# resolved one exposure at a time.
+SPHEREX_TAP = 'https://irsa.ipac.caltech.edu/TAP/sync'
+SPHEREX_IBE = 'https://irsa.ipac.caltech.edu/'
 
-# The radius the image list is asked for, in degrees. Not a matching radius -
-# an exposure either covers the position or it does not - so this is only large
-# enough to survive rounding, and small enough not to drag in the neighbours.
-SPHEREX_SIA_RADIUS = 0.002
+# The image list, over every release and both the all-sky survey and the deep
+# fields. QR3 is not a reprocessing of QR2 the way QR2 was of QR1 - it starts
+# where QR2 stops, at MJD 61241 - so a spectrum that reaches the present is
+# made of both, and the query is written to say nothing about which release a
+# file belongs to rather than to name them.
+#
+# 'science' is what excludes the calibration products that hang off the same
+# planes; the level 2 spectral images are all that is left.
+SPHEREX_QUERY = (
+    "SELECT a.uri, p.time_bounds_lower, p.energy_bounds_lower,"
+    " p.energy_bounds_upper"
+    " FROM spherex.plane p JOIN spherex.artifact a ON p.planeid = a.planeid"
+    " WHERE CONTAINS(POINT('ICRS', {ra}, {dec}), p.poly) = 1"
+    " AND a.producttype = 'science'")
+
+# How long the archive is given to answer it. A position in a deep field is
+# twenty-odd thousand exposures and half a minute of it.
+SPHEREX_TAP_TIMEOUT = 600
 
 # Aperture radius, in detector pixels. The pixels are 6.2 arcsec and the PSF is
 # about one of them across, so this is a 9.3 arcsec aperture - the same as the
@@ -113,20 +141,24 @@ SPHEREX_WORKERS = 8
 # is read again with the window doubled.
 SPHEREX_HEAD = 49152
 
-# A cap, so that a position at an ecliptic pole - where the survey has some
-# eight hundred exposures and will have far more - cannot run indefinitely.
-# The newest are dropped rather than the oldest, so the spectrum keeps its
-# wavelength coverage instead of losing one end of it.
+# A cap, so that a position in a deep field - where the exposures already run
+# to twenty-odd thousand - cannot run indefinitely. What is over it is thinned
+# evenly across the whole run of the survey rather than cut off at either end:
+# a position is revisited at a different wavelength every time, so dropping the
+# newest would lose the newest release entirely and dropping the oldest would
+# lose half the spectrum.
 SPHEREX_MAX_IMAGES = 600
 
-# What the pixel flags mean is written into the FLAGS header, as MP_<name>
-# keywords holding bit numbers, so the two below are named rather than the
-# whole list: everything documented counts against a pixel except these, which
-# say something about the pixel without saying it is wrong.
-SPHEREX_FLAGS_KEPT = {'MP_FULLSAMPLE', 'MP_SOURCE'}
+# What the pixel flags mean is written into the FLAGS header - see _flag_bits
+# for the two ways the releases write it - so the two below are named rather
+# than the whole list: everything documented counts against a pixel except
+# these, which say something about the pixel without saying it is wrong.
+SPHEREX_FLAGS_KEPT = {'FULLSAMPLE', 'SOURCE'}
 
-# The flags that make a pixel not a measurement at all, whatever the filtering
-SPHEREX_FLAGS_FATAL = {'MP_NONFUNC', 'MP_MISSING_DATA', 'MP_REFERENCE'}
+# The flags that make a pixel not a measurement at all, whatever the filtering.
+# REFERENCE is a QR2 name and PHANTOM went with it; a name no release uses
+# costs nothing, where leaving one out would quietly stop masking it.
+SPHEREX_FLAGS_FATAL = {'NONFUNC', 'MISSING_DATA', 'REFERENCE'}
 
 # What the bits are called, for saying why exposures were dropped. The masking
 # itself reads the bits out of each file's own FLAGS header, so a bit this does
@@ -141,8 +173,9 @@ SPHEREX_FLAG_NAMES = {
     15: 'nonlinear', 17: 'persistence', 19: 'outlier', 21: 'known source',
     # Added by the 2026 pipeline versions, and masked from the moment they
     # appeared without this having to be told about them
-    22: 'ghost', 23: 'ghost (focal plane)', 24: 'ghost (external)',
-    26: 'blooming', 27: 'snowball', 28: 'halo of a bright star',
+    20: 'crosstalk', 22: 'ghost', 23: 'ghost (focal plane)',
+    24: 'ghost (external)', 25: 'satellite streak', 26: 'blooming',
+    27: 'snowball', 28: 'halo of a bright star',
 }
 
 # What counts as a detection, when saying how much of a spectrum is one
@@ -153,7 +186,7 @@ SPHEREX_MIN_SNR = 3.0
 # which our code cannot invalidate by changing; what this one caches is
 # photometry of our own making, so a fix that is not reflected in the cached
 # file would go unnoticed on every target already acquired.
-SPHEREX_EXTRACTION = 2
+SPHEREX_EXTRACTION = 3
 
 # The resolving power the spectrum is binned to. The filter's own is between
 # 35 and 130 depending on the detector, so this is coarser than the coarsest
@@ -247,7 +280,13 @@ def _parse_header(buf, offset):
 
 
 def _data_size(header):
-    """How many bytes an extension's data occupies, padded to whole blocks."""
+    """How many bytes an extension's data occupies, padded to whole blocks.
+
+    PCOUNT counts too, and is not a detail of the standard nobody meets: the
+    QR3 FLAGS extension is a compressed image, whose every tile lives in the
+    heap that PCOUNT measures. Leaving it out walks the extension after it
+    twelve megabytes early, into the middle of that heap.
+    """
     if not header.get('NAXIS'):
         return 0
 
@@ -255,7 +294,7 @@ def _data_size(header):
     for axis in range(1, header['NAXIS'] + 1):
         count *= header[f'NAXIS{axis}']
 
-    size = count * abs(header['BITPIX']) // 8
+    size = count * abs(header['BITPIX']) // 8 + header.get('PCOUNT', 0)
 
     return ((size + BLOCK - 1) // BLOCK) * BLOCK
 
@@ -300,12 +339,207 @@ def _wavelength_grid(header, buf, offset_in_buf):
 _LAYOUTS = {}
 
 
+def _column_offsets(header):
+    """Where each column of a binary table starts within a row, and its size.
+
+    Only the forms the SPHEREx tables actually use - whole numbers of J, E and
+    D - which is enough to find a column without assuming the order of them.
+    """
+    width = {'J': 4, 'E': 4, 'D': 8, 'B': 1, 'I': 2, 'K': 8}
+
+    offsets, offset = {}, 0
+
+    for index in range(1, header.get('TFIELDS', 0) + 1):
+        form = str(header[f'TFORM{index}']).strip()
+        count, code = re.match(r'(\d*)([A-Z])', form).groups()
+
+        if code not in width:
+            raise SourceError(f"a binary table column of form {form} is not "
+                              "one this knows how to find")
+
+        size = int(count or 1) * width[code]
+        offsets[str(header.get(f'TTYPE{index}', index)).strip()] = (offset, size)
+        offset += size
+
+    return offsets
+
+
+def _psf_cube(header, data):
+    """The QR2 PSF: a cube of images, one per part of the detector.
+
+    Oversampled tenfold and normalised to one, with the part of the detector
+    each plane belongs to written into the header as XCTR_n and YCTR_n.
+    """
+    return {
+        'offset': data,
+        'oversample': header.get('OVERSAMP', 10),
+        'shape': (header['NAXIS2'], header['NAXIS1']),
+        'dtype': '>f4',
+        'stride': header['NAXIS1'] * header['NAXIS2'] * abs(header['BITPIX']) // 8,
+        'skip': 0,
+        'centres': [(header.get(f'XCTR_{_ + 1}'), header.get(f'YCTR_{_ + 1}'))
+                    for _ in range(header.get('NAXIS3', 0))],
+    }
+
+
+def _psf_table(header, data, ranges, buf, offset_in_buf, shape, url):
+    """The QR3 EPSF: a table of them, one row per part of the detector.
+
+    Thirty-three pixels square at five times oversampling rather than a
+    hundred and one at ten, in double precision, and with the part of the
+    detector each belongs to in columns rather than in the header.
+
+    Which puts the centres inside four megabytes of table - four hundred and
+    forty-one rows of nine kilobytes each, of which the centre is eight bytes
+    - and that is four megabytes per detector and version, on a step whose
+    whole point is not to read what it does not need. So they are not read.
+    The header says the bins are a uniform tiling of the active pixels in a
+    stated order, and the first two rows arrive for nothing inside the window
+    the header itself came in, which gives the spacing; the rest follows. Both
+    rows are checked against what that implies, so a file laid out some other
+    way is refused rather than measured with the PSF of the wrong corner of
+    the detector.
+    """
+    columns = _column_offsets(header)
+    rowlen = header['NAXIS1']
+    count = header['NAXIS2']
+
+    for name in ('BINX', 'BINY', 'XCENTER', 'YCENTER', 'EPSF'):
+        if name not in columns:
+            raise SourceError(f"the EPSF table of {os.path.basename(url)} has "
+                              f"no {name} column")
+
+    if str(header.get('ORDERING', '')).strip() != 'x-fast then y':
+        raise SourceError(f"the EPSF table of {os.path.basename(url)} is not "
+                          "ordered the way this reads it")
+
+    def row(index):
+        start = offset_in_buf + index * rowlen
+
+        if start + rowlen > len(buf):
+            here = ranges.get(data + index * rowlen,
+                              data + (index + 1) * rowlen - 1)
+        else:
+            here = buf[start:start + rowlen]
+
+        def value(name, dtype):
+            at, size = columns[name]
+            return np.frombuffer(here[at:at + size], dtype=dtype)[0]
+
+        return (int(value('BINX', '>i4')), int(value('BINY', '>i4')),
+                float(value('XCENTER', '>f4')), float(value('YCENTER', '>f4')))
+
+    first, second = row(0), row(1)
+
+    spacing = second[2] - first[2]
+
+    if first[:2] != (0, 0) or second[:2] != (1, 0) or spacing <= 0:
+        raise SourceError(f"the EPSF table of {os.path.basename(url)} is not "
+                          "the uniform tiling its header declares")
+
+    nx = int(round(shape[1] / spacing))
+
+    if nx < 1 or count % nx:
+        raise SourceError(f"the EPSF table of {os.path.basename(url)} does not "
+                          f"divide {shape[1]} pixels into {count} bins")
+
+    # TDIM is in FITS order, fastest axis first, which numpy reads backwards
+    column = next(_ for _ in range(1, header['TFIELDS'] + 1)
+                  if str(header.get(f'TTYPE{_}', '')).strip() == 'EPSF')
+
+    dimensions = tuple(reversed([int(_) for _ in re.findall(
+        r'\d+', str(header[f'TDIM{column}']))]))
+
+    return {
+        'offset': data,
+        'oversample': header.get('OVSMPX', 5),
+        'shape': dimensions,
+        'dtype': '>f8',
+        'stride': rowlen,
+        'skip': columns['EPSF'][0],
+        'centres': [(first[2] + (_ % nx) * spacing,
+                     first[3] + (_ // nx) * spacing) for _ in range(count)],
+    }
+
+
+def _flag_bits(header):
+    """Which bit each pixel flag is, under either of the two spellings.
+
+    QR2 writes one card per flag, MP_<name> holding the bit number. QR3 writes
+    three, MSKN<n> naming the flag, MSKM<n> holding its mask - the bit set,
+    not its number - and MSKD<n> describing it. Reading only the first, which
+    is what this did, leaves QR3 with no flags at all: not an error, but every
+    exposure measured as though nothing had been flagged, whatever filtering
+    was asked for.
+    """
+    bits = {name[3:]: int(header[name])
+            for name in header if name.startswith('MP_')}
+
+    if bits:
+        return bits
+
+    for name in header:
+        if not name.startswith('MSKN'):
+            continue
+
+        mask = header.get('MSKM' + name[4:])
+
+        # Each one is a single bit, and the reporting below speaks in bit
+        # numbers, so that is what it is kept as
+        if mask and not int(mask) & (int(mask) - 1):
+            bits[str(header[name]).strip()] = int(mask).bit_length() - 1
+
+    return bits
+
+
+def _flags_layout(header, url):
+    """How a tile-compressed FLAGS extension is put together, or None.
+
+    QR3 compresses the mask and leaves IMAGE and VARIANCE alone. That would be
+    fatal to reading a few rows out of the middle of it, except for how it is
+    tiled: one tile per image row, so a row is still a thing that can be asked
+    for on its own - and a compressed row is smaller than the plain one it
+    replaces, so the exposure costs no more to measure than it did.
+
+    What is lost is the arithmetic that found VARIANCE. A compressed extension
+    is as long as it compressed to, which differs from exposure to exposure,
+    so where it ends can no longer be taken from another file of the group and
+    is read from each file's own header instead.
+    """
+    if not header.get('ZIMAGE'):
+        return None
+
+    if header.get('ZCMPTYPE') != 'RICE_1':
+        raise SourceError(f"the FLAGS extension of {os.path.basename(url)} is "
+                          f"compressed as {header.get('ZCMPTYPE')}, which is "
+                          "not what this reads")
+
+    if (header.get('ZTILE1') != header.get('ZNAXIS1')
+            or header.get('ZTILE2') != 1
+            or header.get('TFIELDS') != 1
+            or not str(header.get('TFORM1', '')).startswith('1P')):
+        raise SourceError(f"the FLAGS extension of {os.path.basename(url)} is "
+                          "not tiled one row at a time")
+
+    # The decompressor hands back the machine's own byte order, where
+    # everything else in the file is big-endian
+    return {
+        'rowlen': header['NAXIS1'],
+        'nrows': header['NAXIS2'],
+        'heap': header.get('THEAP', header['NAXIS1'] * header['NAXIS2']),
+        'blocksize': header.get('ZVAL1', 32),
+        'bytepix': header.get('ZVAL2', 4),
+        'width': header['ZNAXIS1'],
+        'dtype': np.dtype(f"i{abs(header['ZBITPIX']) // 8}"),
+    }
+
+
 def _survey_file(url, log, key=None):
     """What every file of one detector and one pipeline version has in common.
 
     Walked once per group: how long each extension's header is, what the flag
-    bits mean, the wavelength grid, and where the PSF cube sits. The rest of
-    the group is then read without walking again - and so is every later target
+    bits mean, the wavelength grid, and where the PSF sits. The rest of the
+    group is then read without walking again - and so is every later target
     that meets the same version, which is what the key is for.
 
     Lengths rather than positions, for everything but the PSF. The primary and
@@ -319,6 +553,10 @@ def _survey_file(url, log, key=None):
     headers were the same length in all forty exposures checked across every
     group, so those are kept as lengths and added to what each file itself
     says.
+
+    Headers, that is. Where the mask is compressed the FLAGS *data* is a
+    different length in every exposure, and _extract reads that file's own
+    header to find what comes after it.
     """
     if key is not None and key in _LAYOUTS:
         # Nothing was read this time, so the caller is not charged for it
@@ -332,27 +570,30 @@ def _survey_file(url, log, key=None):
     layout = {'IMAGE': (image_header, image_data)}
     offset = image_data + _data_size(image_header)
 
-    flag_bits, grid, psf = {}, None, None
+    flag_bits, flags, grid, psf = {}, None, None, None
 
     for _ in range(10):
         header, data, buf = _header_at(ranges, offset)
 
-        # The PSF extension is the one without a name of its own
+        # The PSF extension of a QR2 file is the one without a name of its own
         name = header.get('EXTNAME', 'PSF')
         layout[name] = (header, data)
 
         if name == 'FLAGS':
-            flag_bits = {card: int(header[card]) for card in header
-                         if card.startswith('MP_')}
+            flag_bits = _flag_bits(header)
+            flags = _flags_layout(header, url)
 
         if name == 'WCS-WAVE':
             grid = _wavelength_grid(header, buf, data - offset)
             break
 
         if name == 'PSF':
-            psf = (data, header.get('OVERSAMP', 10),
-                   [(header.get(f'XCTR_{_ + 1}'), header.get(f'YCTR_{_ + 1}'))
-                    for _ in range(header.get('NAXIS3', 0))])
+            psf = _psf_cube(header, data)
+
+        if name == 'EPSF':
+            psf = _psf_table(header, data, ranges, buf, data - offset,
+                             (image_header['NAXIS2'], image_header['NAXIS1']),
+                             url)
 
         offset = data + _data_size(header)
 
@@ -368,8 +609,13 @@ def _survey_file(url, log, key=None):
         # rather than whichever one a later target happens to start with.
         'url': url,
         'flags_header': layout['FLAGS'][1] - (layout['IMAGE'][1] + plane),
-        'variance_header': layout['VARIANCE'][1] - (layout['FLAGS'][1] + plane),
+        # What follows FLAGS is measured from the end of it rather than from a
+        # plane's worth of bytes after its start, the two being the same thing
+        # only while the mask is stored uncompressed
+        'variance_header': (layout['VARIANCE'][1] - layout['FLAGS'][1]
+                            - _data_size(layout['FLAGS'][0])),
         'flag_bits': flag_bits,
+        'flags': flags,
         'grid': grid,
         'psf': psf,
     }
@@ -419,10 +665,8 @@ def _interpolate_grid(grid, plane, x, y):
 
 
 def _psf_index(psf, x, y):
-    """Which of the PSFs in the cube belongs at a detector position."""
-    _, _, centres = psf
-
-    known = [(n, cx, cy) for n, (cx, cy) in enumerate(centres)
+    """Which of the PSFs in the file belongs at a detector position."""
+    known = [(n, cx, cy) for n, (cx, cy) in enumerate(psf['centres'])
              if cx is not None and cy is not None]
 
     if not known:
@@ -434,28 +678,38 @@ def _psf_index(psf, x, y):
 def _enclosed_energy(ranges, psf, index, radius):
     """What fraction of a point source the aperture holds.
 
-    The files carry their own PSF, normalised to one and oversampled tenfold,
-    so the aperture correction is measured rather than assumed. This is the
-    step the published quick-look tooling replaces with an empirical rescaling
-    fitted against the mission's own fitting pipeline.
+    The files carry their own PSF, normalised to one and oversampled - tenfold
+    in QR2, five in QR3 - so the aperture correction is measured rather than
+    assumed. This is the step the published quick-look tooling replaces with an
+    empirical rescaling fitted against the mission's own fitting pipeline.
 
     Measured over the detector pixels the aperture actually sums, not over a
     circle of the same radius: the aperture is a handful of whole pixels either
     way, and at six arcseconds a pixel the difference between the two is
     several per cent of the flux.
-    """
-    offset, oversample, _ = psf
-    size = 101 * 101 * 4
 
-    start = offset + index * size
-    image = np.frombuffer(ranges.get(start, start + size - 1),
-                          dtype='>f4').reshape(101, 101).astype(float)
+    The QR3 one is 33 pixels square at five times oversampling, so it reaches
+    3.3 detector pixels from the centre and an aperture wider than that would
+    be summing PSF the file does not carry. Which is not a thing to discover
+    as a quietly low correction, so it is refused.
+    """
+    ny, nx = psf['shape']
+    itemsize = np.dtype(psf['dtype']).itemsize
+
+    start = psf['offset'] + index * psf['stride'] + psf['skip']
+    image = np.frombuffer(ranges.get(start, start + ny * nx * itemsize - 1),
+                          dtype=psf['dtype']).reshape(ny, nx).astype(float)
 
     # The PSF onto the detector's own grid, the source at the centre of its
     # pixel - which is where it is on average, over exposures that dither
-    step = int(oversample)
+    step = int(psf['oversample'])
     half = image.shape[0] // 2
     reach = int(np.ceil(radius))
+
+    if (half - reach * step - step // 2 < 0
+            or half + reach * step - step // 2 + step > image.shape[0]):
+        raise SourceError(f"an aperture of {radius:.1f} px reaches outside the "
+                          f"{nx} by {step} PSF the file carries")
 
     total = 0.0
 
@@ -471,6 +725,82 @@ def _enclosed_energy(ranges, psf, index, radius):
                                            max(x0, 0):x0 + step]))
 
     return total
+
+
+def _compressed_flags(ranges, start, group, y0, y1, x0, x1, url):
+    """The stamp's rows out of a tile-compressed FLAGS extension.
+
+    Two reads where the plain mask takes one, and fewer bytes than it for all
+    that. The first is the header - a compressed extension is as long as it
+    compressed to, so what follows it cannot be found any other way - together
+    with the tile pointers of the rows wanted, which sit directly behind the
+    header and so cost nothing to ask for alongside it. The second is the
+    tiles: those rows compressed, at some five kB each against eight.
+
+    Returns the rows and the first byte past the extension, that being what
+    the caller needs to find VARIANCE.
+    """
+    try:
+        from astropy.io.fits.hdu.compressed._codecs import Rice1
+    except ImportError:
+        raise SourceError("this astropy has no Rice decompressor where one is "
+                          "expected, so the compressed masks cannot be read")
+
+    layout = group['flags']
+    rowlen = layout['rowlen']
+    count = y1 - y0 + 1
+
+    buf = ranges.get(start, start + group['flags_header']
+                     + (y1 + 1) * rowlen - 1)
+
+    parsed = _parse_header(buf, 0)
+
+    if parsed is None:
+        # Longer than the group's, which is not what was seen but is allowed
+        # for: it costs one more read and nothing else
+        header, data, buf = _header_at(ranges, start)
+        at = None
+    else:
+        header, length = parsed
+        data = start + length
+        at = length + y0 * rowlen
+
+    if at is None or at + count * rowlen > len(buf):
+        pointers = ranges.get(data + y0 * rowlen, data + (y1 + 1) * rowlen - 1)
+    else:
+        pointers = buf[at:at + count * rowlen]
+
+    # One variable-length descriptor per row: how many bytes that row
+    # compressed to, and where in the heap they are
+    descriptors = np.frombuffer(
+        np.frombuffer(pointers, dtype=np.uint8).reshape(count, rowlen)[:, :8]
+        .tobytes(), dtype='>i4').reshape(count, 2)
+
+    heap = data + layout['heap']
+    lo = int(np.min(descriptors[:, 1]))
+    hi = int(np.max(descriptors[:, 1] + descriptors[:, 0]))
+
+    raw = ranges.get(heap + lo, heap + hi - 1)
+
+    codec = Rice1(blocksize=layout['blocksize'], bytepix=layout['bytepix'],
+                  tilesize=layout['width'])
+
+    block = np.empty((count, layout['width']), dtype=layout['dtype'])
+
+    for index, (size, offset) in enumerate(descriptors):
+        tile = np.frombuffer(raw, dtype=np.uint8, count=int(size),
+                             offset=int(offset) - lo)
+
+        decoded = np.frombuffer(codec.decode(tile), dtype=layout['dtype'])
+
+        if len(decoded) != layout['width']:
+            raise SourceError(f"a mask row of {os.path.basename(url)} came out "
+                              f"of {len(decoded)} pixels rather than "
+                              f"{layout['width']}")
+
+        block[index] = decoded
+
+    return block[:, x0:x1 + 1].astype(int), data + _data_size(header)
 
 
 def _background(pixels):
@@ -502,9 +832,9 @@ def _background(pixels):
 def _extract(url, ra, dec, group, quality, aperture):
     """One exposure's measurement of the target, and its stamp.
 
-    Four byte ranges: the front of the file for the astrometry and the time,
-    and then the rows of IMAGE, VARIANCE and FLAGS that the stamp falls on -
-    some 300 kB out of a 70 MB file.
+    Four byte ranges - five where the mask is compressed - the front of the
+    file for the astrometry and the time, and then the rows of IMAGE, VARIANCE
+    and FLAGS that the stamp falls on: some 300 kB out of a 70 MB file.
     """
     ranges = _Ranges(url)
 
@@ -530,7 +860,6 @@ def _extract(url, ra, dec, group, quality, aperture):
 
     image_offset = primary_end + image_header_length
     flags_offset = image_offset + plane + group['flags_header']
-    variance_offset = flags_offset + plane + group['variance_header']
 
     wcs = WCS(header)
     x, y = wcs.all_world2pix(ra, dec, 0)
@@ -556,8 +885,16 @@ def _extract(url, ra, dec, group, quality, aperture):
         return block[:, x0:x1 + 1].astype(float if dtype == '>f4' else int)
 
     image = rows(image_offset, '>f4')
-    variance = rows(variance_offset, '>f4')
-    flags = rows(flags_offset, '>i4')
+
+    # Where the mask is compressed the rows are read a different way, and what
+    # follows it is only known once its own header has been read
+    if group['flags'] is None:
+        flags, after_flags = rows(flags_offset, '>i4'), flags_offset + plane
+    else:
+        flags, after_flags = _compressed_flags(
+            ranges, image_offset + plane, group, y0, y1, x0, x1, url)
+
+    variance = rows(after_flags + group['variance_header'], '>f4')
 
     # A variance is never negative, so a plane of them that is says the offsets
     # have drifted off the extension they were meant for and this exposure is
@@ -641,17 +978,21 @@ def _extract(url, ra, dec, group, quality, aperture):
 
 
 def _query_images(ra, dec, basepath, log, refresh):
-    """The spectral images covering a position, cached."""
-    cache_name = f"spherex_sia_{ra:.4f}_{dec:.4f}.vot"
+    """The spectral images covering a position, over every release, cached.
+
+    An exposure either covers the position or it does not, so this is a
+    containment test and not a match within some radius.
+    """
+    cache_name = f"spherex_images_{ra:.4f}_{dec:.4f}.vot"
 
     with cached_votable_query(cache_name, basepath, log,
                               'SPHEREx image list', refresh=refresh) as cache:
         if not cache.hit:
-            table = fetch_votable(SPHEREX_SIA, timeout=300, params={
-                'COLLECTION': SPHEREX_COLLECTION,
-                'POS': f'circle {ra} {dec} {SPHEREX_SIA_RADIUS}',
-                'RESPONSEFORMAT': 'VOTABLE',
-            }, service='IRSA', log=log)
+            table = fetch_votable(
+                SPHEREX_TAP, timeout=SPHEREX_TAP_TIMEOUT, params={
+                    'REQUEST': 'doQuery', 'LANG': 'ADQL', 'FORMAT': 'votable',
+                    'QUERY': SPHEREX_QUERY.format(ra=ra, dec=dec),
+                }, service='IRSA', log=log)
 
             # The service returns its columns positionally named, so they are
             # put back before anything reads them by name
@@ -659,7 +1000,14 @@ def _query_images(ra, dec, basepath, log, refresh):
             data.rename_columns(data.colnames, [_.name for _ in table.fields])
 
             if len(data):
-                cache.save(data['access_url', 't_min', 'em_min', 'em_max'])
+                # The archive names the files as paths within itself, where
+                # everything downstream of here wants something to fetch
+                cache.save(Table({
+                    'access_url': [SPHEREX_IBE + str(_) for _ in data['uri']],
+                    't_min': data['time_bounds_lower'],
+                    'em_min': data['energy_bounds_lower'],
+                    'em_max': data['energy_bounds_upper'],
+                }))
             else:
                 cache.save_empty()
         else:
@@ -744,13 +1092,25 @@ def _measure(images, ra, dec, quality, aperture, log):
         # was learned from - which memoising across targets makes a different
         # file from this target's first one
         ranges = _Ranges(layouts[key]['url'])
-        return item, _enclosed_energy(ranges, layouts[key]['psf'], index,
-                                      aperture), ranges.nbytes
+
+        try:
+            value = _enclosed_energy(ranges, layouts[key]['psf'], index,
+                                     aperture)
+        except Exception as e:
+            # Said rather than fallen back on: the exposures of this group are
+            # then aperture flux where the rest are total flux, which is a
+            # step between two halves of one spectrum and not a detail
+            log(f"  D{key[0]} {key[1]}: {e} - measured without an aperture"
+                " correction")
+            value = None
+
+        return item, value, ranges.nbytes
 
     with ThreadPoolExecutor(SPHEREX_WORKERS) as pool:
         measured = list(pool.map(correction, wanted))
 
-    corrections = {item: value for item, value, _ in measured}
+    corrections = {item: value for item, value, _ in measured
+                   if value is not None}
     nbytes += sum(read for _, _value, read in measured)
 
     for row in results:
@@ -965,7 +1325,7 @@ def _preview(results, basepath, name, show, log):
             QUALITY_PUBLISHED: 'None - every exposure as measured',
         }),
     },
-    help_text='SPHEREx QR2 spectrophotometry, all sky, 0.75-5 um',
+    help_text='SPHEREx QR2+QR3 spectrophotometry, all sky, 0.75-5 um',
     order=82,
     about=(
         "SPHEREx, which is surveying the whole sky in 102 near-infrared "
@@ -1040,13 +1400,17 @@ def target_spherex(config, basepath=None, verbose=True, show=False):
     urls = [str(_) for _ in images['access_url']]
 
     if len(urls) > SPHEREX_MAX_IMAGES:
-        # Oldest first, so that what is dropped is the end of the newest visit
-        # rather than a slice out of the middle of the wavelength coverage
+        # Evenly through the survey in time, rather than the first so many.
+        # Both ends matter and for different reasons: the newest exposures are
+        # the newest release, which a cut-off would drop entirely, and every
+        # visit carries its own stretch of wavelength, which is what makes the
+        # spectrum. Thinning throughout costs depth alone.
         order = np.argsort(np.asarray(images['t_min'], dtype=float))
-        urls = [urls[_] for _ in order[:SPHEREX_MAX_IMAGES]]
+        keep = np.linspace(0, len(order) - 1, SPHEREX_MAX_IMAGES)
+        urls = [urls[order[_]] for _ in np.unique(np.round(keep).astype(int))]
 
-        log(f"\n{len(images)} exposures cover this position, of which the "
-            f"earliest {SPHEREX_MAX_IMAGES} are measured")
+        log(f"\n{len(images)} exposures cover this position, thinned to "
+            f"{len(urls)} spread evenly over the survey")
 
     cache_name = (f"spherex_{ra:.4f}_{dec:.4f}_{aperture:.1f}_{quality}"
                   f"_v{SPHEREX_EXTRACTION}.vot")
