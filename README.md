@@ -42,6 +42,7 @@ model atmosphere grids as are worth asking.
 | OMC | INTEGRAL Optical Monitoring Camera, V, since 2003 |
 | MMT9 | Mini-MegaTORTORA, white light |
 | FRAM | B, V, R, I from the Pierre Auger Observatory and CTAO telescopes |
+| VISTA | VVV (VIRAC2) and VMC from ESO: Z, Y, J, H, Ks, bulge, southern disk and Magellanic Clouds, 2009–2023, fainter than Ks ≈ 11 |
 | WISE | W1–W4 in 2010, W1 and W2 through the NEOWISE years |
 | Kepler | flux, quarters and K2 campaigns, 2009–2018 |
 | TESS | flux, per sector |

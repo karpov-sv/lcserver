@@ -26,6 +26,7 @@ The module is organized into separate files:
 - ogle.py: OGLE Collection of Variable Stars lightcurve acquisition
 - ngts.py: Next Generation Transit Survey lightcurve acquisition
 - atlas.py: ATLAS forced photometry, through the server's request queue
+- vista.py: VVV (VIRAC2) and VMC near-infrared time series from ESO
 - hipparcos.py: Hipparcos epoch photometry acquisition
 - sdss.py: SDSS optical spectra
 - lamost.py: LAMOST DR11 spectra
@@ -122,6 +123,7 @@ from .kelt import target_kelt
 from .ogle import target_ogle
 from .ngts import target_ngts
 from .atlas import target_atlas
+from .vista import target_vista
 from .hipparcos import target_hipparcos
 from .sdss import target_sdss
 from .lamost import target_lamost
