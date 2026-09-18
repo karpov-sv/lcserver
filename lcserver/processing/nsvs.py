@@ -130,20 +130,34 @@ def _find_object(ra, dec, sr, log):
     }
 
 
-def _find_field(ra, dec, log):
-    """Which survey field covers a position.
+def _find_field(object_id, ra, dec, log):
+    """Which survey field an object belongs to, and how far off its centre.
 
     The light curves are distributed one file per field, so this decides which
-    file has to be fetched.
+    file has to be fetched. It is decided by the object and not by the
+    position: the fields overlap, a star in the overlap is catalogued once for
+    each field that saw it, and its light curve is only in the file of the
+    field its own record came from - which need not be the one whose centre
+    is nearest. The catalogue is numbered a field at a time, in the order of
+    the field list, so the objects each field holds partition the record
+    numbers.
     """
-    fields = Vizier(columns=['**'], row_limit=-1).get_catalogs(NSVS_FIELDS)[0]
+    fields = Vizier(columns=['**', 'recno'],
+                    row_limit=-1).get_catalogs(NSVS_FIELDS)[0]
+    fields = fields[np.argsort(np.asarray(fields['recno'], dtype=int))]
 
-    dist = np.hypot((np.asarray(fields['RAJ2000'], dtype=float) - ra)
-                    * np.cos(np.deg2rad(dec)),
-                    np.asarray(fields['DEJ2000'], dtype=float) - dec)
-    closest = int(np.argmin(dist))
+    # The last record number of each field
+    last = np.cumsum(np.asarray(fields['Nobj'], dtype=int))
+    idx = int(np.searchsorted(last, object_id))
 
-    return str(fields['Field'][closest]), float(dist[closest])
+    if object_id < 1 or idx >= len(fields):
+        raise SourceError(f"NSVS object {object_id} is outside every field")
+
+    row = fields[idx]
+    dist = np.hypot((float(row['RAJ2000']) - ra) * np.cos(np.deg2rad(dec)),
+                    float(row['DEJ2000']) - dec)
+
+    return str(row['Field']), float(dist)
 
 
 def _stream_lightcurve(field, object_id, log):
@@ -340,8 +354,8 @@ def target_nsvs(config, basepath=None, verbose=True, show=False):
                     + (f", {obj['ndet']} detections of which the catalogue "
                        f"calls {obj['nobs']} good" if obj['ndet'] else ''))
 
-                field, dist = _find_field(ra, dec, log)
-                log(f"Covered by field {field}, {dist:.1f} deg from its centre")
+                field, dist = _find_field(obj['id'], ra, dec, log)
+                log(f"Catalogued in field {field}, {dist:.1f} deg from its centre")
 
                 # Tens of megabytes, so it is worth saying so before the wait
                 log("The survey is distributed a field at a time, so this "

@@ -124,12 +124,39 @@ class AavsoServerError(SourceError):
     """The archive answered with something other than the data.
 
     Carries the status, because one of them has to be told apart: the
-    download endpoint answers 500 for a star it holds nothing on.
+    download endpoint answers 500 for a star it holds nothing on. Carries the
+    archive's own explanation too, where it gave one - a bare 400 says
+    nothing, and the body says what was wrong with the request.
     """
 
-    def __init__(self, code, reason):
+    def __init__(self, code, reason, detail=''):
         self.code = code
-        super().__init__(f"could not query the AAVSO - HTTP {code} {reason}")
+        self.detail = detail
+        super().__init__(f"could not query the AAVSO - HTTP {code} {reason}"
+                         + (f": {detail}" if detail else ""))
+
+
+def _aavso_error_detail(body):
+    """What the archive said was wrong, out of the body of a refusal.
+
+    It answers with JSON - {"error": "..."} or a list of messages per field -
+    and the messages are all that is worth keeping of it.
+    """
+    text = body.decode('utf8', errors='replace').strip()
+
+    try:
+        data = json.loads(text)
+    except ValueError:
+        return text[:300]
+
+    def messages(value):
+        if isinstance(value, dict):
+            return [m for v in value.values() for m in messages(v)]
+        if isinstance(value, list):
+            return [m for v in value for m in messages(v)]
+        return [str(value)]
+
+    return ' '.join(messages(data))[:300]
 
 
 def _aavso_get(url, token, timeout=90):
@@ -153,7 +180,11 @@ def _aavso_get(url, token, timeout=90):
             except (TypeError, ValueError):
                 retry = 0
             raise AavsoThrottled(retry)
-        raise AavsoServerError(e.code, e.reason)
+        try:
+            detail = _aavso_error_detail(e.read())
+        except Exception:
+            detail = ''
+        raise AavsoServerError(e.code, e.reason, detail)
 
 
 def _aavso_short_band(value):
@@ -214,16 +245,28 @@ def _aavso_bulk(name, token, log):
     # a large file, and the archive assembles it before it starts sending
     try:
         content = _aavso_get(url, token, timeout=300)
-    except AavsoServerError as e:
-        if e.code < 500:
-            raise
-
+    except AavsoServerError:
         # The download endpoint answers 500 for a star it has nothing on,
-        # where the listing answers nought quite happily. Which of the two
-        # this is decides whether the step failed or simply found nothing, and
-        # only the listing can say, so it is asked - but only here, once the
-        # cheap route has already gone wrong.
-        if _aavso_count(name, token):
+        # where the listing answers nought quite happily. For a name VSX does
+        # not know it is worse: the target filter is dropped rather than
+        # refused, and the answer is a 400 over the row limit of exporting the
+        # whole database. Either way, whether the step failed or simply found
+        # nothing is for the listing to say, so it is asked - but only here,
+        # once the cheap route has already gone wrong.
+        try:
+            count = _aavso_count(name, token)
+        except AavsoServerError as e:
+            # The listing does check the name, and refuses one VSX does not
+            # know with a 400 saying so. The AAVSO holds nothing under a name
+            # it cannot identify, which is an answer rather than a failure.
+            if e.code != 400:
+                raise
+
+            log(f"The AAVSO does not know the name {name}"
+                + (f" - {e.detail}" if e.detail else ""))
+            return []
+
+        if count:
             raise
 
         log("The AAVSO download failed, and the listing says the archive has "
