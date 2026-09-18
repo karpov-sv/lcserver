@@ -24,6 +24,7 @@ model atmosphere grids as are worth asking.
 | | Coverage |
 | --- | --- |
 | Hipparcos | Hp, 1989–1993, brighter than V ≈ 12 |
+| OGLE | I and V since 1997, bulge, southern disk and Magellanic Clouds; only stars in its Collection of Variable Stars |
 | NSVS | unfiltered ROTSE-I, 1999–2000 |
 | ASAS-3 | V, 2000–2009, south of +28° |
 | SuperWASP | broad band, 2004–2008 |
