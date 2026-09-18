@@ -34,6 +34,9 @@
                     class="btn {{ source_config.button_class }}">
               {{ source_config.button_text }}
             </button>
+            {% if source_config.manual %}
+              <span class="text-muted ms-2">Not part of "Run everything" - it runs only from here</span>
+            {% endif %}
           </div>
         </fieldset>
       </form>

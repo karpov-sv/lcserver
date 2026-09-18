@@ -95,6 +95,10 @@ def target_gaia(config, basepath='.', verbose=None, show=False):
   let a run ask for either on its own. `KIND_ALWAYS` is for a step belonging to
   every run whichever kind it asked for; the info step is the only one.
 - **`form_fields`** (dict): Custom form fields (see below)
+- **`manual`** (bool): Leave the source out of "Run everything", so that it
+  runs only from its own button (or `test_target -s <source>`). For a source
+  too slow or too costly to someone else to run for every target - ATLAS,
+  whose requests go on a queue shared by all its users, is the one so far.
 
 ### Form Fields
 

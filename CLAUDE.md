@@ -448,7 +448,9 @@ wrong.
 Two decorator options decide where the source runs in the chain. `GATING_STEPS`
 and anything declaring `provides_config` run in the prologue, before the rest;
 everything else runs in the group. A source that needs ZTF's `g_minus_r` is a
-reader of it and belongs in the group.
+reader of it and belongs in the group. A third, `manual=True`, keeps a source
+out of the chain altogether - it runs only from its own button (ATLAS, whose
+requests wait on a shared queue).
 
 ## Testing
 

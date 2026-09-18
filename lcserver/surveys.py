@@ -209,6 +209,11 @@ def survey_source(
     # Set where a source deletes what every other source produced, so that
     # their recorded states stop describing anything that is still on disk
     clears_other_sources=False,
+    # Set where a source is too slow or too costly to someone else to run for
+    # every target - a request on a shared queue rather than a query that
+    # answers. Such a source is left out of "Run everything" and runs only
+    # from its own button; see get_survey_ids_for_everything().
+    manual=False,
     # Template metadata
     template_layout='simple',  # 'simple', 'with_cutout', 'complex', 'custom'
     requires_coordinates=True,  # False for name-based sources like KWS
@@ -360,6 +365,7 @@ def survey_source(
             'spectrum_palette': spectrum_palette,
             'provides_config': provides_config or [],
             'clears_other_sources': clears_other_sources,
+            'manual': manual,
             # Template metadata
             'template_layout': template_layout,
             'requires_coordinates': requires_coordinates,
@@ -567,12 +573,16 @@ def get_survey_ids_for_everything(kinds=None):
     whatever is asked for - the info step resolves the coordinates every source
     queries by, so a run without it would have nothing to query with. Asking
     for neither kind leaves that alone, and there is nothing to run.
+
+    Sources declared manual are never in it, whatever the kind: they are run
+    one at a time, by someone who asked for that source in particular.
     """
     kinds = set(kinds if kinds is not None else KINDS_DEFAULT)
 
     def wanted(k):
         entry = SURVEY_SOURCES[k]
         return (entry.get('processing_function') is not None
+                and not entry.get('manual')
                 and entry['kind'] in kinds | {KIND_ALWAYS})
 
     if not kinds:

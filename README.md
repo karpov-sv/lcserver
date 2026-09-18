@@ -35,7 +35,7 @@ model atmosphere grids as are worth asking.
 | PTF | Palomar Transient Factory |
 | BGDS | Bochum Galactic Disk Survey DR2, r′ and i′ along the southern plane, 2010–2019 |
 | ZTF | g, r — colour-corrected per epoch |
-| ATLAS | forced photometry, c and o, whole sky since 2015; queued, needs an API key |
+| ATLAS | forced photometry, c and o, whole sky since 2015; queued, needs an API key, run by hand only |
 | ASAS-SN | V and g |
 | KWS | Kamogata, V and Ic |
 | AAVSO | a century of observer-contributed photometry, by name; needs an API key |

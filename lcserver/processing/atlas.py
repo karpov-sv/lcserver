@@ -15,6 +15,10 @@ step ends saying so, and running it again picks up the same task rather than
 queueing another. Once a result has been fetched the task is deleted from
 the server, as the service asks.
 
+For the same reason it is a manual source, left out of "Run everything": a
+request that holds a worker for minutes and then usually ends still queued
+is not something to spend on every target that happens to be acquired.
+
 Photometry is forced on the reduced images rather than the difference ones,
 so that the light curve is the star's total brightness, as every other
 source here reports it, rather than its change from a template - which also
@@ -376,7 +380,7 @@ def _cut(table, cuts, log):
         }),
     },
     help_text='ATLAS forced photometry on reduced images, c and o, whole sky, '
-              'since 2015; queued, needs an API key',
+              'since 2015; queued, needs an API key, run by hand only',
     order=13,
     about=(
         "The Asteroid Terrestrial-impact Last Alert System - four 0.5m "
@@ -435,6 +439,7 @@ def _cut(table, cuts, log):
     # Template metadata
     template_layout='simple',
     requires_coordinates=True,
+    manual=True,
 )
 def target_atlas(config, basepath=None, verbose=True, show=False):
     """Acquire ATLAS forced photometry lightcurve."""
