@@ -1356,6 +1356,14 @@ def _preview(results, basepath, name, show, log):
     template_layout='complex',
     additional_plots=['spherex_rgb.png'],
     main_plot='spherex_spectrum.png',
+    # The all-sky colour mosaic CDS built from QR2, beside the composite of
+    # this target's own exposures. Six arcmin across rather than the two of
+    # the other cutouts: a SPHEREx pixel is 6.2 arcsec, and at two arcmin the
+    # target and its neighbours are one blur.
+    show_cutout=True,
+    cutout_hips='CDS/P/SPHEREx/QR2/color',
+    cutout_name='SPHEREx QR2 colour',
+    cutout_fov=0.1,
 )
 def target_spherex(config, basepath=None, verbose=True, show=False):
     """

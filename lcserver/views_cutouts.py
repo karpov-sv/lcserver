@@ -106,6 +106,8 @@ CUTOUT_SURVEYS = OrderedDict([
     ('nsns_halpha', {'name': 'NSNS Halpha', 'group': 'halpha', 'hips': 'simg.de/P/NSNS/DR0_2/halpha', 'mono': True, 'default': True}),
     ('nsns_color', {'name': 'NSNS [OIII] + H-alpha + [SII]', 'group': 'halpha', 'hips': 'simg.de/P/NSNS/DR0_2/ohs8'}),
 
+    ('spherex', {'name': 'SPHEREx QR2 Color', 'group': 'ir', 'hips': 'CDS/P/SPHEREx/QR2/color'}),
+
     ('wise', {'name': 'allWISE Color', 'group': 'ir', 'hips': 'CDS/P/allWISE/color', 'default': True}),
     ('wise_w1', {'name': 'WISE 3.4um', 'group': 'ir', 'hips': 'CDS/P/allWISE/W1', 'mono': True}),
     ('wise_w2', {'name': 'WISE 4.6um', 'group': 'ir', 'hips': 'CDS/P/allWISE/W2', 'mono': True}),
