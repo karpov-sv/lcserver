@@ -24,6 +24,7 @@ The module is organized into separate files:
 - nsvs.py: NSVS lightcurve acquisition
 - kelt.py: KELT lightcurve acquisition
 - ogle.py: OGLE Collection of Variable Stars lightcurve acquisition
+- ngts.py: Next Generation Transit Survey lightcurve acquisition
 - hipparcos.py: Hipparcos epoch photometry acquisition
 - sdss.py: SDSS optical spectra
 - lamost.py: LAMOST DR11 spectra
@@ -124,6 +125,7 @@ from .omc import target_omc
 from .nsvs import target_nsvs
 from .kelt import target_kelt
 from .ogle import target_ogle
+from .ngts import target_ngts
 from .hipparcos import target_hipparcos
 from .sdss import target_sdss
 from .lamost import target_lamost

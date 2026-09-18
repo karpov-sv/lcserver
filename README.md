@@ -30,6 +30,7 @@ model atmosphere grids as are worth asking.
 | SuperWASP | broad band, 2004–2008 |
 | KELT | broad R, 2006–2019, bright stars |
 | CoRoT | flux, two fields on the Galactic plane from space, 2007–2012 |
+| NGTS | broad 520–890 nm, 13 s cadence published in bins, 72 southern fields, 2015–2018 |
 | CSS | Catalina Sky Survey, V-like unfiltered |
 | PTF | Palomar Transient Factory |
 | BGDS | Bochum Galactic Disk Survey DR2, r′ and i′ along the southern plane, 2010–2019 |
