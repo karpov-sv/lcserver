@@ -174,6 +174,13 @@ SEDFIT_SPECTRA = config('SEDFIT_SPECTRA', default='')
 # same allowance, whichever endpoint they went to.
 AAVSO_TOKEN = config('AAVSO_TOKEN', default='')
 
+# The key the ATLAS forced photometry server is asked with. Every request is
+# queued under the account it belongs to, and there is no anonymous route.
+# Keys come from registering at fallingstar-data.com/forcedphot and asking its
+# api-token-auth endpoint for one. Left unset, the ATLAS step records that it
+# has no key and finishes with no data.
+ATLAS_TOKEN = config('ATLAS_TOKEN', default='')
+
 
 # Messages
 from django.contrib.messages import constants as messages

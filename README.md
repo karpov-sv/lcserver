@@ -35,6 +35,7 @@ model atmosphere grids as are worth asking.
 | PTF | Palomar Transient Factory |
 | BGDS | Bochum Galactic Disk Survey DR2, r′ and i′ along the southern plane, 2010–2019 |
 | ZTF | g, r — colour-corrected per epoch |
+| ATLAS | forced photometry, c and o, whole sky since 2015; queued, needs an API key |
 | ASAS-SN | V and g |
 | KWS | Kamogata, V and Ic |
 | AAVSO | a century of observer-contributed photometry, by name; needs an API key |
@@ -271,6 +272,7 @@ Read from the environment or a `.env` file, via `python-decouple`:
 | `SEDFIT_SPECTRA` | astroARIADNE's single spectra cache, for grids whose spectra do not sit beside them |
 | `CELERY_CONCURRENCY` | how many sources are acquired at once, default `4` |
 | `AAVSO_TOKEN` | key for the AAVSO API; without it the AAVSO step finds nothing |
+| `ATLAS_TOKEN` | key for the ATLAS forced photometry server; without it the ATLAS step finds nothing |
 
 The sources of one target are acquired in parallel, so `CELERY_CONCURRENCY` is
 also the number of simultaneous queries pointed at external services. Several

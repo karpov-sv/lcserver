@@ -35,6 +35,7 @@ import numpy as np
 # number are two chances to disagree
 from .processing.utils import (ROTSE_TO_V_ZP, ROTSE_TO_V_SIGMA,
                               ROTSE_TO_R_ZP, ROTSE_TO_R_SIGMA,
+                              ATLAS_C_TO_G, ATLAS_O_TO_G,
                               SPEED_OF_LIGHT, MICROJANSKY)
 
 
@@ -107,7 +108,8 @@ CONVERSIONS = [
         'v_to_g', 'Johnson V to Pan-STARRS g', 'lcserver', 'V', 'g',
         terms=[('g - r', [0.008, 0.498, 0.02])],
         reference=REF_KOSTOV[0] + ', inverted', url=REF_KOSTOV[1],
-        used_by='ASAS-SN V, ASAS-3, CSS, KWS, Hipparcos, INTEGRAL OMC, NSVS, FRAM V',
+        used_by='ASAS-SN V, ASAS-3, CSS, KWS, Hipparcos, INTEGRAL OMC, NSVS, FRAM V, '
+                'OGLE V',
         note="Published the other way round, as V = g - 0.02 - 0.498*(g - r) "
              "- 0.008*(g - r)^2, and inverted here.",
     ),
@@ -136,6 +138,26 @@ CONVERSIONS = [
              "which the colour itself then carries to g. The r of the relation "
              "is SDSS rather than Pan-STARRS, so the difference between those "
              "two scales rides along with it.",
+    ),
+    conversion(
+        'atlas_c_to_g', 'ATLAS c to Pan-STARRS g', 'lcserver', 'c', 'g',
+        terms=[('g - r', [ATLAS_C_TO_G, 0.0])],
+        reference='Tonry et al. (2018), PASP 130, 064505, equation 2',
+        url='https://arxiv.org/abs/1802.00879',
+        used_by='ATLAS forced photometry, c',
+        note="From c ~ 0.49 g + 0.51 r, which the paper gives as an "
+             "approximation for stellar spectra and quotes no scatter for.",
+    ),
+    conversion(
+        'atlas_o_to_g', 'ATLAS o to Pan-STARRS g', 'lcserver', 'o', 'g',
+        terms=[('g - r', [ATLAS_O_TO_G, 0.0])],
+        reference='Tonry et al. (2018), PASP 130, 064505, equation 2',
+        url='https://arxiv.org/abs/1802.00879',
+        used_by='ATLAS forced photometry, o',
+        note="From (c - o) ~ 0.73 (g - r), which carries o onto c, and the c "
+             "relation above, which carries that onto g. Both are the paper's "
+             "approximations for stellar spectra, so this one inherits the "
+             "error of each.",
     ),
     conversion(
         'gaia_g_to_g', 'Gaia G to Pan-STARRS g', 'lcserver', 'G', 'g',

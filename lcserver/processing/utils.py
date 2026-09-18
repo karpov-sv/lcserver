@@ -1013,6 +1013,28 @@ def rc_to_g(mag, g_minus_r):
     return mag + 0.0971 + 1.1837*g_minus_r
 
 
+# ATLAS cyan and orange, from Tonry et al. (2018), PASP 130, 064505, equation
+# 2: c ~ 0.49 g + 0.51 r, and (c - o) ~ 0.73 (g - r), both in AB on the
+# Pan-STARRS system. The first puts c on g through the colour; the second then
+# carries o onto c, and so onto g too. The paper writes them as approximations
+# for stellar spectra, and gives no scatter.
+ATLAS_C_TO_G = 0.51
+ATLAS_O_TO_G = ATLAS_C_TO_G + 0.73
+
+ATLAS_C_TO_G_FORMULA = f'g = c + {ATLAS_C_TO_G:.2f}*(g - r)'
+ATLAS_O_TO_G_FORMULA = f'g = o + {ATLAS_O_TO_G:.2f}*(g - r)'
+
+
+def atlas_c_to_g(mag, g_minus_r):
+    """ATLAS c onto the Pan-STARRS g scale, through an assumed (g - r)."""
+    return mag + ATLAS_C_TO_G*g_minus_r
+
+
+def atlas_o_to_g(mag, g_minus_r):
+    """ATLAS o onto the Pan-STARRS g scale, through an assumed (g - r)."""
+    return mag + ATLAS_O_TO_G*g_minus_r
+
+
 ROTSE_TO_V_FORMULA = 'V = m_ROTSE - 0.468 + (B - V)/1.875'
 
 # The constant the delivered catalogue carries and its definition does not.

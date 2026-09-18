@@ -25,6 +25,7 @@ The module is organized into separate files:
 - kelt.py: KELT lightcurve acquisition
 - ogle.py: OGLE Collection of Variable Stars lightcurve acquisition
 - ngts.py: Next Generation Transit Survey lightcurve acquisition
+- atlas.py: ATLAS forced photometry, through the server's request queue
 - hipparcos.py: Hipparcos epoch photometry acquisition
 - sdss.py: SDSS optical spectra
 - lamost.py: LAMOST DR11 spectra
@@ -42,17 +43,11 @@ Sources deliberately not here yet, all of them because they would put real
 work on somebody else's machine for every target acquired, rather than
 because there is nothing to fetch:
 
-- ATLAS forced photometry (fallingstar-data.com/forcedphot). The largest gap
-  in the optical time domain here - all-sky, o and c bands, since 2015, and
-  the main high-cadence survey of the southern sky, where ZTF does not
-  reach. It is a queue that measures each position on the images on demand,
-  needs a registered account and token, and would want a server-level
-  credential in the settings and a job that waits rather than a request that
-  answers.
 - ZTF forced photometry (IRSA). Deeper at the faint end than the DR light
   curves the ztf source uses, and it gives the non-detections, which matter
-  for anything in outburst. Submitted by email and collected later, so the
-  same shape of problem as ATLAS.
+  for anything in outburst. Submitted by email and collected later - a queue
+  like ATLAS's, but one that answers by email rather than to a task that can
+  be asked about, which atlas.py's way of waiting cannot follow.
 - gPhoton, for time-resolved GALEX ultraviolet photometry. It builds a light
   curve out of the individual photon events, which is minutes of computation
   per target somebody else pays for, and there is no ultraviolet time domain
@@ -126,6 +121,7 @@ from .nsvs import target_nsvs
 from .kelt import target_kelt
 from .ogle import target_ogle
 from .ngts import target_ngts
+from .atlas import target_atlas
 from .hipparcos import target_hipparcos
 from .sdss import target_sdss
 from .lamost import target_lamost
