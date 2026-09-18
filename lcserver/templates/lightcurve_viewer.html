@@ -191,6 +191,10 @@
     <button class="btn btn-sm btn-outline-primary me-2" onclick="enableAll()">
       <i class="fa fa-check-square-o"></i> Enable All
     </button>
+    <button class="btn btn-sm btn-outline-primary me-2" onclick="enableCombined()"
+            title="Only the series on the common g scale - g as measured, and everything converted to it - as the combined light curve draws them">
+      <i class="fa fa-filter"></i> Only g
+    </button>
     <button class="btn btn-sm btn-outline-primary me-2" onclick="disableAll()">
       <i class="fa fa-square-o"></i> Disable All
     </button>
@@ -1520,6 +1524,16 @@ function enableAll() {
     lightcurveData.forEach((series, index) => {
         seriesState[index].visible = true;
         document.getElementById(`toggle-${index}`).checked = true;
+    });
+    updatePlot();
+}
+
+// Only the series on the common g scale, for comparing surveys on one footing
+function enableCombined() {
+    lightcurveData.forEach((series, index) => {
+        const visible = series.combined === true;
+        seriesState[index].visible = visible;
+        document.getElementById(`toggle-${index}`).checked = visible;
     });
     updatePlot();
 }

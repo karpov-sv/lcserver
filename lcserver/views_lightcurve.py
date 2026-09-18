@@ -94,6 +94,8 @@ def load_magnitude_data(basepath):
                     # Measurements are shown by default; anything reached
                     # through an assumed colour waits until it is asked for
                     'default_visible': band['kind'] in surveys.BAND_KINDS_SHOWN,
+                    # On the common g scale, as the combined curve draws it
+                    'combined': bool(band.get('combined')),
                     'color': band.get('color') or color,
                     'mjd': x[idx].tolist(),
                     'mag': y[idx].tolist(),
