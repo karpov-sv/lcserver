@@ -233,10 +233,19 @@ def _vmc(ra, dec, sr, log):
     return vstack(parts) if parts else None
 
 
-# What each survey is asked with, in the order they are asked
+# What each survey is asked with, in the order they are asked, and the image
+# of the sky shown beside its light curve. VVV has a colour HiPS of its fourth
+# release, in J, Y and Z - there is none newer, and none with Ks. VMC has no
+# HiPS anywhere, at CDS, at ESO or at the survey's own archive, so a VMC
+# target is shown in VHS, the VISTA hemisphere survey: the same camera and
+# bands, shallower, and covering the whole of the Clouds and the Bridge. 2MASS
+# is too shallow to show a VMC star at all, and the Legacy Surveys' colour
+# HiPS breaks up in the SMC.
 VISTA_SURVEYS = [
-    ('vvv', 'VVV (VIRAC2)', _virac),
-    ('vmc', 'VMC DR7', _vmc),
+    ('vvv', 'VVV (VIRAC2)', _virac,
+     'CDS/P/VISTA/VVV/DR4/ColorJYZ', 'VVV DR4, J Y Z'),
+    ('vmc', 'VMC DR7', _vmc,
+     'VOXASTRO/P/VHS/JKs/color', 'VHS J Ks - VMC has no HiPS'),
 ]
 
 
@@ -324,8 +333,9 @@ def _virac_quality(table, quality, log):
     lc_color=VISTA_COLORS['Ks'],
     lc_mode='magnitude',
     lc_short=True,
-    # Template metadata
-    template_layout='simple',
+    # Template metadata - the cutout itself is chosen per target, see above
+    template_layout='with_cutout',
+    show_cutout=True,
     requires_coordinates=True,
 )
 def target_vista(config, basepath=None, verbose=True, show=False):
@@ -347,11 +357,16 @@ def target_vista(config, basepath=None, verbose=True, show=False):
     dec = config.get('target_dec')
     sr = float(config.get('vista_sr') or VISTA_SR)
 
+    # The cutout is chosen by the survey that answered, so what an earlier run
+    # chose is dropped until this one has found out
+    config.pop('vista_cutout_hips', None)
+    config.pop('vista_cutout_name', None)
+
     parts = {}
 
     # Each survey is cached on its own: they are separate catalogues, and one
     # answering nothing says nothing about the other
-    for key, name, fetch in VISTA_SURVEYS:
+    for key, name, fetch, _, _ in VISTA_SURVEYS:
         with cached_votable_query(f"vista_{key}_{ra:.5f}_{dec:.5f}_{sr:.1f}.vot",
                                   basepath, log, name,
                                   refresh=refresh_cache) as cache:
@@ -374,10 +389,17 @@ def target_vista(config, basepath=None, verbose=True, show=False):
             "and both saturate at about Ks = 11")
         return
 
+    # The first survey with anything here names the image shown beside it
+    for key, name, _, hips, hips_name in VISTA_SURVEYS:
+        if key in parts:
+            config['vista_cutout_hips'] = hips
+            config['vista_cutout_name'] = hips_name
+            break
+
     quality = quality_level(config, 'vista')
     kept = []
 
-    for key, name, _ in VISTA_SURVEYS:
+    for key, name, _, _, _ in VISTA_SURVEYS:
         if key not in parts:
             continue
 

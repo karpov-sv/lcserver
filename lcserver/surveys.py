@@ -220,7 +220,9 @@ def survey_source(
     declination_min=None,       # Minimum declination (e.g., -30 for APPLAUSE)
     declination_max=None,       # Maximum declination
     show_cutout=False,          # Show HiPS/SkyView cutout image
-    cutout_hips=None,           # HiPS survey for cutout: a CDS id, or the base URL of any HiPS
+    cutout_hips=None,           # HiPS survey for cutout: a CDS id, or the base URL of any HiPS.
+                                # A step may choose one per target instead, by writing
+                                # {source_id}_cutout_hips and _cutout_name into the config
     cutout_name=None,           # Caption for the cutout, for when the HiPS is named by URL
     # Rendering of a single-channel HiPS. Colour HiPS carry their own palette
     # and are left alone, so these default to letting the service decide.

@@ -49,6 +49,34 @@ def survey_condition_met(source_config, target):
 
 
 @register.filter
+def cutout_for(target, source_id):
+    """The HiPS a source's cutout shows for this target, and what to call it.
+
+    The source's own cutout_hips, unless the step chose one for this target in
+    particular - a source covering several surveys, each with its own imaging,
+    writes {source_id}_cutout_hips (and _cutout_name) into the config, and
+    that is preferred. None where neither names one.
+
+    Usage in template:
+        {% with cutout=target|cutout_for:source_id %}
+    """
+    source_config = surveys.get_survey_source(source_id) or {}
+    config = target.config or {}
+
+    hips = config.get(f'{source_id}_cutout_hips') or source_config.get('cutout_hips')
+
+    if not hips:
+        return None
+
+    return {
+        'hips': hips,
+        'name': (config.get(f'{source_id}_cutout_name')
+                 if config.get(f'{source_id}_cutout_hips')
+                 else source_config.get('cutout_name')),
+    }
+
+
+@register.filter
 def get_form(forms_dict, source_id):
     """Get form for a survey source from forms dictionary.
 
