@@ -27,6 +27,9 @@ The module is organized into separate files:
 - ngts.py: Next Generation Transit Survey lightcurve acquisition
 - atlas.py: ATLAS forced photometry, through the server's request queue
 - vista.py: VVV (VIRAC2) and VMC near-infrared time series from ESO
+- nsc.py: NOIRLab Source Catalog DR2 and DELVE-MC measurements, from Data Lab
+- skymapper.py: SkyMapper DR4 detections, from Data Lab
+- pgir.py: Palomar Gattini-IR J-band light curves, from Data Lab
 - hipparcos.py: Hipparcos epoch photometry acquisition
 - sdss.py: SDSS optical spectra
 - lamost.py: LAMOST DR11 spectra
@@ -124,6 +127,9 @@ from .ogle import target_ogle
 from .ngts import target_ngts
 from .atlas import target_atlas
 from .vista import target_vista
+from .nsc import target_nsc
+from .skymapper import target_skymapper
+from .pgir import target_pgir
 from .hipparcos import target_hipparcos
 from .sdss import target_sdss
 from .lamost import target_lamost

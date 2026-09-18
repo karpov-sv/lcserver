@@ -36,6 +36,7 @@ import numpy as np
 from .processing.utils import (ROTSE_TO_V_ZP, ROTSE_TO_V_SIGMA,
                               ROTSE_TO_R_ZP, ROTSE_TO_R_SIGMA,
                               ATLAS_C_TO_G, ATLAS_O_TO_G,
+                              SKYMAPPER_G_TO_PS1_G, SKYMAPPER_R_TO_PS1_R,
                               SPEED_OF_LIGHT, MICROJANSKY)
 
 
@@ -288,19 +289,17 @@ CONVERSIONS = [
 
     conversion(
         'skymapper_to_ps1_g', 'SkyMapper DR4 to Pan-STARRS g', 'stdpipe', 'g (SkyMapper)', 'g (PS1)',
-        terms=[('g - r', [-0.07715320986152466, 0.2694597282089696, 0.04069379065128178,
-                          0.01396290714542747]),
-               ('r - i', [0.026097008342026252, -0.14040957287568073, 0.133647539780504,
-                          0.013962907145427432])],
-        reference=REF_PANCINO[0], url=REF_PANCINO[1], used_by='SkyMapper DR4 catalogue',
+        terms=[('g - r', SKYMAPPER_G_TO_PS1_G[0]), ('r - i', SKYMAPPER_G_TO_PS1_G[1])],
+        reference=REF_PANCINO[0], url=REF_PANCINO[1],
+        used_by='SkyMapper DR4 catalogue, SkyMapper light curve g',
+        note="The light curve takes the colours from the star's own mean "
+             "SkyMapper magnitudes.",
     ),
     conversion(
         'skymapper_to_ps1_r', 'SkyMapper DR4 to Pan-STARRS r', 'stdpipe', 'r (SkyMapper)', 'r (PS1)',
-        terms=[('g - r', [0.08779280979185472, -0.23257704629617004, 0.1890698144343673,
-                          -0.008125550119663026]),
-               ('r - i', [-0.06273832689338121, 0.21909317812693613, -0.23340488268623696,
-                          -0.00812555011966309])],
-        reference=REF_PANCINO[0], url=REF_PANCINO[1], used_by='SkyMapper DR4 catalogue',
+        terms=[('g - r', SKYMAPPER_R_TO_PS1_R[0]), ('r - i', SKYMAPPER_R_TO_PS1_R[1])],
+        reference=REF_PANCINO[0], url=REF_PANCINO[1],
+        used_by='SkyMapper DR4 catalogue, SkyMapper light curve r',
     ),
     conversion(
         'skymapper_to_ps1_i', 'SkyMapper DR4 to Pan-STARRS i', 'stdpipe', 'i (SkyMapper)', 'i (PS1)',

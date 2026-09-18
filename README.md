@@ -43,6 +43,9 @@ model atmosphere grids as are worth asking.
 | MMT9 | Mini-MegaTORTORA, white light |
 | FRAM | B, V, R, I from the Pierre Auger Observatory and CTAO telescopes |
 | VISTA | VVV (VIRAC2) and VMC from ESO: Z, Y, J, H, Ks, bulge, southern disk and Magellanic Clouds, 2009–2023, fainter than Ks ≈ 11 |
+| NSC | NOIRLab Source Catalog DR2 and, in the Magellanic Clouds, DELVE-MC: every public DECam, Mosaic3 and 90Prime exposure, ugrizY, 2012–2020, fainter than ≈ 15 mag |
+| SkyMapper | DR4 detections, uvgriz, southern sky, 2014–2021 |
+| PGIR | Palomar Gattini-IR, J, sky visible from Palomar, 2018–2022, J < 15.5 |
 | WISE | W1–W4 in 2010, W1 and W2 through the NEOWISE years |
 | Kepler | flux, quarters and K2 campaigns, 2009–2018 |
 | TESS | flux, per sector |

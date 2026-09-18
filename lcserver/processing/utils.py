@@ -562,6 +562,64 @@ def irsa_client(timeout=IRSA_TIMEOUT):
     return Irsa
 
 
+# The NOIRLab Astro Data Lab table service, which several sources read: DESI,
+# and the per-epoch tables of NSC, DELVE-MC, SkyMapper and Palomar Gattini-IR.
+DATALAB_TAP = 'https://datalab.noirlab.edu/tap/sync'
+
+# A cone search or the epochs of one object take a couple of seconds there
+DATALAB_TIMEOUT = 180
+
+
+def datalab_query(query, what, timeout=DATALAB_TIMEOUT):
+    """One synchronous query of the Data Lab table service, as a table.
+
+    The table may be empty. The service ignores MAXREC and says nothing of a
+    result cut short, so a query is expected to ask for no more than it can
+    take whole - the epochs of one object, not a region.
+    """
+    try:
+        res = requests.post(DATALAB_TAP, timeout=timeout, data={
+            'REQUEST': 'doQuery', 'LANG': 'ADQL', 'FORMAT': 'votable',
+            'QUERY': query})
+    except requests.RequestException as e:
+        raise SourceError(f"could not query Astro Data Lab for {what} - "
+                          f"{type(e).__name__}: {e}")
+
+    # A refused query comes back as a VOTable saying why, whatever the status
+    reason = re.search(rb'QUERY_STATUS" value="ERROR">(.*?)</INFO>',
+                       res.content, re.S)
+
+    if reason:
+        raise SourceError("Astro Data Lab refused the query: "
+                          + ' '.join(reason.group(1).decode(errors='replace')
+                                     .split())[:300])
+
+    try:
+        res.raise_for_status()
+    except requests.RequestException as e:
+        raise SourceError(f"could not query Astro Data Lab for {what} - "
+                          f"{type(e).__name__}: {e}")
+
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore')
+            return Table.read(BytesIO(res.content), format='votable')
+    except Exception as e:
+        raise SourceError(f"could not read {what} from Astro Data Lab - "
+                          f"{type(e).__name__}: {e}")
+
+
+def datalab_cone(ra_col, dec_col, ra, dec, sr):
+    """A WHERE condition for a cone of sr arcsec, as Data Lab will take it.
+
+    Its ADQL geometry reaches the database untranslated and fails there, so the
+    q3c function underneath is called directly - compared with 't', as the
+    parser in front of the database refuses a bare boolean.
+    """
+    return (f"q3c_radial_query({ra_col}, {dec_col}, {ra:.7f}, {dec:.7f}, "
+            f"{sr / 3600.0:.9f}) = 't'")
+
+
 def parse_votable_lenient(xml_content):
     """
     Parse a VOTable from raw XML content with lenient error handling.
@@ -1033,6 +1091,28 @@ def atlas_c_to_g(mag, g_minus_r):
 def atlas_o_to_g(mag, g_minus_r):
     """ATLAS o onto the Pan-STARRS g scale, through an assumed (g - r)."""
     return mag + ATLAS_O_TO_G*g_minus_r
+
+
+# SkyMapper DR4 g and r onto Pan-STARRS g and r, through the SkyMapper colours
+# (g - r) and (r - i): stdpipe's fit on the curated Landolt and Stetson
+# collections of Pancino et al. (2022), A&A 664, A109, which it applies to the
+# SkyMapper catalogue. Each is a pair of polynomials in numpy.polyval order,
+# the first in (g - r), the second in (r - i).
+SKYMAPPER_G_TO_PS1_G = (
+    [-0.07715320986152466, 0.2694597282089696, 0.04069379065128178, 0.01396290714542747],
+    [0.026097008342026252, -0.14040957287568073, 0.133647539780504, 0.013962907145427432],
+)
+SKYMAPPER_R_TO_PS1_R = (
+    [0.08779280979185472, -0.23257704629617004, 0.1890698144343673, -0.008125550119663026],
+    [-0.06273832689338121, 0.21909317812693613, -0.23340488268623696, -0.00812555011966309],
+)
+
+SKYMAPPER_TO_PS1_FORMULA = 'm_PS1 = m_SM + P1(g - r) + P2(r - i), in SkyMapper colours'
+
+
+def skymapper_to_ps1(coeffs, g_minus_r, r_minus_i):
+    """What a SkyMapper DR4 band takes to reach its Pan-STARRS counterpart."""
+    return np.polyval(coeffs[0], g_minus_r) + np.polyval(coeffs[1], r_minus_i)
 
 
 ROTSE_TO_V_FORMULA = 'V = m_ROTSE - 0.468 + (B - V)/1.875'

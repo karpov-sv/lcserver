@@ -834,6 +834,8 @@ CACHE_PREFIXES = {
     'gaiaxp_': 'info',
     'gaiarvs_': 'info',
     'skymapper_': 'info',
+    # Not the info step's: the SkyMapper light curve
+    'skymapper_lc_': 'skymapper',
     # What MAST was asked for, and what it sent back: the product search of
     # each, and the downloads themselves in a directory per source
     'tess_search_': 'tess',

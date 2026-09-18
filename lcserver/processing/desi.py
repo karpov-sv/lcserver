@@ -17,7 +17,6 @@ Lab table service, which carries the same release as desi_dr1.
 
 import os
 import json
-import requests
 import numpy as np
 
 from astropy.table import Table
@@ -28,8 +27,8 @@ from astropy import units as u
 from stdpipe import plots
 
 from ..surveys import survey_source, get_output_files, KIND_SPECTROSCOPY
-from .utils import (SourceError, cleanup_paths, cached_votable_query,
-                    write_spectrum)
+from .utils import (cleanup_paths, cached_votable_query,
+                    write_spectrum, datalab_query)
 
 
 # Optional: the client is a NOIRLab package of its own, and everything else
@@ -54,7 +53,6 @@ DESI_MAX_SPECTRA = 10
 DESI_TO_CGS = 1e-17
 
 # Where the stellar parameters are, SPARCL not carrying them
-DESI_TAP = 'https://datalab.noirlab.edu/tap/sync'
 DESI_MWS_TABLE = 'desi_dr1.mws'
 DESI_MWS_COLUMNS = [
     'targetid', 'target_ra', 'target_dec', 'survey', 'program',
@@ -88,17 +86,7 @@ def _epochs(dateobs):
 
 def _query_tap(query, log):
     """A table from the Data Lab table service, or None."""
-    res = requests.get(DESI_TAP, timeout=180, params={
-        'REQUEST': 'doQuery', 'LANG': 'ADQL', 'FORMAT': 'csv', 'QUERY': query})
-
-    # A failed query comes back as a VOTable saying so, whatever was asked for
-    if res.status_code != 200 or res.text.lstrip().startswith('<'):
-        raise SourceError("the table service refused the query: "
-                          f"{res.text[:160]}")
-
-    # A list of lines rather than a StringIO: the fast reader wants bytes from
-    # a file-like object and refuses one that gives it text
-    table = Table.read(res.text.splitlines(), format='csv')
+    table = datalab_query(query, 'the DESI stellar parameters')
 
     return table if len(table) else None
 
