@@ -43,6 +43,25 @@ KWS_NOT_FOUND = re.compile(r"Data not found", re.IGNORECASE)
 KWS_COLOR_DT = 0.01
 
 
+def kws_designation(ra, dec):
+    """The HHMMSS+DDMM.mm designation KWS searches around, for a position.
+
+    KWS reads nothing else as a position: decimal degrees in any layout come
+    back as the bare query form, a tab among them as a server error, and a
+    fraction of a second of RA as no data. What it does with the designation is
+    a box search of some 20 arcsec, the same it does around a position SIMBAD
+    resolved for it - every row carries the position of its own detection, not
+    the name of a star.
+    """
+    # Rounded in whole units first, so that 59.6 s carries into the minute
+    ra_s = int(round((ra % 360) / 15 * 3600)) % (24 * 3600)
+    dec_cm = int(round(abs(dec) * 6000))
+
+    return (f"{ra_s // 3600:02d}{ra_s // 60 % 60:02d}{ra_s % 60:02d}"
+            f"{'-' if dec < 0 else '+'}"
+            f"{dec_cm // 6000:02d}{dec_cm // 100 % 60:02d}.{dec_cm % 100:02d}")
+
+
 @survey_source(
     name='Kamogata Wide-field Survey',
     short_name='KWS',
@@ -63,7 +82,8 @@ KWS_COLOR_DT = 0.01
     about=(
         "The Kamogata/Kiso/Kyoto Wide-field Survey, a Japanese patrol of "
         "bright variable stars in V, Ic and B, queried by object name "
-        "rather than by position."),
+        "or, where the target has coordinates, by a designation built from "
+        "them."),
     about_links=[
         ('KWS', 'http://kws.cetus-net.org/~maehara/VSdata.py'),
     ],
@@ -95,7 +115,7 @@ KWS_COLOR_DT = 0.01
     # Template metadata
     template_layout='with_cutout',
     requires_coordinates=False,
-    # No cutout - KWS is queried by name, so there are no coordinates to cut on
+    # No cutout - KWS may be queried by name alone, with no coordinates to cut on
     show_cutout=False,
     show_color_mag=True,
     color_mag_file='kws_color_mag.png',
@@ -112,8 +132,13 @@ def target_kws(config, basepath=None, verbose=True, show=False):
     # Cleanup stale plots
     cleanup_paths(get_output_files('kws'), basepath=basepath)
 
-    # KWS uses target name, not coordinates
-    target_name = config.get('target_name')
+    # KWS takes no coordinates, but does take a designation made of them. The
+    # name is the fallback for a target the info step has not placed yet - KWS
+    # resolves it through SIMBAD, which fails for a name made of coordinates
+    if config.get('target_ra') is not None and config.get('target_dec') is not None:
+        target_name = kws_designation(config['target_ra'], config['target_dec'])
+    else:
+        target_name = config.get('target_name')
     if not target_name:
         log("Error: target_name not found in config")
         raise RuntimeError("Target name required for KWS query")
@@ -129,12 +154,11 @@ def target_kws(config, basepath=None, verbose=True, show=False):
             log(f"for {target_name}")
 
             # Query KWS database
-            # Note: KWS does not support coordinates, only object names resolved via SIMBAD
             try:
                 res = requests.post(
                     "http://kws.cetus-net.org/~maehara/VSdata.py",
                     {
-                        "object": target_name,  # KWS resolves object name via SIMBAD
+                        "object": target_name,  # a designation, or a name for SIMBAD
                         "resolver": "simbad",
                         "p_band": "All",
                         "plot": "0",
