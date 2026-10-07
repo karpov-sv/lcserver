@@ -29,9 +29,22 @@ from .utils import (SourceError, cleanup_paths, cached_votable_query,
 WASP_SEARCH_URL = 'https://wasp.cerit-sc.cz/search'
 WASP_CSV_URL = 'https://wasp.cerit-sc.cz/csv'
 
-# Matching radius, in arcsec. WASP pixels are some 14 arcsec across, so a
-# tighter cone would start missing the object rather than excluding neighbours.
-WASP_SR = 30.0
+# How far from the target a SuperWASP object may sit and still be it, in
+# arcsec. The archive places its objects by the input catalogue, not by the 14
+# arcsec WASP pixels, and the genuine matches checked sit within 0.1 arcsec -
+# the margin is for proper motion between the catalogue epoch and ours.
+WASP_MATCH_SR = 5.0
+
+# How far around the target the archive is searched, in arcsec. Wider than the
+# match, so that a target with no object of its own can be told apart from one
+# nobody covered, and so that the neighbours sharing its pixels can be seen.
+WASP_SEARCH_SR = 30.0
+
+# The size of a WASP pixel, in arcsec, and how much fainter than the object a
+# neighbour inside one may be and still be worth a warning: 1.5 mag is a
+# quarter of its light.
+WASP_PIXEL = 14.0
+WASP_BLEND_DMAG = 1.5
 
 # Fewest points an object must carry to be worth returning
 WASP_NMIN = 10
@@ -54,11 +67,12 @@ WASP_CAMERA_MAX_ERR_RATIO = 5.0
 
 
 def _search(ra, dec, sr, nmin, log):
-    """Which SuperWASP objects sit at this position.
+    """Which SuperWASP objects sit at this position, nearest first.
 
-    The archive answers in HTML, so the identifiers are read out of the result
-    table. Each row carries the object name, its number of points and its
-    distance from the requested position.
+    The archive answers in HTML, so the objects are read out of the result
+    table. Each row carries the object name, its number of points, its
+    catalogue position and magnitude, and its distance from the requested
+    position - in degrees, returned here in arcsec.
     """
     res = requests.get(WASP_SEARCH_URL, timeout=90, params={
         'ra': f'{ra:.6f}',
@@ -73,10 +87,24 @@ def _search(ra, dec, sr, nmin, log):
     if 'No objects matching' in res.text:
         return []
 
+    def _number(cells, column):
+        try:
+            return float(cells[columns[column]])
+        except (KeyError, ValueError, IndexError):
+            return None
+
     objects = []
+    columns = {}
     for row in re.findall(r'<tr[^>]*>(.*?)</tr>', res.text, re.S | re.I):
         cells = [re.sub(r'<[^>]*>', ' ', c).strip()
-                 for c in re.findall(r'<td[^>]*>(.*?)</td>', row, re.S | re.I)]
+                 for c in re.findall(r'<t[dh][^>]*>(.*?)</t[dh]>', row, re.S | re.I)]
+
+        # The header, by which the columns after the name are found
+        if 'Object name' in cells:
+            columns = {key: i for i, cell in enumerate(cells)
+                       for key in ['Magnitude', 'Distance']
+                       if cell.startswith(key)}
+            continue
 
         name = next((c for c in cells if c.startswith('1SWASP')), None)
         if not name:
@@ -89,9 +117,24 @@ def _search(ra, dec, sr, nmin, log):
         except (ValueError, IndexError):
             pass
 
-        objects.append({'name': name, 'npts': npts})
+        dist = _number(cells, 'Distance')
+        objects.append({'name': name, 'npts': npts,
+                        'mag': _number(cells, 'Magnitude'),
+                        'dist': dist * 3600 if dist is not None else None})
 
-    return objects
+    # Without the distance an object cannot be told from its neighbours, and
+    # taking it on trust is how a neighbour's light curve was published
+    if objects and any(_['dist'] is None for _ in objects):
+        raise SourceError("unrecognised SuperWASP search result - it gives "
+                          "no distance for its objects")
+
+    return sorted(objects, key=lambda _: _['dist'])
+
+
+def _describe(obj):
+    """An object from _search, as the log names it."""
+    return (f"{obj['name']}, {obj['dist']:.1f} arcsec away"
+            + (f" at {obj['mag']:.1f} mag" if obj['mag'] is not None else ''))
 
 
 def _download_lightcurve(name, log):
@@ -112,10 +155,12 @@ def _download_lightcurve(name, log):
     output_files=['wasp.log', 'wasp_lc.png', 'wasp.vot', 'wasp.txt'],
     button_text='Get SuperWASP lightcurve',
     form_fields={
-        'wasp_sr': {
+        # Not the wasp_sr this used to be, which was the radius of the search
+        # and is still stored, at 30 arcsec, for the targets it was set on
+        'wasp_match_sr': {
             'type': 'float',
-            'label': 'Search radius, arcsec',
-            'initial': WASP_SR,
+            'label': 'Match radius, arcsec',
+            'initial': WASP_MATCH_SR,
             'required': False,
         },
         'wasp_quality': quality_field({
@@ -189,17 +234,18 @@ def target_wasp(config, basepath=None, verbose=True, show=False):
 
     ra = config.get('target_ra')
     dec = config.get('target_dec')
-    wasp_sr = config.get('wasp_sr', WASP_SR)
+    match_sr = config.get('wasp_match_sr') or WASP_MATCH_SR
 
-    cache_name = f"wasp_{ra:.4f}_{dec:.4f}_{wasp_sr:.1f}.vot"
+    cache_name = f"wasp_{ra:.4f}_{dec:.4f}_{match_sr:.1f}.vot"
 
     with cached_votable_query(cache_name, basepath, log, 'SuperWASP',
                               refresh=refresh_cache) as cache:
         if not cache.hit:
-            log(f"within {wasp_sr:.0f} arcsec")
+            log(f"within {match_sr:.0f} arcsec")
 
             try:
-                objects = _search(ra, dec, wasp_sr, WASP_NMIN, log)
+                objects = _search(ra, dec, max(match_sr, WASP_SEARCH_SR),
+                                  WASP_NMIN, log)
 
                 if not objects:
                     cache.save_empty()
@@ -207,13 +253,25 @@ def target_wasp(config, basepath=None, verbose=True, show=False):
                         "though wide, is not the whole sky")
                     return
 
-                if len(objects) > 1:
-                    log(f"{len(objects)} SuperWASP objects nearby, "
-                        f"using the first ({objects[0]['name']})")
-
                 obj = objects[0]
+                if obj['dist'] > match_sr:
+                    cache.save_empty()
+                    log(f"Warning: No SuperWASP object at this position - the "
+                        f"nearest, {_describe(obj)}, is a neighbour rather than "
+                        f"the target")
+                    return
+
                 log(f"Requesting the light curve of {obj['name']}"
                     + (f", {obj['npts']} points" if obj['npts'] else ''))
+
+                # Matched rightly, the photometry still holds whatever else
+                # falls in its pixels
+                for other in objects[1:]:
+                    if (other['dist'] < WASP_PIXEL
+                            and obj['mag'] is not None and other['mag'] is not None
+                            and other['mag'] < obj['mag'] + WASP_BLEND_DMAG):
+                        log(f"Warning: {_describe(other)}, shares its pixel, "
+                            f"so the light curve is blended with it")
 
                 wasp = _download_lightcurve(obj['name'], log)
             except Exception as e:

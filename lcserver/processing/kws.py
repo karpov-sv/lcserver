@@ -10,6 +10,7 @@ import numpy as np
 
 from astropy.table import Table
 from astropy.time import Time
+from astropy.coordinates import SkyCoord
 
 # STDPipe
 from stdpipe import plots
@@ -41,6 +42,30 @@ KWS_NOT_FOUND = re.compile(r"Data not found", re.IGNORECASE)
 # simultaneous, in days. KWS steps through its filters in seconds, so anything
 # from the same visit falls well inside this.
 KWS_COLOR_DT = 0.01
+
+
+# How far from the target the median KWS detection may lie, in arcsec, before
+# none of them is counted as the target's. A row gives the position of its own
+# detection, rounded to 1 s of RA and 0.1' of Dec. Over the stars checked, the
+# rows of a real one sit at a median of 0.5-7 arcsec from it; where KWS sees
+# nothing but noise they scatter evenly over the box it searches, at a median
+# of 16-20. Single rows are not cut by position: a real star has a few percent
+# of them beyond 15 arcsec and some out to 35, measured as well as the rest.
+KWS_MAX_MEDIAN_SEP = 12.0
+
+
+def kws_position(designation):
+    """The (ra, dec) in degrees of a KWS designation, or None."""
+    m = re.fullmatch(r'(\d\d)(\d\d)(\d\d)([+-])(\d\d)(\d\d(?:\.\d+)?)',
+                     designation.strip())
+    if not m:
+        return None
+
+    hh, mm, ss, sign, dd, dm = m.groups()
+    ra = (int(hh) + int(mm) / 60 + int(ss) / 3600) * 15
+    dec = (int(dd) + float(dm) / 60) * (-1 if sign == '-' else 1)
+
+    return ra, dec
 
 
 def kws_designation(ra, dec):
@@ -238,6 +263,25 @@ def target_kws(config, basepath=None, verbose=True, show=False):
     # Nothing here, and cached as nothing - the helper has said so already
     if kws is None:
         return
+
+    # KWS returns every detection in its box, the target's and the noise's
+    # alike. The two are told apart by how the rows gather around the target,
+    # which is not a matter of quality, so it is done at every level of it
+    if config.get('target_ra') is not None and config.get('target_dec') is not None:
+        pos = [kws_position(str(_)) for _ in kws['name']]
+        known = np.array([_ is not None for _ in pos])
+        sep = np.full(len(kws), np.nan)
+        if np.any(known):
+            sep[known] = SkyCoord(
+                [_[0] for _ in pos if _], [_[1] for _ in pos if _], unit='deg'
+            ).separation(SkyCoord(config['target_ra'], config['target_dec'],
+                                  unit='deg')).arcsec
+
+        if np.any(known) and np.median(sep[known]) > KWS_MAX_MEDIAN_SEP:
+            log(f"Warning: No KWS detections of the target - the {len(kws)} "
+                f"in the box lie a median {np.median(sep[known]):.0f} arcsec "
+                f"from it, scattered as noise is, not gathered as a star is")
+            return
 
     # Filter out bad data
     kws = kws[np.isfinite(kws['mag'])]
