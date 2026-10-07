@@ -512,8 +512,11 @@ def targets(request, id=None):
                             'name', 'title',
                         ]
                         if name not in ignored_fields:
-                            if name in form.changed_data or name not in target.config:
-                                # update only changed or new fields
+                            if name in form.changed_data:
+                                target.config[name] = value
+                            elif name not in target.config and value is not None:
+                                # A blank field is no value, and stored as None
+                                # it would shadow the defaults of config.get()
                                 target.config[name] = value
 
                     target.save()

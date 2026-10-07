@@ -19,7 +19,7 @@ from stdpipe import plots
 from .. import surveys
 from ..surveys import survey_source, get_output_files
 from .utils import (SourceError, cleanup_paths, cached_votable_query, log_bands,
-                    log_conversion, plot_with_errors)
+                    log_conversion, plot_with_errors, assumed_color)
 
 
 # Some convenience code for gaussian process based smoothing of unevenly spaced 1d data
@@ -259,8 +259,8 @@ def target_ztf(config, basepath=None, verbose=True, show=False):
 
         log(f"  {fn}: {np.sum(idx)} total, {np.sum(idx_good)} good")
 
-    log("Earliest: ", Time(np.min(ztf['mjd']), format='mjd').datetime.strftime('%Y-%m-%s %H:%M:%S'))
-    log("  Latest: ", Time(np.max(ztf['mjd']), format='mjd').datetime.strftime('%Y-%m-%s %H:%M:%S'))
+    log("Earliest: ", Time(np.min(ztf['mjd']), format='mjd').datetime.strftime('%Y-%m-%d %H:%M:%S'))
+    log("  Latest: ", Time(np.max(ztf['mjd']), format='mjd').datetime.strftime('%Y-%m-%d %H:%M:%S'))
 
     if not np.sum(ztf['filtercode'] == 'zr') and not np.sum(ztf['filtercode'] == 'zg'):
         log("Warning: No datapoints in zg or zr filters")
@@ -285,7 +285,7 @@ def target_ztf(config, basepath=None, verbose=True, show=False):
     ztf['mag_r'] = np.nan
 
     # Initial model for the color
-    gr = lambda x: np.ones_like(x) * config.get('g_minus_r', 0)
+    gr = lambda x: np.ones_like(x) * assumed_color(config, 'g_minus_r')[0]
 
     u_mjd = np.linspace(np.min(ztf['time'].mjd), np.max(ztf['time'].mjd), 1000)
 
@@ -469,7 +469,9 @@ def target_ztf(config, basepath=None, verbose=True, show=False):
 
         fig.suptitle(f"{config['target_name']} - ZTF")
 
-    if not len(cmagg):
+    # The colour below is the mean over the g/r pairs, and with none of them
+    # it is a masked value that would end up in the config
+    if not len(iig):
         log("No multiband data in ZTF")
         return
 

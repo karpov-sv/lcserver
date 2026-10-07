@@ -19,7 +19,7 @@ from .. import surveys
 from ..surveys import survey_source, get_output_files
 from .utils import (cleanup_paths, fetch_votable, cached_votable_query,
                     quality_field, quality_level, log_bands, log_conversion,
-                    plot_with_errors,
+                    plot_with_errors, assumed_color,
                     QUALITY_STANDARD, QUALITY_RELAXED, QUALITY_PUBLISHED)
 
 
@@ -254,7 +254,7 @@ def target_applause(config, basepath=None, verbose=True, show=False):
     applause.sort('time')
 
     BP_minus_RP = config.get('BP_minus_RP', np.nanmedian(applause['gaiaedr3_bp_rp']))
-    g_minus_r = config.get('g_minus_r', 0.0)
+    g_minus_r, g_minus_r_origin = assumed_color(config, 'g_minus_r')
 
     log(f"Using BP - RP = {BP_minus_RP:.2f} for converting natural magnitudes to Gaia Gmag")
 
@@ -288,8 +288,7 @@ def target_applause(config, basepath=None, verbose=True, show=False):
         'BP = RP + (BP - RP);  g = BP - poly_g(g-r);  r = BP - poly_r(g-r)',
         {
             '(BP - RP)': (float(BP_minus_RP), 'assumed constant in time'),
-            '(g - r)': (g_minus_r,
-                        'from config' if 'g_minus_r' in config else 'default, no colour known'),
+            '(g - r)': (g_minus_r, g_minus_r_origin),
             'poly_g': '[-0.11445, -0.20379, 0.04994]  (Landolt standards)',
             'poly_r': '[-0.13190, 0.82139, 0.04388]  (Landolt standards)',
         },
