@@ -148,8 +148,10 @@ def load_spectrum_data(basepath, calibrated=None):
             if not pattern:
                 continue
 
-            unticked = survey_config.get('spectrum_hidden')
-            unticked = set(glob.glob(os.path.join(basepath, unticked))) if unticked else set()
+            unticked = survey_config.get('spectrum_hidden') or []
+            unticked = set(path
+                           for _ in ([unticked] if isinstance(unticked, str) else unticked)
+                           for path in glob.glob(os.path.join(basepath, _)))
 
             for number, path in enumerate(sorted(glob.glob(os.path.join(basepath, pattern)))):
                 hidden = path in unticked

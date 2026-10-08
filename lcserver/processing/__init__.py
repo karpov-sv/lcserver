@@ -31,6 +31,7 @@ The module is organized into separate files:
 - skymapper.py: SkyMapper DR4 detections, from Data Lab
 - pgir.py: Palomar Gattini-IR J-band light curves, from Data Lab
 - hipparcos.py: Hipparcos epoch photometry acquisition
+- iue.py: IUE ultraviolet spectra, from INES
 - sdss.py: SDSS optical spectra
 - lamost.py: LAMOST DR11 spectra
 - apogee.py: APOGEE DR17 near-infrared spectra
@@ -131,6 +132,7 @@ from .nsc import target_nsc
 from .skymapper import target_skymapper
 from .pgir import target_pgir
 from .hipparcos import target_hipparcos
+from .iue import target_iue
 from .sdss import target_sdss
 from .lamost import target_lamost
 from .apogee import target_apogee

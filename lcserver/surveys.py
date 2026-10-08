@@ -191,7 +191,7 @@ def survey_source(
     # The SED writes both the catalogues it was told to trust and every
     # catalogue at the position; the second is the larger and the noisier, and
     # is worth having without its being the first thing seen.
-    spectrum_hidden=None,            # glob pattern, loaded but unticked
+    spectrum_hidden=None,            # glob pattern, or a list, loaded but unticked
     spectrum_label=None,             # what to call them, if not the short name
     # Where one source publishes a few named spectra rather than many alike -
     # the info step's Gaia XP and RVS - this names each of them. Keyed by the
