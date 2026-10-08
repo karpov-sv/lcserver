@@ -408,6 +408,17 @@ def default_priors(grid, distance=None, distance_err=None, av_max=1.0):
 PROGRESS_SECONDS = 10.0
 
 
+def log_likelihood(flux, flux_err, model, jitter):
+    """How likely the fluxes are under a model, with the jitter the fit allows.
+
+    The jitter is a fraction of the model, so it means the same thing in a
+    band measured to a millimagnitude and one measured to a tenth.
+    """
+    sigma2 = flux_err ** 2 + (jitter * model) ** 2
+    return float(-0.5 * np.sum((flux - model) ** 2 / sigma2
+                               + np.log(2 * np.pi * sigma2)))
+
+
 def fit(bands, wave_um, flux, flux_err, grid, priors,
         nlive=500, dlogz=0.5, seed=None, verbose=True, progress=None):
     """Sample the posterior for one grid. Returns whole rows, never marginals.
@@ -435,16 +446,12 @@ def fit(bands, wave_um, flux, flux_err, grid, priors,
     def prior_transform(u):
         return np.array([t(v) for t, v in zip(transforms, u)])
 
-    def log_likelihood(theta):
+    def likelihood(theta):
         model = model_flux(theta, columns, ext_unit, grid)
         if not np.all(np.isfinite(model)):
             return -1e300
 
-        # The jitter is a fraction of the model, so it means the same thing in
-        # a band measured to a millimagnitude and one measured to a tenth
-        sigma2 = flux_err ** 2 + (theta[6] * model) ** 2
-        return float(-0.5 * np.sum((flux - model) ** 2 / sigma2
-                                   + np.log(2 * np.pi * sigma2)))
+        return log_likelihood(flux, flux_err, model, theta[6])
 
     # Nested sampling converges on the evidence rather than after a fixed
     # number of steps, so how long it will take is not known when it starts.
@@ -473,7 +480,7 @@ def fit(bands, wave_um, flux, flux_err, grid, priors,
     announce.last = time.time()
 
     sampler = dynesty.NestedSampler(
-        log_likelihood, prior_transform, len(PARAMETERS),
+        likelihood, prior_transform, len(PARAMETERS),
         nlive=nlive, bound='multi', sample='rwalk',
         rstate=np.random.default_rng(seed))
     sampler.run_nested(dlogz=dlogz, print_progress=bool(verbose or progress),
@@ -632,20 +639,36 @@ def log_parameters(summary, log):
 
 
 def best_row(result, grid):
-    """The posterior row that fits best, and its chi-square."""
+    """The posterior row that fits best, and its chi-square.
+
+    Best by the likelihood the posterior was sampled with, jitter and all.
+    Ranked by the chi-square on the catalogue errors alone, the choice went to
+    whichever row suited the most precise points, as though the fit had not
+    found them to need widening - and on a fit leaning on its jitter that is a
+    row far out in the posterior, drawn as the answer.
+
+    The chi-square returned is still on the catalogue errors, which is what it
+    has always been quoted as: with the jitter in it, it would come out near
+    the number of points whatever the fit, being what the jitter is fitted to.
+    """
     columns = np.array([grid.column[b] for b in result['bands']])
     ext_unit = attenuation(result['wave_um'], 1.0)
 
-    best, best_chi2 = None, np.inf
+    best, best_like = None, -np.inf
     for row in result['samples']:
         model = model_flux(row, columns, ext_unit, grid)
         if not np.all(np.isfinite(model)):
             continue
-        chi2 = float(np.sum(((result['flux'] - model) / result['flux_err']) ** 2))
-        if chi2 < best_chi2:
-            best, best_chi2 = row, chi2
+        like = log_likelihood(result['flux'], result['flux_err'], model,
+                              row[PARAMETERS.index('jitter')])
+        if like > best_like:
+            best, best_like = row, like
 
-    return best, best_chi2
+    if best is None:
+        return None, np.inf
+
+    model = model_flux(best, columns, ext_unit, grid)
+    return best, float(np.sum(((result['flux'] - model) / result['flux_err']) ** 2))
 
 
 def residuals(result, theta, grid):
