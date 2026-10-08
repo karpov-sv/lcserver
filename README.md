@@ -132,6 +132,13 @@ Nothing stands in for the fit and nothing is corrected. Gaia's synthetic
 photometry leaves the fit when the bins enter it, being the same spectra
 integrated, and a grid with no bins written is skipped rather than guessed at.
 
+The **IUE** spectra are fitted the same way, with a switch of their own: 100 A
+bins from 1250 to 3150 A, out of `<name>.iue.h5` written by `sedgrid --iue`.
+Only the low dispersion spectra through the large aperture are binned, every
+exposure reaching into a bin contributing to it, and each bin carries a 5%
+calibration error besides its noise and the scatter between exposures. They
+are what pins the extinction of a hot star: the 2175 A bump is five bins wide.
+
 Two numbers come out beside the parameters and are worth as much as they are:
 the **jitter**, the fractional model inadequacy the fit needed, which says how
 far the photometry is from anything one photosphere explains; and the
@@ -335,6 +342,7 @@ python manage.py sedgrid --ingest-btsettl ~/Downloads/bt-settl.medres.grid.fits 
     --to data/grids
 python manage.py sedgrid --scatter            # or --scatter btsettl bosz
 python manage.py sedgrid --xp                 # or --xp tlusty bosz
+python manage.py sedgrid --iue                # or --iue tlusty bosz
 ```
 
 `--ingest-powr` converts a [PoWR](https://www.astro.physik.uni-potsdam.de/PoWR/)
@@ -393,6 +401,10 @@ brighter than W1 on a white dwarf.
 cube — under a megabyte — holding a flux per 30 nm bin per model, which is what
 lets a fit take the spectrum as points rather than only compare with it. A grid
 with no spectra has nothing to bin and is skipped.
+
+`--iue` does the same for the IUE bins, 100 A from 1250 to 3150 A. A grid whose
+spectra start redward of 1250 A gets none, and a model with no flux in some
+bin - the coolest BOSZ ones - is left out of the cube.
 
 `--scatter` rewrites a grid stored as a lattice as the models it actually holds.
 A cube on a lattice has a place for every combination of its three axes and a

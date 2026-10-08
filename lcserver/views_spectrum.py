@@ -404,6 +404,9 @@ FIT_OPTIONS = {
     # its bins join the point list and the synthetic photometry made from the
     # same spectra leaves it, which the fitter does for itself.
     'xp_fit': lambda v: bool(v),
+    # Whether the IUE spectra are fitted. Nothing in the SED file is made from
+    # them, so nothing leaves the list when they join it.
+    'iue_fit': lambda v: bool(v),
 }
 
 # Priors arrive as ['uniform', low, high] and are rebuilt here rather than
@@ -679,10 +682,14 @@ def sed_points(request, id):
     # part of the SED file, and they are fitted only when asked for.
     xp = sedfit.xp_points(target.path())
 
+    # And the IUE spectra in their bins, on the same terms
+    iue = sedfit.iue_points(target.path())
+
     return JsonResponse({
         'source': source,
         'points': points,
         'xp': xp,
+        'iue': iue,
         # Which of the file's points the bins would replace, worked out where
         # the rule lives rather than restated in the page
         'xp_derived': sedfit.xp_derived(points),

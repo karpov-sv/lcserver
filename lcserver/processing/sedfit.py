@@ -247,7 +247,7 @@ class Grid:
 
 
 class CompositeGrid:
-    """Two cubes over the same models, answering as one.
+    """Two cubes or more over the same models, answering as one.
 
     A grid's filters are in one file and its Gaia XP bins in another, because
     the bins were written later and from the spectra rather than from whatever
@@ -262,35 +262,38 @@ class CompositeGrid:
     cannot have, and the likelihood already knows what that means.
     """
 
-    def __init__(self, base, extra):
-        self.base, self.extra = base, extra
+    def __init__(self, base, *extras):
+        self.base, self.extras = base, extras
         self.name = base.name
         self.teff, self.logg, self.feh = base.teff, base.logg, base.feh
         self.axis_logg = base.axis_logg
 
-        self.filters = list(base.filters) + [b for b in extra.filters
-                                             if b not in base.column]
-        self.column = {b: i for i, b in enumerate(self.filters)}
-        self.covers = frozenset(base.covers | extra.covers)
+        # For each of our columns, which grid answers for it and where in it -
+        # the first to have a band keeps it
+        self.filters, self._where = [], []
+        for n, grid in enumerate((base,) + extras):
+            for b in grid.filters:
+                if b not in self.filters:
+                    self.filters.append(b)
+                    self._where.append((n, grid.column[b]))
 
-        # For each of our columns, which grid answers for it and where in it
-        self._where = [(0, base.column[b]) if b in base.column
-                       else (1, extra.column[b]) for b in self.filters]
+        self.column = {b: i for i, b in enumerate(self.filters)}
+        self.covers = frozenset().union(*(g.covers for g in (base,) + extras))
 
     @property
     def limits(self):
-        """The box both are defined over, which is where both can answer."""
-        one, other = self.base.limits, self.extra.limits
+        """The box all of them are defined over, which is where all can answer."""
+        every = [g.limits for g in (self.base,) + self.extras]
 
-        return {p: (max(one[p][0], other[p][0]), min(one[p][1], other[p][1]))
-                for p in one}
+        return {p: (max(_[p][0] for _ in every), min(_[p][1] for _ in every))
+                for p in every[0]}
 
     def flux(self, teff, logg, feh, columns):
         """Surface flux in the given columns, from whichever cube holds them."""
         columns = np.atleast_1d(columns)
         out = np.full(len(columns), np.nan)
 
-        for n, grid in enumerate((self.base, self.extra)):
+        for n, grid in enumerate((self.base,) + self.extras):
             mine = np.array([self._where[c][0] == n for c in columns])
             if not mine.any():
                 continue
@@ -1491,6 +1494,196 @@ def log_xp(result, log):
             ' not part of it')
 
 
+# ------------------------------------------------------------ IUE spectra
+
+# What the IUE step leaves behind: one spectrum per exposure, flux calibrated,
+# with the pixels NEWSIPS flags as wrong already gone. Only the low dispersion
+# spectra through the large aperture are read - the others are on the page to
+# be looked at, but the small aperture loses light and the rebinned echelle
+# spectra of the long wavelength cameras disagree with TD1 by a fifth, which a
+# fit would take for the star.
+IUE_FILES = 'iue_*LL.vot'
+
+# Bins of 100 A, from 1250 to 3150 A. Wide enough that a bin is some fifteen
+# resolution elements and the absorption lines inside it average out, narrow
+# enough that the 2175 A bump - 500 A across - is drawn by five of them, which
+# is what makes the ultraviolet worth fitting: it is the extinction curve that
+# a reddened hot star and a cooler unreddened one otherwise trade between them.
+#
+# The blue end stops short of Lyman alpha, which the spectra show absorbed by
+# the interstellar gas in front of the star and which no model here includes;
+# the red end where the long wavelength cameras' calibration gives out.
+IUE_BIN_AA = 100.0
+IUE_RANGE_AA = (1250.0, 3150.0)
+
+# A bin is filled from every spectrum that reaches into it, in sub-bins of this
+# width, and is only used where this much of it was measured. The cameras meet
+# at 1975 A and saturation takes pieces out of the bright stars' spectra, so a
+# bin is seldom covered by one exposure alone.
+IUE_SUBBIN_AA = 10.0
+IUE_MIN_COVER = 0.7
+
+# The resolution of the low dispersion spectra, in A. Neighbouring pixels are
+# sampled closer than this and share their noise, so a bin is worth as many
+# independent measurements as it holds resolution elements, not pixels.
+IUE_RESOLUTION_AA = 6.0
+
+# The calibration systematic, added to every bin. The NEWSIPS absolute scale
+# is good to a few per cent and the cameras are tied to it separately; against
+# TD1 the spectra here agree to within 6%.
+IUE_SYSTEMATIC = 0.05
+
+
+def iue_bands():
+    """The pseudo-passbands the IUE spectra are binned into, blue to red.
+
+    Fixed for the same reason the XP bins are: they are integrated into every
+    grid's file, and a cube built on one set of bins cannot be read with
+    another.
+    """
+    edges = np.arange(IUE_RANGE_AA[0], IUE_RANGE_AA[1] + 1e-6, IUE_BIN_AA)
+
+    return [{'band': f'IUE_{int(round(0.5 * (a + b)))}',
+             'lo_aa': float(a), 'hi_aa': float(b),
+             'wave_um': float(0.5 * (a + b) * 1e-4)}
+            for a, b in zip(edges[:-1], edges[1:])]
+
+
+def is_iue(band):
+    """Whether a band is one of those bins rather than a real filter."""
+    return str(band or '').startswith('IUE_')
+
+
+def read_iue(basepath):
+    """The IUE spectra worth fitting, each as wavelength and flux arrays.
+
+    In Angstrom and per Angstrom, as they were written - the bins are made in
+    those units and converted only once they are numbers.
+    """
+    from astropy.table import Table
+
+    spectra = []
+    for path in sorted(glob.glob(os.path.join(basepath, IUE_FILES))):
+        try:
+            table = Table.read(path)
+        except Exception:
+            continue
+
+        if 'wavelength' not in table.colnames or 'flux' not in table.colnames:
+            continue
+
+        wave = np.asarray(table['wavelength'], dtype=float)
+        flux = np.asarray(table['flux'], dtype=float)
+        err = (np.asarray(table['flux_error'], dtype=float)
+               if 'flux_error' in table.colnames else np.full(len(wave), np.nan))
+
+        good = np.isfinite(wave) & np.isfinite(flux)
+        if good.sum() < 10:
+            continue
+
+        spectra.append({'name': os.path.splitext(os.path.basename(path))[0],
+                        'wave': wave[good], 'flux': flux[good], 'err': err[good]})
+
+    return spectra or None
+
+
+def iue_binned(spectra):
+    """The spectra in those bins, with what each one is worth.
+
+    Every exposure that reaches into a bin contributes, sub-bin by sub-bin, so
+    that a bin split between the two cameras or holed by saturation is the
+    mean over what was measured rather than over whichever exposure happened
+    to be read first.
+
+    Three terms in the error. The noise, counted per resolution element rather
+    than per pixel. The disagreement between exposures, where there are
+    several - the star's own variability, and the cameras' differences, which
+    no amount of noise statistics would show. And the calibration.
+    """
+    out = []
+    for band in iue_bands():
+        edges = np.arange(band['lo_aa'], band['hi_aa'] + 1e-6, IUE_SUBBIN_AA)
+
+        sums = np.zeros(len(edges) - 1)
+        counts = np.zeros(len(edges) - 1)
+        variance, npix, per_spectrum = 0.0, 0, []
+
+        for spectrum in spectra:
+            wave, flux, err = spectrum['wave'], spectrum['flux'], spectrum['err']
+            index = np.digitize(wave, edges) - 1
+            inside = (index >= 0) & (index < len(edges) - 1)
+            if not inside.any():
+                continue
+
+            np.add.at(sums, index[inside], flux[inside])
+            np.add.at(counts, index[inside], 1)
+
+            # Each pixel's error counted once per resolution element it shares
+            step = np.median(np.diff(wave)) if len(wave) > 1 else IUE_RESOLUTION_AA
+            share = max(1.0, IUE_RESOLUTION_AA / step)
+            known = inside & np.isfinite(err) & (err > 0)
+            variance += float(np.sum(err[known] ** 2)) * share
+            npix += int(known.sum())
+
+            # This exposure's own mean, where it covers the bin by itself
+            covered = np.unique(index[inside])
+            if len(covered) >= IUE_MIN_COVER * (len(edges) - 1):
+                per_spectrum.append(float(np.mean(flux[inside])))
+
+        filled = counts > 0
+        if filled.sum() < IUE_MIN_COVER * len(counts):
+            continue
+
+        observed = float(np.mean(sums[filled] / counts[filled]))
+        if not np.isfinite(observed) or observed <= 0:
+            continue
+
+        stat = float(np.sqrt(variance) / npix) if npix else 0.0
+        spread = (float(np.std(per_spectrum, ddof=1) / np.sqrt(len(per_spectrum)))
+                  if len(per_spectrum) > 1 else 0.0)
+
+        out.append(dict(band, spectra=len(per_spectrum),
+                        coverage=float(filled.mean()), observed=observed,
+                        stat_err=stat, spread_err=spread,
+                        err=float(np.sqrt(stat ** 2 + spread ** 2
+                                          + (IUE_SYSTEMATIC * observed) ** 2))))
+
+    return out
+
+
+def iue_points(basepath, points=None, spectra=None):
+    """The IUE spectra as points, in the shape the SED files come in.
+
+    As xp_points() does for Gaia's: a bin is a band and a row like any other,
+    in the fit's units - per micron - and fitted only where asked for.
+    """
+    spectra = spectra if spectra is not None else read_iue(basepath)
+    if not spectra:
+        return []
+
+    points = set(points) if points is not None else None
+    rows = []
+
+    for entry in iue_binned(spectra):
+        name = f"IUE {entry['lo_aa']:.0f}-{entry['hi_aa']:.0f} A"
+        row = {'id': name, 'band': entry['band'], 'used': False,
+               'default': True, 'fittable': True, 'note': None, 'xp': False,
+               'iue': True,
+               'wave_um': entry['wave_um'], 'wave_drawn_um': entry['wave_um'],
+               'flux': entry['observed'] / PER_AA, 'err': entry['err'] / PER_AA,
+               'excess': False}
+
+        row['used'] = row['default'] if points is None else name in points
+        if row['used'] and not row['default']:
+            row['note'] = 'chosen by hand'
+        elif not row['used'] and row['default']:
+            row['note'] = 'turned off'
+
+        rows.append(row)
+
+    return rows
+
+
 # ------------------------------------------------------------ our photometry
 
 # VizieR's designation for a band, as our SED step writes it in the second
@@ -1649,7 +1842,7 @@ def grid_registry():
         return out
 
     for name in sorted(glob.glob(os.path.join(path, '*.h5'))):
-        if name.endswith('.spectra.h5') or name.endswith('.xp.h5'):
+        if name.endswith(('.spectra.h5', '.xp.h5', '.iue.h5')):
             continue
 
         stem = os.path.splitext(os.path.basename(name))[0]
@@ -1702,6 +1895,10 @@ def grid_registry():
         bins = os.path.join(path, entry['name'] + '.xp.h5')
         entry['xp'] = bins if os.path.exists(bins) else None
 
+        # And the IUE bins, the same thing for the ultraviolet
+        bins = os.path.join(path, entry['name'] + '.iue.h5')
+        entry['iue'] = bins if os.path.exists(bins) else None
+
         out[entry['name']] = entry
 
     return out
@@ -1729,6 +1926,7 @@ def offered_grids():
                     'note': ', '.join(_ for _ in (span, grid['description']) if _),
                     'has_spectra': has_spectra(grid['name']),
                     'has_xp': bool(grid.get('xp')),
+                    'has_iue': bool(grid.get('iue')),
                     'axis_logg': grid.get('axis_logg') or 'logg'})
 
     return out
@@ -1995,18 +2193,22 @@ def has_xp(name):
     return bool((grid_registry().get(str(name).lower()) or {}).get('xp'))
 
 
-def load_grid(name, xp=False):
+def load_grid(name, xp=False, iue=False):
     """One grid by name, from the directory or from astroARIADNE's own.
 
     With ``xp``, the Gaia XP bins are loaded alongside the filters and the two
-    answer as one grid - which is all there is to fitting a spectrum here.
+    answer as one grid - which is all there is to fitting a spectrum here. With
+    ``iue``, the IUE bins are, in the same way.
     """
     name = str(name).lower()
     entry = grid_registry().get(name)
     if entry:
         grid = Grid(entry['path'], name=name)
-        if xp and entry.get('xp'):
-            grid = CompositeGrid(grid, Grid(entry['xp'], name=f'{name}-xp'))
+        extras = [Grid(entry[kind], name=f'{name}-{kind}')
+                  for kind, wanted in (('xp', xp), ('iue', iue))
+                  if wanted and entry.get(kind)]
+        if extras:
+            grid = CompositeGrid(grid, *extras)
         return grid
 
     # A directory laid out astroARIADNE's way, being read before it is split
@@ -2303,11 +2505,27 @@ def target_sed_fit(config, basepath='.', outpath=None, selection=None,
         rows = rows + xp_points(basepath, points=selection.get('points'), xp=xp)
         rows.sort(key=lambda r: (r['wave_um'] is None, r['wave_um'] or 0))
 
+    # The IUE spectra, the same way. Nothing in the SED file is made from them,
+    # so nothing leaves the list when they join it.
+    iue = read_iue(basepath) if options.get('iue_fit') else None
+    fit_iue = bool(iue)
+
+    if fit_iue:
+        rows = rows + iue_points(basepath, points=selection.get('points'),
+                                 spectra=iue)
+        rows.sort(key=lambda r: (r['wave_um'] is None, r['wave_um'] or 0))
+    elif options.get('iue_fit'):
+        log("\nThe IUE spectra were asked for, but there are none to fit -"
+            " only the low dispersion ones through the large aperture are")
+
     used = [r for r in rows if r['used']]
     log("\n---- Data points ----\n")
     log(f"{len(used)} of {len(rows)} points from {source}"
         + (f" and {sum(1 for r in rows if is_xp(r['band']))} bins of the Gaia"
-           f" XP spectrum" if fit_xp else ''))
+           f" XP spectrum" if fit_xp else '')
+        + (f" and {sum(1 for r in rows if is_iue(r['band']))} bins of"
+           f" {len(iue)} IUE spectr{'um' if len(iue) == 1 else 'a'}"
+           if fit_iue else ''))
     for r in rows:
         mark = 'fit ' if r['used'] else '   -'
         log(f"  {mark} {r['id']:<34} {r['band'] or '':<18}"
@@ -2341,7 +2559,7 @@ def target_sed_fit(config, basepath='.', outpath=None, selection=None,
     for name in options.get('grids') or ['btsettl']:
         # The bins are loaded whether or not they are fitted: unfitted, they
         # are what the comparison is made against, and that needs the same cube
-        grid = load_grid(name, xp=xp is not None)
+        grid = load_grid(name, xp=xp is not None, iue=fit_iue)
         priors = default_priors(grid, distance, distance_err, av_max)
         # The temperature prior is deliberately the same whatever grid is
         # loaded, so that a grid's extent cannot become the answer
@@ -2360,9 +2578,15 @@ def target_sed_fit(config, basepath='.', outpath=None, selection=None,
 
         missing = sorted({b for b in bands if b not in grid.covers})
         if missing:
-            reason = ('no Gaia XP bins - "manage.py sedgrid --xp" writes them'
-                      if all(is_xp(b) for b in missing)
-                      else f"no model flux for {', '.join(missing)}")
+            if all(is_xp(b) for b in missing):
+                reason = 'no Gaia XP bins - "manage.py sedgrid --xp" writes them'
+            elif all(is_iue(b) for b in missing):
+                reason = 'no IUE bins - "manage.py sedgrid --iue" writes them'
+            elif all(is_xp(b) or is_iue(b) for b in missing):
+                reason = ('no Gaia XP or IUE bins - "manage.py sedgrid --xp" and'
+                          ' "--iue" write them')
+            else:
+                reason = f"no model flux for {', '.join(missing)}"
             log(f"\n{name}: {reason} - skipped")
             continue
 

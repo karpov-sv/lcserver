@@ -233,6 +233,15 @@ The synthetic photometry made from the same spectra leaves the fit, being the sa
             and the Gaia XP spectrum
           </label>
         </div>
+        <div class="form-check form-switch mb-0" id="fit-iue-row" hidden>
+          <input class="form-check-input" type="checkbox" id="fit-iue"
+                 onchange="applyIueChoice()">
+          <label class="form-check-label control-label me-0" for="fit-iue"
+                 title="Fit the IUE ultraviolet spectra in 100 A bins, alongside the photometry.
+Only the low dispersion spectra through the large aperture are used.">
+            and the IUE spectra
+          </label>
+        </div>
         <button class="btn btn-sm btn-outline-primary" onclick="selectAllPoints(true)">All</button>
         <button class="btn btn-sm btn-outline-primary" onclick="selectAllPoints(false)">None</button>
         <span class="spectrum-info" id="fit-point-count"></span>
@@ -852,6 +861,7 @@ The synthetic photometry made from the same spectra leaves the fit, being the sa
  let fitBasePoints = [];
  let fitXpPoints = [];
  let fitXpDerived = [];
+ let fitIuePoints = [];
 
  // Points a restored run named that this file no longer has
  let fitMissing = [];
@@ -869,6 +879,7 @@ The synthetic photometry made from the same spectra leaves the fit, being the sa
              fitBasePoints = data.points || [];
              fitXpPoints = data.xp || [];
              fitXpDerived = data.xp_derived || [];
+             fitIuePoints = data.iue || [];
              // Of the file that was open, and no use for this one
              fitXpDropped = [];
              fitBands = data.bands || [];
@@ -878,6 +889,8 @@ The synthetic photometry made from the same spectra leaves the fit, being the sa
              // before the picker is drawn - what it marks depends on it
              document.getElementById('fit-xp-row').hidden = !fitXpPoints.length;
              if (!fitXpPoints.length) document.getElementById('fit-xp').checked = false;
+             document.getElementById('fit-iue-row').hidden = !fitIuePoints.length;
+             if (!fitIuePoints.length) document.getElementById('fit-iue').checked = false;
 
              buildGridPicker();
              composePoints();
@@ -909,10 +922,17 @@ The synthetic photometry made from the same spectra leaves the fit, being the sa
      return !!(box && !box.disabled && box.checked && fitXpPoints.length);
  }
 
+ function fittingIue() {
+     const box = document.getElementById('fit-iue');
+     return !!(box && !box.disabled && box.checked && fitIuePoints.length);
+ }
+
  // One list, in wavelength, whether or not the bins are in it
  function composePoints() {
-     fitPoints = fittingXp()
-         ? fitBasePoints.concat(fitXpPoints).sort(
+     const extra = (fittingXp() ? fitXpPoints : [])
+         .concat(fittingIue() ? fitIuePoints : []);
+     fitPoints = extra.length
+         ? fitBasePoints.concat(extra).sort(
              (a, b) => (a.wave_um || 0) - (b.wave_um || 0))
          : fitBasePoints;
  }
@@ -953,6 +973,21 @@ The synthetic photometry made from the same spectra leaves the fit, being the sa
          fitXpPoints.forEach(p => fitOn.delete(p.id));
          fitXpDropped.forEach(id => fitOn.add(id));
          fitXpDropped = [];
+     }
+
+     buildPointList();
+     buildGridPicker();
+ }
+
+ // The same for the IUE bins, which replace nothing: they cover a stretch of
+ // the spectrum no point of the file does
+ function applyIueChoice() {
+     composePoints();
+
+     if (fittingIue()) {
+         fitIuePoints.filter(p => p.default).forEach(p => fitOn.add(p.id));
+     } else {
+         fitIuePoints.forEach(p => fitOn.delete(p.id));
      }
 
      buildPointList();
@@ -1007,7 +1042,7 @@ The synthetic photometry made from the same spectra leaves the fit, being the sa
            <span class="spectrum-info">${point.band || ''}</span>
            <span class="spectrum-info">${wavelength}</span>
            <span class="spectrum-info">${residual}</span>
-           <div class="form-check excess-check me-2" ${point.fittable === false || point.xp ? 'hidden' : ''}>
+           <div class="form-check excess-check me-2" ${point.fittable === false || point.xp || point.iue ? 'hidden' : ''}>
              <input class="form-check-input" type="checkbox" id="exc-${n}"
                     ${excessIsOn(point) ? 'checked' : ''}>
              <label class="form-check-label spectrum-info me-0" for="exc-${n}"
@@ -1026,7 +1061,7 @@ The synthetic photometry made from the same spectra leaves the fit, being the sa
          // fitted, so it is there and hidden rather than there and wrong
          const excess = row.querySelector('.excess-check');
          const showExcess = () => {
-             if (point.fittable !== false && !point.xp) {
+             if (point.fittable !== false && !point.xp && !point.iue) {
                  excess.hidden = pointIsOn(point);
              }
          };
@@ -1213,14 +1248,19 @@ The synthetic photometry made from the same spectra leaves the fit, being the sa
      // was asked for the spectrum skips it. Said here rather than left to the
      // log, which is read after the fit rather than before it.
      const withXp = fittingXp();
+     const withIue = fittingIue();
 
      fitGrids.forEach((grid, n) => {
          const on = chosen.length ? chosen.includes(grid.name) : n === 0;
-         const missing = withXp && !grid.has_xp;
+         const lacks = [withXp && !grid.has_xp ? 'XP' : '',
+                        withIue && !grid.has_iue ? 'IUE' : ''].filter(Boolean);
+         const missing = lacks.length > 0;
          const note = [grid.note,
                        grid.has_spectra ? '' : 'no spectra, so no line',
                        grid.has_xp ? ''
                            : 'no Gaia XP bins - "manage.py sedgrid --xp" writes them',
+                       grid.has_iue ? ''
+                           : 'no IUE bins - "manage.py sedgrid --iue" writes them',
                        (grid.axis_logg && grid.axis_logg !== 'logg')
                            ? `second axis is ${grid.axis_logg}, not a gravity,`
                              + ' so the gravity prior is left off it'
@@ -1234,7 +1274,7 @@ The synthetic photometry made from the same spectra leaves the fit, being the sa
                   value="${grid.name}" ${on ? 'checked' : ''}>
            <label class="form-check-label ${missing ? 'text-body-secondary' : ''}"
                   for="grid-${grid.name}" title="${note}">${grid.label}</label>
-           ${missing ? '<span class="spectrum-info ms-1">no XP bins,'
+           ${missing ? `<span class="spectrum-info ms-1">no ${lacks.join(' or ')} bins,`
                        + ' it would be skipped</span>' : ''}
          `;
          host.appendChild(div);
@@ -1272,6 +1312,7 @@ The synthetic photometry made from the same spectra leaves the fit, being the sa
              points: Array.from(fitOn),
              excess: Array.from(excessOn),
              xp_fit: fittingXp(),
+             iue_fit: fittingIue(),
              grids: grids,
              teff_prior: ['loguniform',
                           parseFloat(document.getElementById('fit-teff-lo').value),
@@ -1723,6 +1764,11 @@ The synthetic photometry made from the same spectra leaves the fit, being the sa
      if (box) {
          box.checked = !!(result.options || {}).xp_fit
              || (selection.points || []).some(id => String(id).startsWith('Gaia XP '));
+     }
+     const iueBox = document.getElementById('fit-iue');
+     if (iueBox) {
+         iueBox.checked = !!(result.options || {}).iue_fit
+             || (selection.points || []).some(id => String(id).startsWith('IUE '));
      }
 
      if (selection.points) {

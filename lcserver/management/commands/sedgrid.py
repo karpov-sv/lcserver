@@ -82,6 +82,12 @@ class Command(BaseCommand):
                  'All of them that have spectra if none are named.')
 
         parser.add_argument(
+            '--iue', dest='iue', nargs='*', default=None, metavar='GRID',
+            help="Write each grid's IUE bins beside it, from its spectra, so "
+                 'that IUE ultraviolet spectra can be fitted. All of them that '
+                 'have spectra if none are named.')
+
+        parser.add_argument(
             '--name', dest='name', default=None,
             help='What to call it (default: from the download directory)')
 
@@ -120,7 +126,10 @@ class Command(BaseCommand):
             return self.scatter(options)
 
         if options['xp'] is not None:
-            return self.xp(options)
+            return self.bins(options, 'xp')
+
+        if options['iue'] is not None:
+            return self.bins(options, 'iue')
 
         if options['show'] or not options['split']:
             return self.show()
@@ -351,19 +360,21 @@ class Command(BaseCommand):
             finally:
                 os.unlink(before)
 
-    def xp(self, options):
-        """Write the Gaia XP bins of each grid that has spectra to bin.
+    def bins(self, options, kind):
+        """Write the Gaia XP or IUE bins of each grid that has spectra to bin.
 
-        This is what lets an XP spectrum be fitted rather than only looked at:
+        This is what lets a spectrum be fitted rather than only looked at:
         with the bins in a cube the fit interpolates them at its own parameters,
         exactly as it does a filter, and nothing has to stand in for the fit.
         A grid with no spectra has nothing to bin and is skipped, which is said
         rather than passed over.
         """
-        from lcserver.ingest import xp
+        from importlib import import_module
+
+        builder = import_module(f'lcserver.ingest.{kind}')
 
         registry = sedfit.grid_registry()
-        wanted = options['xp'] or sorted(registry)
+        wanted = options[kind] or sorted(registry)
         unknown = [_ for _ in wanted if _ not in registry]
         if unknown:
             raise CommandError(f"no grid called {', '.join(unknown)}")
@@ -377,7 +388,7 @@ class Command(BaseCommand):
                 self.stdout.write(f'{name}: no spectra to bin')
                 continue
 
-            out = os.path.join(target, f'{name}.xp.h5')
+            out = os.path.join(target, f'{name}.{kind}.h5')
             if os.path.exists(out) and not options['force']:
                 self.stdout.write(f'{name}: {out} is already there '
                                   f'- --force to write over it')
@@ -385,9 +396,9 @@ class Command(BaseCommand):
 
             self.stdout.write(f'\n{name}:')
             try:
-                count = xp.build(entry['spectra'], out, name,
-                                 label=entry.get('label'),
-                                 verbose=self.stdout.write)
+                count = builder.build(entry['spectra'], out, name,
+                                      label=entry.get('label'),
+                                      verbose=self.stdout.write)
             except Exception as e:
                 self.stdout.write(f'  failed: {type(e).__name__}: {e}')
                 continue
@@ -395,8 +406,11 @@ class Command(BaseCommand):
             self.stdout.write(f'  {count} models written to {out}'
                               f' ({os.path.getsize(out) / 1e6:.1f} MB)')
             try:
-                xp.compare(out, entry['spectra'], name,
-                           verbose=self.stdout.write)
+                if kind == 'xp':
+                    builder.compare(out, entry['spectra'], name,
+                                    verbose=self.stdout.write)
+                else:
+                    builder.compare(out, name, verbose=self.stdout.write)
             except Exception as e:
                 self.stdout.write(f'  could not compare: {type(e).__name__}: {e}')
 
