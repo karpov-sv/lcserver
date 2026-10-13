@@ -377,17 +377,19 @@ let dataLoaded = false;
 // the plot. Dates by default, as they are what one usually wants to read.
 let timeAxisMode = 'date';
 
-// Convert MJD to JavaScript Date object
+// Convert MJD to a UT date string, 'YYYY-MM-DD HH:MM:SS.sss'
 // MJD 0 = November 17, 1858, 00:00 UTC
 // JavaScript uses milliseconds since January 1, 1970, 00:00 UTC
+// Plotly takes such a string as it is, while a Date object it would shift to
+// the browser's local time zone, off the UT the axis is labelled with
 function mjdToDate(mjd) {
     // Days between Nov 17, 1858 and Jan 1, 1970 = 40587 days
     const daysSinceEpoch = mjd - 40587.0;
     const milliseconds = daysSinceEpoch * 86400000; // 86400000 ms per day
-    return new Date(milliseconds);
+    return new Date(milliseconds).toISOString().replace('T', ' ').replace('Z', '');
 }
 
-// Convert MJD array to Date objects (faster than ISO strings)
+// Convert MJD array to UT date strings
 // Only computed when needed, cached in series data
 function ensureDatetimes(series) {
     if (!series._datetimes) {
