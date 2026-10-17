@@ -2,7 +2,7 @@ from django import template
 from django.template.defaultfilters import stringfilter
 from django.utils.safestring import mark_safe
 from django.utils.html import escape
-from django.urls import reverse
+from django.urls import reverse, NoReverseMatch
 from django.conf import settings
 
 import os
@@ -41,6 +41,39 @@ def target_cache_link(m, target=None):
     return r"<a href='" + url + "'>" + name + r"</a>"
 
 
+def target_markdown_link(m, target=None, base=''):
+    """A `[text](where)` link in a log, for a link that reads as something else.
+
+    Where may be a web address, a `file:` or a `cache:` name as the bare forms
+    of them below take, or `page:` and the name of one of the target's own
+    pages - `page:target_references` - which is the only way for a log to point
+    at one, as the step writing it does not know the address it will be read
+    at. Anything else is left as it was written.
+    """
+    text, where = m.group(1), m.group(2)
+
+    if re.match(r'https?://', where):
+        return f"<a href='{where}' target='_blank' rel='noopener'>{text}</a>"
+
+    scheme, _, name = where.partition(':')
+
+    try:
+        if scheme == 'file':
+            url = reverse('target_files',
+                          kwargs={'id': target.id, 'path': os.path.join(base, name)})
+        elif scheme == 'cache':
+            url = reverse('target_files',
+                          kwargs={'id': target.id, 'path': os.path.join('cache', name)})
+        elif scheme == 'page':
+            url = reverse(name, kwargs={'id': target.id})
+        else:
+            return m.group(0)
+    except NoReverseMatch:
+        return text
+
+    return f"<a href='{url}'>{text}</a>"
+
+
 @register.simple_tag
 def target_file_contents(target, filename, highlight=False):
     path = os.path.join(target.path(), filename)
@@ -75,6 +108,30 @@ def target_file_contents(target, filename, highlight=False):
                           r"\1<span class='text-warning'>\2</span>",
                           contents, flags=re.MULTILINE)
 
+        # First, so that the passes below see the address only inside the
+        # link made of it, where they leave it alone. The text may not hold
+        # brackets and the address may not hold spaces or parentheses, which
+        # keeps a bracketed name in a title - '[GKM2012] WS1' - from being
+        # taken for the start of one.
+        contents = re.sub(r"\[([^\[\]\n]+)\]\(([^()\s]+)\)",
+                          partial(target_markdown_link, target=target,
+                                  base=os.path.dirname(filename)),
+                          contents)
+
+        # Bold and italic, as **text** and *text*, within a line. Strict
+        # about what the stars may touch, as logs are full of them used
+        # otherwise: SIMBAD's types (*|Em*|Er*), its names (V* AF And) and
+        # the conversion formulas (0.6365*x). A star may not open after a
+        # letter or before a space, nor close after a space or before a letter,
+        # and the text may not begin with the bar SIMBAD separates its types
+        # with - which leaves every star in the logs written so far alone.
+        # One that is meant literally inside the text is written \*.
+        contents = re.sub(r"(?<![\w*\\])\*\*(?=[^\s*])(.+?)(?<=[^\s\\*])\*\*(?![\w*])",
+                          r"<b>\1</b>", contents)
+        contents = re.sub(r"(?<![\w*\\])\*(?=[^\s*|])(.+?)(?<=[^\s\\*])\*(?![\w*])",
+                          r"<i>\1</i>", contents)
+        contents = contents.replace('\\*', '*')
+
         # A plus is in the character class because survey identifiers carry
         # one: an APOGEE spectrum is named for its 2MASS designation, and half
         # of those are a declination that is not negative. Without it the name
@@ -96,7 +153,10 @@ def target_file_contents(target, filename, highlight=False):
         # brackets ending the match cannot occur inside a URL any more. The
         # last character may not be punctuation, so that a URL at the end of a
         # sentence, or in brackets, does not swallow what closes it.
-        contents = re.sub(r"""(https?://[^\s<>"']+[^\s<>"'.,;:!?)\]}])""",
+        #
+        # Nor may it follow a quote, which is where an address stands that has
+        # been made a link of already, as the href of a [text](where) one.
+        contents = re.sub(r"""(?<!')(https?://[^\s<>"']+[^\s<>"'.,;:!?)\]}])""",
                           r"<a href='\1' target='_blank' rel='noopener'>\1</a>",
                           contents, flags=re.MULTILINE)
 
