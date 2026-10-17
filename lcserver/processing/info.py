@@ -550,9 +550,25 @@ def target_info(config, basepath=None, verbose=True, show=False):
 
     log(f"Acquiring the info on {config['target_name']}")
 
-    # Resolve
+    # Resolve. Cached, as the name resolvers are the one service every step of
+    # every target depends on, and are down often enough to fail a run that
+    # needs nothing else from them. A failure is never cached - it is not an
+    # answer about the name.
+    safe_name = re.sub(r'[^\w\-.]', '_', config['target_name'])
+
+    with cached_votable_query(f"resolve_{safe_name}.vot", basepath, log,
+                              'name resolver', refresh=refresh_cache) as cache:
+        if not cache.hit:
+            target = resolve.resolve(config['target_name'])
+
+            if target is not None:
+                cache.save(Table({'ra': [target.ra.deg], 'dec': [target.dec.deg]}))
+        elif cache.data is not None:
+            target = SkyCoord(cache.data['ra'][0], cache.data['dec'][0], unit='deg')
+        else:
+            target = None
+
     try:
-        target = resolve.resolve(config['target_name'])
         config['target_ra'] = target.ra.deg
         config['target_dec'] = target.dec.deg
 
@@ -568,9 +584,6 @@ def target_info(config, basepath=None, verbose=True, show=False):
 
     log("\n---- SIMBAD ----\n")
 
-    # Create safe name for caching
-    import re
-    safe_name = re.sub(r'[^\w\-.]', '_', config['target_name'])
     cache_name = f"simbad_{safe_name}.vot"
 
     with cached_votable_query(cache_name, basepath, log, 'SIMBAD', refresh=refresh_cache) as cache:
