@@ -599,6 +599,13 @@ def target_info(config, basepath=None, verbose=True, show=False):
 
             if r['sp_type']:
                 log(f"SpType = {r['sp_type']}")
+
+            # Every catalogue that has the object, which tells where else to
+            # look for it. SIMBAD pads the numbers into columns - 'BD+82    50'
+            # - which reads oddly in a list and resolves just as well without
+            if 'ids' in r.colnames and r['ids']:
+                ids = [' '.join(_.split()) for _ in str(r['ids']).split('|')]
+                log(f"\nIdentifiers ({len(ids)}): " + ", ".join(ids))
             # if r['Distance_distance']:
             #     log(f"Dist = {r['Distance_distance']:.2f} +{r['Distance_perr']:.2f} -{-r['Distance_merr']:.2f} {r['Distance_unit']}")
 
