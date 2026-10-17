@@ -181,6 +181,11 @@ AAVSO_TOKEN = config('AAVSO_TOKEN', default='')
 # has no key and finishes with no data.
 ATLAS_TOKEN = config('ATLAS_TOKEN', default='')
 
+# The key ADS is asked with, for the citation counts and arXiv identifiers of
+# the papers SIMBAD lists for a target. Keys come from the account settings
+# page at ui.adsabs.harvard.edu. Left unset, the list is SIMBAD's alone.
+ADS_TOKEN = config('ADS_TOKEN', default='')
+
 
 # Messages
 from django.contrib.messages import constants as messages

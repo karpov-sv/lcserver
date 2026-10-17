@@ -284,6 +284,7 @@ Read from the environment or a `.env` file, via `python-decouple`:
 | `CELERY_CONCURRENCY` | how many sources are acquired at once, default `4` |
 | `AAVSO_TOKEN` | key for the AAVSO API; without it the AAVSO step finds nothing |
 | `ATLAS_TOKEN` | key for the ATLAS forced photometry server; without it the ATLAS step finds nothing |
+| `ADS_TOKEN` | key for the ADS API, for citation counts and arXiv links in the reference list; without it the list is SIMBAD's alone |
 
 The sources of one target are acquired in parallel, so `CELERY_CONCURRENCY` is
 also the number of simultaneous queries pointed at external services. Several

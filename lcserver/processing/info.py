@@ -24,6 +24,7 @@ from astroquery.vizier import Vizier
 from stdpipe import catalogs, resolve, plots
 
 from ..surveys import survey_source, get_all_output_files, KIND_ALWAYS
+from . import references
 from .utils import (cleanup_paths, cached_votable_query, write_spectrum,
                     log_bands, log_conversion, assumed_color, plot_with_errors,
                     r_to_g, R_TO_G_FORMULA,
@@ -483,7 +484,8 @@ DUST_3D_MAPS = [
     output_files=['info.log', 'galaxy_map.png', 'dust_3d.png', 'ps1.vot',
                   'ps1.txt', 'ps1.png', 'gaia.vot', 'gaia.txt', 'gaia.png',
                   'gaia_xp.png', 'gaia_xp.vot', 'gaia_xp.txt',
-                  'gaia_rvs.png', 'gaia_rvs.vot', 'gaia_rvs.txt'],
+                  'gaia_rvs.png', 'gaia_rvs.vot', 'gaia_rvs.txt',
+                  'references.vot'],
     button_text='Get Target Info',
     button_class='btn-info',
     # Coordinates every source queries by, and the colours they convert with
@@ -619,6 +621,10 @@ def target_info(config, basepath=None, verbose=True, show=False):
             if 'ids' in r.colnames and r['ids']:
                 ids = [' '.join(_.split()) for _ in str(r['ids']).split('|')]
                 log(f"\nIdentifiers ({len(ids)}): " + ", ".join(ids))
+
+            # The papers about it, for the list on the target page
+            references.acquire(str(r['main_id']), safe_name, basepath, log,
+                               refresh=refresh_cache)
             # if r['Distance_distance']:
             #     log(f"Dist = {r['Distance_distance']:.2f} +{r['Distance_perr']:.2f} -{-r['Distance_merr']:.2f} {r['Distance_unit']}")
 

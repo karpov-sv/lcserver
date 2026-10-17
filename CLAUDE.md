@@ -184,6 +184,8 @@ User polls task status ← AJAX updates ← Task writes logs/files → Database 
 - `/targets/{id}/view/{path}` - View file inline (no download prompt)
 - `/targets/{id}/download/{path}` - Download file as attachment
 - `/targets/{id}/spectrum/` - SED viewer and photosphere fitting
+- `/targets/{id}/references/` - every paper SIMBAD links to the target, ranked
+  by how much each is about it (`views_references.py`, `processing/references.py`)
 
 #### Forms (`lcserver/forms.py`)
 

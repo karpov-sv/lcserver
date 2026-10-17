@@ -1,0 +1,187 @@
+{% extends "template.html" %}
+
+{% block ptitle %}References : Target {{ target_id }} : LCServer{% endblock %}
+
+{% block title %}References{% endblock %}
+
+{% block head %}
+<style>
+.references-table th[data-sort] {
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.references-table th[data-sort]::after {
+    content: ' \2195';
+    color: var(--bs-secondary-color);
+}
+
+.references-table summary {
+    color: var(--bs-secondary-color);
+    font-size: 0.875em;
+}
+
+.references-table .abstract {
+    max-width: 60em;
+}
+</style>
+{% endblock %}
+
+{% block content %}
+
+<nav aria-label="breadcrumb">
+  <ol class="breadcrumb">
+    <li class="breadcrumb-item">
+      <a href="{% url 'targets' id=target_id %}"><span class="fa fa-angle-left text-body"></span></a>
+      <a href="{% url 'targets' id=target_id %}">Target {{ target_id }}: {{ target.name }}</a>
+    </li>
+    <li class="breadcrumb-item active">References</li>
+  </ol>
+</nav>
+
+{% if not references %}
+  <div class="alert alert-warning">
+    No references for this target yet. They are fetched from SIMBAD by the info
+    step, for the SIMBAD object at the target's position.
+  </div>
+{% else %}
+
+  <p class="text-muted small mb-2">
+    The {{ references|length }} paper{{ references|pluralize }} SIMBAD links to
+    this object{% if has_citations %}, with citation counts from ADS{% endif %}.
+    Ranked by how much each is about it: naming it in the title, abstract or
+    keywords counts most, then how often it is named, against how many other
+    objects the paper covers{% if has_citations %}, then citations{% endif %}.
+    Where SIMBAD found the name:
+    {% for letter, bit, meaning in ref_flags %}<span class="font-monospace">{{ letter }}</span> {{ meaning }}{% if not forloop.last %}, {% endif %}{% endfor %};
+    recorded fully only since 2008.
+  </p>
+
+  <div class="d-flex flex-wrap align-items-center gap-3 mb-2 small">
+    <input type="search" id="ref-search" class="form-control form-control-sm" style="max-width: 20em"
+           placeholder="Search titles, authors, abstracts">
+
+    <div class="form-check mb-0">
+      <input class="form-check-input" type="checkbox" id="ref-focus">
+      <label class="form-check-label" for="ref-focus">Named in title, abstract or keywords</label>
+    </div>
+
+    <div class="d-flex align-items-center gap-1">
+      <label for="ref-nobj">Papers on at most</label>
+      <select id="ref-nobj" class="form-select form-select-sm" style="width: auto">
+        <option value="">any number of</option>
+        <option value="1">1</option>
+        <option value="10">10</option>
+        <option value="100">100</option>
+        <option value="1000">1000</option>
+      </select>
+      <span>objects</span>
+    </div>
+
+    <span id="ref-shown" class="ms-auto text-muted"></span>
+  </div>
+
+  <table class="table table-sm references-table small align-top">
+    <thead>
+      <tr>
+        <th data-sort="score" data-numeric title="Sort by relevance">Rank</th>
+        <th data-sort="year" data-numeric title="Sort by year">Year</th>
+        <th>Paper</th>
+        <th data-sort="nobj" data-numeric title="Sort by how many objects the paper covers">Objects</th>
+        {% if has_citations %}
+          <th data-sort="cites" data-numeric title="Sort by citations">Cited</th>
+        {% endif %}
+        <th>Links</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for ref in references %}
+        <tr data-score="{{ ref.score }}" data-year="{{ ref.year }}" data-nobj="{{ ref.nbobject }}"
+            data-cites="{{ ref.citations }}" data-focus="{{ ref.focus|yesno:'1,0' }}">
+          <td class="text-muted">{{ forloop.counter }}</td>
+          <td>{{ ref.year }}</td>
+          <td class="ref-text">
+            <div class="{% if ref.focus %}fw-bold{% endif %}">{{ ref.title }}</div>
+            <div class="text-muted">
+              {{ ref.author_list }}{% if ref.journal %} &mdash; {{ ref.journal }}{% if ref.volume %} {{ ref.volume }}{% endif %}{% if ref.page %}, {{ ref.page }}{% endif %}{% endif %}
+            </div>
+            <div>
+              {% include "references_flags.html" %}
+              {% if ref.ref_raw_id %}<span class="text-muted ms-1" title="What the paper calls it">as {{ ref.ref_raw_id }}</span>{% endif %}
+            </div>
+            {% if ref.abstract %}
+              <details>
+                <summary>Abstract</summary>
+                <div class="abstract">{{ ref.abstract }}</div>
+              </details>
+            {% endif %}
+          </td>
+          <td class="text-end">{{ ref.nbobject }}</td>
+          {% if has_citations %}
+            <td class="text-end">{% if ref.citations >= 0 %}{{ ref.citations }}{% endif %}</td>
+          {% endif %}
+          <td class="text-nowrap">
+            <a href="https://ui.adsabs.harvard.edu/abs/{{ ref.bibcode|urlencode }}" target="_blank" title="{{ ref.bibcode }}">ADS</a>
+            {% if ref.doi %}<a href="https://doi.org/{{ ref.doi }}" target="_blank" class="ms-1">DOI</a>{% endif %}
+            {% if ref.arxiv %}<a href="https://arxiv.org/abs/{{ ref.arxiv }}" target="_blank" class="ms-1">arXiv</a>{% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <script>
+  (function() {
+    const tbody = document.querySelector('.references-table tbody');
+    const rows = Array.from(tbody.rows);
+    const search = document.getElementById('ref-search');
+    const focus = document.getElementById('ref-focus');
+    const nobj = document.getElementById('ref-nobj');
+    const shown = document.getElementById('ref-shown');
+
+    // Searched as a whole, abstract included, once rather than on every keystroke
+    rows.forEach(row => {
+      row._text = row.querySelector('.ref-text').textContent.toLowerCase();
+    });
+
+    function filter() {
+      const words = search.value.toLowerCase().split(/\s+/).filter(Boolean);
+      const limit = nobj.value ? parseInt(nobj.value) : null;
+      let count = 0;
+
+      rows.forEach(row => {
+        const visible = words.every(w => row._text.includes(w))
+          && (!focus.checked || row.dataset.focus === '1')
+          && (limit === null || parseInt(row.dataset.nobj) <= limit);
+
+        row.hidden = !visible;
+        count += visible;
+      });
+
+      shown.textContent = count === rows.length ? `${count} papers` : `${count} of ${rows.length} papers`;
+    }
+
+    // A second click on the same column turns the order round. Relevance,
+    // year and citations start from the top, the number of objects from the
+    // fewest - the most focused papers first, whichever is asked for.
+    let key = 'score', descending = true;
+
+    document.querySelectorAll('.references-table th[data-sort]').forEach(th => {
+      th.addEventListener('click', () => {
+        const k = th.dataset.sort;
+        descending = k === key ? !descending : k !== 'nobj';
+        key = k;
+
+        rows.sort((a, b) => (parseFloat(a.dataset[key]) - parseFloat(b.dataset[key])) * (descending ? -1 : 1));
+        rows.forEach(row => tbody.appendChild(row));
+      });
+    });
+
+    [search, focus, nobj].forEach(el => el.addEventListener('input', filter));
+    filter();
+  })();
+  </script>
+
+{% endif %}
+
+{% endblock %}

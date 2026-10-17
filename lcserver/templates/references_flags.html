@@ -1,0 +1,3 @@
+{# Where a paper names the object, as SIMBAD's letters, each explained on hover #}
+<span class="font-monospace text-nowrap{% if not ref.focus %} text-muted{% endif %}"
+      title="Named in {% for letter, meaning in ref.flags %}{{ meaning }}{% if not forloop.last %}, {% endif %}{% empty %}- not recorded{% endfor %}; {{ ref.obj_freq }} time{{ ref.obj_freq|pluralize }}, among {{ ref.nbobject }} object{{ ref.nbobject|pluralize }}">[{% for letter, meaning in ref.flags %}{{ letter }}{% endfor %},{{ ref.obj_freq }}]</span>
