@@ -48,7 +48,7 @@
 
   <p class="text-muted small mb-2">
     The {{ references|length }} paper{{ references|pluralize }} SIMBAD links to
-    this object{% if has_citations %}, with citation counts from ADS{% endif %}.
+    this object{% if has_citations %}, with citation counts and the archives holding their data from ADS{% endif %}.
     Ranked by how much each is about it: naming it in the title, abstract or
     keywords counts most, then how often it is named, against how many other
     objects the paper covers{% if has_citations %}, then citations{% endif %}.
@@ -124,6 +124,15 @@
             <a href="https://ui.adsabs.harvard.edu/abs/{{ ref.bibcode|urlencode }}" target="_blank" title="{{ ref.bibcode }}">ADS</a>
             {% if ref.doi %}<a href="https://doi.org/{{ ref.doi }}" target="_blank" class="ms-1">DOI</a>{% endif %}
             {% if ref.arxiv %}<a href="https://arxiv.org/abs/{{ ref.arxiv }}" target="_blank" class="ms-1">arXiv</a>{% endif %}
+            {% if ref.datasets %}
+              <div class="text-muted">
+                Data:
+                {% for archive, count, url in ref.datasets %}
+                  <a href="{{ url }}" target="_blank"
+                     title="{{ count }} dataset{{ count|pluralize }} in {{ archive }}, as ADS lists them">{{ archive }}</a>
+                {% endfor %}
+              </div>
+            {% endif %}
           </td>
         </tr>
       {% endfor %}

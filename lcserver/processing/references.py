@@ -76,8 +76,17 @@ COLUMNS = {
     'doi': (str, ''), 'abstract': (str, ''), 'nbobject': (int, 0),
     'obj_freq': (int, 0), 'ref_flag': (int, 0), 'ref_raw_id': (str, ''),
     'authors': (str, ''), 'nauthors': (int, 0),
-    'citations': (int, -1), 'arxiv': (str, ''),
+    'citations': (int, -1), 'arxiv': (str, ''), 'data': (str, ''),
 }
+
+# Where ADS sends a reader for the data of a paper in one archive: a redirect
+# to that archive's own page for the paper, which needs no key and no request
+# of ours to know the address of
+ADS_GATEWAY = 'https://ui.adsabs.harvard.edu/link_gateway/{bibcode}/{archive}'
+
+# Archives ADS lists for a paper that hold the objects it names rather than
+# data from it, which the list of references is already made from
+ADS_NOT_DATA = {'SIMBAD', 'NED'}
 
 
 def _tap(query):
@@ -159,7 +168,16 @@ def query_simbad(main_id):
 
 
 def query_ads(bibcodes, token):
-    """Citation counts and arXiv identifiers from ADS, by bibcode."""
+    """Citation counts, arXiv identifiers and data archives from ADS, by bibcode.
+
+    The archives as ADS names them with how many datasets each holds -
+    'MAST:1|ESO:8' - which is all a link to them needs: see ADS_GATEWAY.
+
+    In bigquery requests of up to ADS_CHUNK bibcodes, which ADS allows a
+    hundred of a day, against five thousand of the ordinary search. One per
+    target, then, where the ordinary search would want one per paper, and the
+    cache keeps it to one per target until it is refreshed.
+    """
     result = {}
 
     for start in range(0, len(bibcodes), ADS_CHUNK):
@@ -167,7 +185,7 @@ def query_ads(bibcodes, token):
 
         res = requests.post(
             ADS_BIGQUERY,
-            params={'q': '*:*', 'fl': 'bibcode,citation_count,identifier',
+            params={'q': '*:*', 'fl': 'bibcode,citation_count,identifier,data',
                     'rows': len(chunk)},
             headers={'Authorization': f'Bearer {token}',
                      'Content-Type': 'big-query/csv'},
@@ -178,7 +196,8 @@ def query_ads(bibcodes, token):
             arxiv = [_[6:] for _ in doc.get('identifier', [])
                      if _.startswith('arXiv:')]
             result[doc['bibcode']] = (doc.get('citation_count', 0),
-                                      arxiv[0] if arxiv else '')
+                                      arxiv[0] if arxiv else '',
+                                      '|'.join(doc.get('data', [])))
 
     return result
 
@@ -213,6 +232,11 @@ def acquire(main_id, safe_name, basepath, log, refresh=False):
     if token:
         with cached_votable_query(f"ads_refs_{safe_name}.vot", basepath, log,
                                   'ADS', refresh=refresh) as cache:
+            # Written before the archives were asked for, and so without them
+            if cache.hit and cache.data is not None and 'data' not in cache.data.colnames:
+                log("The cached ADS reply has no data archives, asking again")
+                cache.invalidate()
+
             if not cache.hit:
                 try:
                     ads = query_ads([str(_) for _ in refs['bibcode']], token)
@@ -220,6 +244,7 @@ def acquire(main_id, safe_name, basepath, log, refresh=False):
                         'bibcode': np.array(list(ads.keys()), dtype=str),
                         'citations': np.array([_[0] for _ in ads.values()], dtype=int),
                         'arxiv': np.array([_[1] for _ in ads.values()], dtype=str),
+                        'data': np.array([_[2] for _ in ads.values()], dtype=str),
                     }))
                 except Exception as e:
                     log(f"Error: could not reach ADS: {e}")
@@ -236,6 +261,8 @@ def acquire(main_id, safe_name, basepath, log, refresh=False):
                                  for row in known]
             refs['arxiv'] = np.array([str(row['arxiv']) if row is not None else ''
                                       for row in known], dtype=str)
+            refs['data'] = np.array([str(row['data']) if row is not None else ''
+                                     for row in known], dtype=str)
 
     refs.write(os.path.join(basepath, REFERENCES_FILE), format='votable',
                overwrite=True)
@@ -285,6 +312,21 @@ def plain(text):
     return ' '.join(text.split())
 
 
+def datasets(bibcode, data):
+    """The archives holding data of a paper, as (archive, count, link) tuples."""
+    result = []
+
+    for entry in filter(None, data.split('|')):
+        archive, _, count = entry.partition(':')
+
+        if archive not in ADS_NOT_DATA:
+            result.append((archive, int(count) if count.isdigit() else 0,
+                           ADS_GATEWAY.format(bibcode=quote(bibcode, safe=''),
+                                              archive=quote(archive, safe=''))))
+
+    return result
+
+
 def flags(ref_flag):
     """Where a paper names the object, as SIMBAD's letters and their meanings."""
     return [(letter, meaning) for letter, bit, meaning in REF_FLAGS
@@ -298,6 +340,11 @@ def references(refs):
 
     for i in np.argsort(-score, kind='stable'):
         row = {name: refs[name][i].item() for name in refs.colnames}
+
+        # A list written before a column was added has it at its filler
+        for name, (_, filler) in COLUMNS.items():
+            row.setdefault(name, filler)
+
         authors = row['authors'].split('; ') if row['authors'] else []
         first = authors[0].split()[0].title() if authors else ''
 
@@ -311,6 +358,7 @@ def references(refs):
             ' et al.' if row['nauthors'] > len(authors) else '')
         row['citation'] = (f"{first}{' et al.' if row['nauthors'] > 1 else ''} "
                            f"{row['year']}").strip()
+        row['datasets'] = datasets(row['bibcode'], row['data'])
         result.append(row)
 
     return result

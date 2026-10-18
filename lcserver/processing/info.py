@@ -622,9 +622,13 @@ def target_info(config, basepath=None, verbose=True, show=False):
                 ids = [' '.join(_.split()) for _ in str(r['ids']).split('|')]
                 log(f"\nIdentifiers ({len(ids)}): " + ", ".join(ids))
 
-            # The papers about it, for the list on the target page
-            references.acquire(str(r['main_id']), safe_name, basepath, log,
-                               refresh=refresh_cache)
+            # The papers about it, for the list on the target page. Nothing
+            # else here depends on them, so a failure is reported and passed
+            try:
+                references.acquire(str(r['main_id']), safe_name, basepath, log,
+                                   refresh=refresh_cache)
+            except Exception as e:
+                log(f"Error: could not list the references: {e}")
             # if r['Distance_distance']:
             #     log(f"Dist = {r['Distance_distance']:.2f} +{r['Distance_perr']:.2f} -{-r['Distance_merr']:.2f} {r['Distance_unit']}")
 
