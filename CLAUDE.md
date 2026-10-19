@@ -186,6 +186,9 @@ User polls task status ← AJAX updates ← Task writes logs/files → Database 
 - `/targets/{id}/spectrum/` - SED viewer and photosphere fitting
 - `/targets/{id}/references/` - every paper SIMBAD links to the target, ranked
   by how much each is about it (`views_references.py`, `processing/references.py`)
+- `/targets/{id}/catalogues/` - every VizieR catalogue with an entry at the
+  target, those of the papers about it first (`views_references.py`,
+  `processing/vizier.py`)
 
 #### Forms (`lcserver/forms.py`)
 

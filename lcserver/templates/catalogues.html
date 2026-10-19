@@ -1,0 +1,311 @@
+{% extends "template.html" %}
+
+{% block ptitle %}Catalogues : Target {{ target_id }} : LCServer{% endblock %}
+
+{% block title %}Catalogues{% endblock %}
+
+{% block head %}
+<style>
+.catalogues-table th[data-sort] {
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.catalogues-table th[data-sort]::after {
+    content: ' \2195';
+    color: var(--bs-secondary-color);
+}
+
+.catalogues-table .entries-toggle {
+    display: inline-block;
+    margin-left: 0.4em;
+    padding: 0 0.5em;
+    border: 1px solid var(--bs-border-color);
+    border-radius: 1em;
+    font-size: 0.9em;
+    text-decoration: none;
+    white-space: nowrap;
+}
+
+.catalogues-table .entries-toggle:hover,
+.catalogues-table .entries-toggle.open {
+    background: var(--bs-primary-bg-subtle);
+    border-color: var(--bs-primary-border-subtle);
+}
+
+.catalogues-table .entries-toggle .fa {
+    transition: transform 0.15s;
+}
+
+.catalogues-table .entries-toggle.open .fa {
+    transform: rotate(90deg);
+}
+
+/* The entries set off from the catalogues: a tinted band under the row they
+   belong to, each table in it marked down its left edge */
+.catalogues-table .entries > td {
+    background: var(--bs-tertiary-bg);
+    padding: 0.5rem 0.75rem;
+}
+
+.catalogues-table .entries-block {
+    border-left: 3px solid var(--bs-primary-border-subtle);
+    padding-left: 0.5rem;
+}
+
+.catalogues-table .entries-block + .entries-block {
+    margin-top: 0.75rem;
+}
+
+.catalogues-table .entries-block table {
+    --bs-table-bg: var(--bs-body-bg);
+}
+
+.catalogues-table .entries-table {
+    overflow: auto;
+    max-height: 30em;
+    /* Takes the width of the cell rather than giving it its own: a table
+       sizes its columns to their content, scrolling or not, and a hundred
+       columns of Gaia epoch photometry would widen the whole page */
+    width: 0;
+    min-width: 100%;
+}
+
+.catalogues-table .entries-table table {
+    width: auto;
+}
+
+.catalogues-table .entries-table th {
+    position: sticky;
+    top: 0;
+    background: var(--bs-body-bg);
+    white-space: nowrap;
+}
+</style>
+{% endblock %}
+
+{% block content %}
+
+<nav aria-label="breadcrumb">
+  <ol class="breadcrumb">
+    <li class="breadcrumb-item">
+      <a href="{% url 'targets' id=target_id %}"><span class="fa fa-angle-left text-body"></span></a>
+      <a href="{% url 'targets' id=target_id %}">Target {{ target_id }}: {{ target.name }}</a>
+    </li>
+    <li class="breadcrumb-item active">Catalogues</li>
+  </ol>
+</nav>
+
+{% if not catalogues %}
+  <div class="alert alert-warning">
+    No catalogues for this target yet. They are found by the info step, with a
+    search of every VizieR catalogue at the target's position.
+  </div>
+{% else %}
+
+  <p class="text-muted small mb-2">
+    The {{ catalogues|length }} VizieR catalogue{{ catalogues|pluralize }} with an
+    entry within {{ sr|floatformat:0 }} arcsec of the target. Those published with
+    the <a href="{% url 'target_references' id=target_id %}">papers SIMBAD links to it</a>
+    come first, as the references rank them, and the rest in VizieR's order.
+    Tables without coordinates are not searched, and the distance is at the
+    epoch of the catalogue, so a fast-moving star may be missing from the old
+    ones. Up to {{ max_rows }} entries of each table are shown, in the columns
+    VizieR shows by default; the table's name leads to all of them in VizieR.
+  </p>
+
+  {% if errors %}
+    <div class="alert alert-warning small py-2">
+      VizieR reported {{ errors }} error{{ errors|pluralize }} searching its
+      catalogues, so some of them may be missing here.
+    </div>
+  {% endif %}
+
+  <div class="d-flex flex-wrap align-items-center gap-3 mb-2 small">
+    <input type="search" id="cat-search" class="form-control form-control-sm" style="max-width: 20em"
+           placeholder="Search names, titles, tables">
+
+    <div class="form-check mb-0">
+      <input class="form-check-input" type="checkbox" id="cat-cited">
+      <label class="form-check-label" for="cat-cited">From the papers SIMBAD links to it ({{ cited }})</label>
+    </div>
+
+    <div class="form-check mb-0">
+      <input class="form-check-input" type="checkbox" id="cat-journal">
+      <label class="form-check-label" for="cat-journal">Journal tables only</label>
+    </div>
+
+    <div class="btn-group btn-group-sm ms-auto">
+      <button type="button" class="btn btn-outline-secondary" id="entries-expand">Expand all entries</button>
+      <button type="button" class="btn btn-outline-secondary" id="entries-collapse">Collapse all</button>
+    </div>
+
+    <span id="cat-shown" class="text-muted"></span>
+  </div>
+
+  <table class="table table-sm catalogues-table small align-top">
+    <thead>
+      <tr>
+        <th data-sort="rank" data-numeric title="Sort by rank">Rank</th>
+        <th data-sort="year" data-numeric title="Sort by year">Year</th>
+        <th>Catalogue</th>
+        <th>Tables</th>
+        <th data-sort="distance" data-numeric title="Sort by distance to the nearest entry">Distance</th>
+        <th>Paper</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for cat in catalogues %}
+        <tr data-rank="{{ forloop.counter }}" data-year="{{ cat.year|default:0 }}"
+            data-distance="{% if cat.distance is not None %}{{ cat.distance }}{% else %}999{% endif %}"
+            data-cited="{{ cat.reference|yesno:'1,0' }}" data-journal="{{ cat.journal|yesno:'1,0' }}">
+          <td class="text-muted">{{ forloop.counter }}</td>
+          <td>{{ cat.year }}</td>
+          <td class="cat-text">
+            <div>
+              {% if cat.url %}<a href="{{ cat.url }}" target="_blank" class="font-monospace">{{ cat.catalogue }}</a>{% else %}<span class="font-monospace">{{ cat.catalogue }}</span>{% endif %}
+            </div>
+            <div class="fw-bold">{{ cat.title }}</div>
+          </td>
+          <td class="cat-text">
+            {% for table in cat.tables %}
+              <div>
+                <a href="{{ table.link }}" target="_blank" class="font-monospace"
+                   title="Its entries at the target">{{ table.table }}</a>
+                <span class="text-muted">{{ table.description }}</span>
+                {% if table.distance is not None and cat.tables|length > 1 %}<span class="text-muted">({{ table.distance|floatformat:2 }}&Prime;)</span>{% endif %}
+                <a href="#" class="entries-toggle" title="Show the entries here"
+                   data-entries="entries-{{ forloop.parentloop.counter }}-{{ forloop.counter }}"><span class="fa fa-caret-right"></span> {{ table.rows|length }}{% if table.truncated %}+{% endif %} entr{{ table.rows|length|pluralize:"y,ies" }}</a>
+              </div>
+            {% endfor %}
+          </td>
+          <td class="text-end text-nowrap">{% if cat.distance is not None %}{{ cat.distance|floatformat:2 }}&Prime;{% endif %}</td>
+          <td>
+            {% if cat.reference %}
+              {% with ref=cat.reference %}
+                <a href="https://ui.adsabs.harvard.edu/abs/{{ ref.bibcode|urlencode }}" target="_blank" title="{{ ref.title }}">{{ ref.citation }}</a>
+                {% include "references_flags.html" %}
+              {% endwith %}
+            {% elif cat.bibcode %}
+              <a href="https://ui.adsabs.harvard.edu/abs/{{ cat.bibcode|urlencode }}" target="_blank"
+                 class="text-muted" title="A paper SIMBAD does not link to the target">{{ cat.bibcode }}</a>
+            {% endif %}
+          </td>
+        </tr>
+        <tr class="entries" hidden>
+          <td colspan="6">
+            {% for table in cat.tables %}
+              <div id="entries-{{ forloop.parentloop.counter }}-{{ forloop.counter }}" class="entries-block" hidden>
+                <div class="mb-1">
+                  <a href="{{ table.link }}" target="_blank" class="font-monospace">{{ table.table }}</a>
+                  <span class="text-muted">{{ table.description }}</span>
+                </div>
+                <div class="entries-table">
+                <table class="table table-sm table-bordered mb-0">
+                  <thead>
+                    <tr>
+                      {% for field in table.fields %}
+                        <th title="{{ field.description }}">{{ field.name }}{% if field.unit %} <span class="fw-normal text-muted">[{{ field.unit }}]</span>{% endif %}</th>
+                      {% endfor %}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {% for row in table.rows %}
+                      <tr>{% for value in row %}<td class="text-nowrap">{{ value }}</td>{% endfor %}</tr>
+                    {% endfor %}
+                  </tbody>
+                </table>
+                </div>
+                {% if table.truncated %}
+                  <div class="text-muted">The first {{ max_rows }}; <a href="{{ table.link }}" target="_blank">all of them in VizieR</a></div>
+                {% endif %}
+              </div>
+            {% endfor %}
+          </td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <script>
+  (function() {
+    const tbody = document.querySelector('.catalogues-table > tbody');
+    // Each catalogue's row, with the row of its entries below it travelling with it
+    const rows = Array.from(tbody.rows).filter(row => !row.classList.contains('entries'));
+    rows.forEach(row => { row._entries = row.nextElementSibling; });
+
+    // Every block of entries open or closed, and the rows holding them shown
+    // where their catalogue is
+    function setAll(open) {
+      rows.forEach(row => {
+        row._entries.querySelectorAll('.entries-block').forEach(_ => { _.hidden = !open; });
+        row._entries.hidden = !open || row.hidden;
+      });
+
+      document.querySelectorAll('.entries-toggle').forEach(_ => _.classList.toggle('open', open));
+    }
+
+    document.getElementById('entries-expand').addEventListener('click', () => setAll(true));
+    document.getElementById('entries-collapse').addEventListener('click', () => setAll(false));
+
+    document.querySelectorAll('.entries-toggle').forEach(a => {
+      a.addEventListener('click', e => {
+        e.preventDefault();
+        const block = document.getElementById(a.dataset.entries);
+        const holder = block.closest('tr');
+
+        block.hidden = !block.hidden;
+        holder.hidden = !holder.querySelector('.entries-block:not([hidden])');
+        a.classList.toggle('open', !block.hidden);
+      });
+    });
+    const search = document.getElementById('cat-search');
+    const cited = document.getElementById('cat-cited');
+    const journal = document.getElementById('cat-journal');
+    const shown = document.getElementById('cat-shown');
+
+    rows.forEach(row => {
+      row._text = Array.from(row.querySelectorAll('.cat-text')).map(_ => _.textContent).join(' ').toLowerCase();
+    });
+
+    function filter() {
+      const words = search.value.toLowerCase().split(/\s+/).filter(Boolean);
+      let count = 0;
+
+      rows.forEach(row => {
+        const visible = words.every(w => row._text.includes(w))
+          && (!cited.checked || row.dataset.cited === '1')
+          && (!journal.checked || row.dataset.journal === '1');
+
+        row.hidden = !visible;
+        // Hidden with its catalogue, and back only if something in it was open
+        row._entries.hidden = !visible || !row._entries.querySelector('.entries-block:not([hidden])');
+        count += visible;
+      });
+
+      shown.textContent = count === rows.length ? `${count} catalogues` : `${count} of ${rows.length} catalogues`;
+    }
+
+    // A second click on the same column turns the order round. Rank and
+    // distance start from the first and the nearest, year from the newest.
+    let key = 'rank', descending = false;
+
+    document.querySelectorAll('.catalogues-table th[data-sort]').forEach(th => {
+      th.addEventListener('click', () => {
+        const k = th.dataset.sort;
+        descending = k === key ? !descending : k === 'year';
+        key = k;
+
+        rows.sort((a, b) => (parseFloat(a.dataset[key]) - parseFloat(b.dataset[key])) * (descending ? -1 : 1));
+        rows.forEach(row => { tbody.appendChild(row); tbody.appendChild(row._entries); });
+      });
+    });
+
+    [search, cited, journal].forEach(el => el.addEventListener('input', filter));
+    filter();
+  })();
+  </script>
+
+{% endif %}
+
+{% endblock %}

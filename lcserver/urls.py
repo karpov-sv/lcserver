@@ -67,6 +67,7 @@ urlpatterns = [
     path('targets/<int:id>/sed_points/', views_spectrum.sed_points, name='sed_points'),
     path('targets/<int:id>/edit_sed_points/', views_spectrum.edit_sed_points, name='edit_sed_points'),
     path('targets/<int:id>/references/', views_references.target_references, name='target_references'),
+    path('targets/<int:id>/catalogues/', views_references.target_catalogues, name='target_catalogues'),
     path('targets/<int:id>/files/', views.target_files, {'path': ''}, name='target_files'),
     path('targets/<int:id>/files/<path:path>', views.target_files, name='target_files'),
     path('targets/<int:id>/delete/<path:path>', views.target_file_delete, name='target_file_delete'),

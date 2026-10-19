@@ -800,7 +800,8 @@ def shared_cache_dir(basepath):
 
 
 @contextmanager
-def cached_votable_query(cache_name, basepath, log, description, refresh=False):
+def cached_votable_query(cache_name, basepath, log, description, refresh=False,
+                         raw=False):
     """Context manager for cached VOTable queries.
 
     Automatically handles cache checking, directory creation, and saving.
@@ -848,6 +849,10 @@ def cached_votable_query(cache_name, basepath, log, description, refresh=False):
         a survey may be knowingly down, in which case an old cache is still
         better than no data at all - so this is only ever set by an explicit
         request from the user.
+    raw : bool, optional
+        Keep the reply as the bytes it came as rather than as a table: for a
+        VOTable of many tables, which `Table.read` would reduce to its first.
+        `cache.save` then takes bytes and `cache.data` is bytes.
 
     Yields
     ------
@@ -904,7 +909,11 @@ def cached_votable_query(cache_name, basepath, log, description, refresh=False):
             os.makedirs(os.path.join(basepath, 'cache'), exist_ok=True)
 
             # Save to cache
-            data.write(cache_path, format='votable', overwrite=True)
+            if raw:
+                with open(cache_path, 'wb') as f:
+                    f.write(data)
+            else:
+                data.write(cache_path, format='votable', overwrite=True)
             self.data = data
             self._saved = True
             log(f"Cached {description} data to cache:{cache_name}")
@@ -951,7 +960,11 @@ def cached_votable_query(cache_name, basepath, log, description, refresh=False):
             cache.data = None
         else:
             log(f"Loading {description} from cache (cache:{cache_name})")
-            cache.data = Table.read(cache_path)
+            if raw:
+                with open(cache_path, 'rb') as f:
+                    cache.data = f.read()
+            else:
+                cache.data = Table.read(cache_path)
 
         cache.hit = True
         cache._saved = True  # Already answered, one way or the other

@@ -24,7 +24,7 @@ from astroquery.vizier import Vizier
 from stdpipe import catalogs, resolve, plots
 
 from ..surveys import survey_source, get_all_output_files, KIND_ALWAYS
-from . import references
+from . import references, vizier
 from .utils import (cleanup_paths, cached_votable_query, write_spectrum,
                     log_bands, log_conversion, assumed_color, plot_with_errors,
                     r_to_g, R_TO_G_FORMULA,
@@ -485,7 +485,7 @@ DUST_3D_MAPS = [
                   'ps1.txt', 'ps1.png', 'gaia.vot', 'gaia.txt', 'gaia.png',
                   'gaia_xp.png', 'gaia_xp.vot', 'gaia_xp.txt',
                   'gaia_rvs.png', 'gaia_rvs.vot', 'gaia_rvs.txt',
-                  'references.vot'],
+                  'references.vot', 'catalogues.vot'],
     button_text='Get Target Info',
     button_class='btn-info',
     # Coordinates every source queries by, and the colours they convert with
@@ -633,6 +633,17 @@ def target_info(config, basepath=None, verbose=True, show=False):
             #     log(f"Dist = {r['Distance_distance']:.2f} +{r['Distance_perr']:.2f} -{-r['Distance_merr']:.2f} {r['Distance_unit']}")
 
             break
+
+    # Every catalogue with an entry at the position, read after the references
+    # so as to put those from the papers about the target first. Nothing else
+    # depends on it either.
+    log("\n---- VizieR catalogues ----\n")
+
+    try:
+        vizier.acquire(config['target_ra'], config['target_dec'], basepath, log,
+                       refresh=refresh_cache)
+    except Exception as e:
+        log(f"Error: could not list the catalogues: {e}")
 
     # AAVSO VSX, where a variable star is described by whoever has looked at it
     # most recently - so this is the place its period and type come from, if
