@@ -111,7 +111,9 @@ def target_css(config, basepath=None, verbose=True, show=False):
             # Query CSS database
             try:
                 res = requests.post(
-                    'http://nunuku.caltech.edu/cgi-bin/getcssconedb_release_img.cgi',
+                    # The script the data release page links to; the one
+                    # without the N it replaced now answers 404
+                    'http://nunuku.caltech.edu/cgi-bin/getcssconedb_release_imgN.cgi',
                     {
                         'RADec': f"{target.ra.deg} {target.dec.deg}",
                         'Rad': radius_arcsec / 60,  # Convert arcsec to arcmin
