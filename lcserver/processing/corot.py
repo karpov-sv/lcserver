@@ -26,15 +26,13 @@ import numpy as np
 from astropy.io import fits
 from astropy.table import Table
 from astropy.time import Time
-from astropy.coordinates import SkyCoord
-from astropy import units as u
 
-from astroquery.vizier import Vizier
 
 # STDPipe
 from stdpipe import plots
 
 from ..surveys import survey_source, get_output_files
+from . import cds
 from .utils import (SourceError, cleanup_paths, cached_votable_query,
                     break_at_gaps, quality_field, quality_level,
                     QUALITY_STANDARD, QUALITY_PUBLISHED)
@@ -314,16 +312,13 @@ def target_corot(config, basepath=None, verbose=True, show=False):
         if not cache.hit:
             log(f"within {sr:.1f} arcsec")
             try:
-                res = Vizier(columns=COROT_COLUMNS, row_limit=-1).query_region(
-                    SkyCoord(ra, dec, unit='deg'), radius=sr * u.arcsec,
-                    catalog=COROT_CATALOGUE)
+                found = cds.vizier_region(ra, dec, sr, COROT_CATALOGUE,
+                                          columns=COROT_COLUMNS, log=log)
             except Exception as e:
                 raise SourceError("could not query Vizier for CoRoT - "
                                   f"{type(e).__name__}: {e}")
 
-            found = res[0] if res and len(res) else None
-
-            if found is None or not len(found):
+            if found is None:
                 cache.save_empty()
                 log("\nWarning: No CoRoT observations at this position - the "
                     "mission watched two small fields near the Galactic plane "

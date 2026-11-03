@@ -15,16 +15,14 @@ import numpy as np
 
 from astropy.table import Table
 from astropy.time import Time
-from astropy.coordinates import SkyCoord
-from astropy import units as u
 
-from astroquery.vizier import Vizier
 
 # STDPipe
 from stdpipe import plots
 
 from .. import surveys
 from ..surveys import survey_source, get_output_files
+from . import cds
 from .utils import (SourceError, cleanup_paths, cached_votable_query, log_bands,
                     log_conversion, plot_with_errors,
                     assumed_color, v_to_g, V_TO_G_FORMULA)
@@ -57,13 +55,11 @@ HIP_READ_SLACK = 4096
 
 def _find_star(ra, dec, sr, log):
     """The Hipparcos star at a position, if it has one."""
-    res = Vizier(columns=['**'], row_limit=10).query_region(
-        SkyCoord(ra, dec, unit='deg'), radius=sr*u.arcsec, catalog=HIP_CATALOGUE)
+    table = cds.vizier_region(ra, dec, sr, HIP_CATALOGUE, row_limit=10, log=log)
 
-    if not res or not len(res[0]):
+    if table is None:
         return None
 
-    table = res[0]
     if '_r' in table.colnames:
         table = table[np.argsort(np.asarray(table['_r'], dtype=float))]
 

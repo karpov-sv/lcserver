@@ -20,7 +20,7 @@ import hashlib
 import numpy as np
 from astropy.table import Table
 
-from stdpipe import resolve
+from .processing import cds
 
 
 HIPS_SERVICE = 'https://alasky.u-strasbg.fr/hips-image-services/hips2fits'
@@ -355,16 +355,16 @@ def cutouts_ps1(request):
 def resolve_position(string):
     """Resolve a name or a coordinate string, caching what came back.
 
-    Names go to SIMBAD, TNS and Sesame in turn, so the same list of positions
-    resubmitted - which is what changing the size or the survey selection does
-    - should not repeat any of it.
+    Names go to SIMBAD, TNS, Sesame and SIMBAD's mirrors in turn, so the same
+    list of positions resubmitted - which is what changing the size or the
+    survey selection does - should not repeat any of it.
     """
     cid = 'cutouts_resolve_' + hashlib.md5(string.encode('utf-8')).hexdigest()
     result = cache.get(cid)
 
     if result is None:
         try:
-            target = resolve.resolve(string)
+            target = cds.resolve(string)
         except Exception:
             target = None
 

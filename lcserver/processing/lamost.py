@@ -20,15 +20,13 @@ import numpy as np
 from astropy.io import fits
 from astropy.table import Table
 from astropy.time import Time
-from astropy.coordinates import SkyCoord
-from astropy import units as u
 
-from astroquery.vizier import Vizier
 
 # STDPipe
 from stdpipe import plots
 
 from ..surveys import survey_source, get_output_files, KIND_SPECTROSCOPY
+from . import cds
 from .utils import (cleanup_paths, cached_votable_query, plot_with_errors,
                     write_spectrum)
 
@@ -152,12 +150,9 @@ def _query(catalogue, ra, dec, sr, basepath, log, name, refresh):
                               f'LAMOST {name} observations', refresh=refresh) as cache:
         if not cache.hit:
             log(f"within {sr:.1f} arcsec")
-            res = Vizier(columns=['**'], row_limit=-1).query_region(
-                SkyCoord(ra, dec, unit='deg'), radius=sr*u.arcsec, catalog=catalogue)
+            cat = cds.vizier_region(ra, dec, sr, catalogue, log=log)
 
-            cat = res[0] if res and len(res) else None
-
-            if cat is not None and len(cat):
+            if cat is not None:
                 cache.save(cat)
             else:
                 cache.save_empty()

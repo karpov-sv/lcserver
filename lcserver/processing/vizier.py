@@ -21,17 +21,14 @@ tables, and does not keep the metadata of a resource.
 """
 
 import os
-import shutil
 import xml.etree.ElementTree as ET
 from urllib.parse import urlencode
 
-import requests
-
+from . import cds
 from .utils import cached_votable_query
 from . import references as references_
 
 
-VIZIER_VOTABLE = 'https://vizier.cds.unistra.fr/viz-bin/votable'
 VIZIER_QUERY = 'https://vizier.cds.unistra.fr/viz-bin/VizieR-4'
 
 # Cone radius, in arcsec, as the SIMBAD query has it
@@ -66,19 +63,17 @@ def _text(element):
     return ' '.join((element.text or '').split()) if element is not None else ''
 
 
-def query(ra, dec, sr=SR):
-    """VizieR's reply to a search of every catalogue within `sr` arcsec, as bytes."""
-    res = requests.post(VIZIER_VOTABLE, data={
+def query(ra, dec, sr=SR, log=None):
+    """VizieR's reply to a search of every catalogue within `sr` arcsec, as
+    bytes, and the server that gave it."""
+    return cds.vizier_post('viz-bin/votable', log=log, timeout=TIMEOUT, data={
         '-c': f"{ra:.6f} {dec:+.6f}", '-c.rs': sr,
         # The entries of each table with their distance, and the description
         # of the catalogue it is in: what astroquery asks for, and without
         # which the tables come back merged into one and the catalogue names
         # are lost
         '-out.max': ROWS, '-out.add': '_r', '-out.meta': 'huUD',
-        '-out.form': 'mini', '-oc.form': 'd'}, timeout=TIMEOUT)
-    res.raise_for_status()
-
-    return res.content
+        '-out.form': 'mini', '-oc.form': 'd'})
 
 
 def parse(content):
@@ -185,7 +180,7 @@ def acquire(ra, dec, basepath, log, refresh=False):
                               'VizieR', refresh=refresh, raw=True) as cache:
         if not cache.hit:
             try:
-                content = query(ra, dec)
+                content, server = query(ra, dec, log=log)
                 cats, errors = parse(content)
             except Exception as e:
                 log(f"Error: could not search VizieR: {e}")
@@ -196,16 +191,24 @@ def acquire(ra, dec, basepath, log, refresh=False):
             if errors:
                 log(f"VizieR reported {errors} errors, so some catalogues may be missing")
 
-            # Kept whether or not anything was found, as the reply says which
-            cache.save(content)
+            # Kept whether or not anything was found, as the reply says which.
+            # Unless a mirror gave it and reported errors - those are likely
+            # the catalogues it does not hold, which the next run, once the
+            # main server is back, would find
+            if errors and server != cds.VIZIER_SERVERS[0]:
+                log(f"Not cached, as it came from the mirror at {cds._host(server)}")
+            else:
+                cache.save(content)
         else:
-            cats, errors = parse(cache.data)
+            content = cache.data
+            cats, errors = parse(content)
 
     if not cats:
         log(f"No VizieR catalogue has an entry within {SR:.0f} arcsec")
         return None
 
-    shutil.copyfile(cache.path, os.path.join(basepath, CATALOGUES_FILE))
+    with open(os.path.join(basepath, CATALOGUES_FILE), 'wb') as f:
+        f.write(content)
 
     cats = catalogues(cats, references_.load(basepath), ra, dec)
     cited = [_ for _ in cats if _['reference']]

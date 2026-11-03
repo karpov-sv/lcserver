@@ -23,14 +23,13 @@ import numpy as np
 from astropy.io import fits
 from astropy.table import Table
 from astropy.time import Time
-from astropy import units as u
 
-from astroquery.vizier import Vizier
 
 # STDPipe
 from stdpipe import plots
 
 from ..surveys import survey_source, get_output_files, KIND_SPECTROSCOPY
+from . import cds
 from .utils import (SourceError, cleanup_paths, cached_votable_query,
                     break_at_gaps, plot_with_errors, write_spectrum)
 
@@ -250,15 +249,13 @@ def target_apogee(config, basepath=None, verbose=True, show=False):
         if not cache.hit:
             log(f"within {sr:.1f} arcsec")
             try:
-                found = Vizier(columns=APOGEE_COLUMNS, row_limit=-1).query_region(
-                    f"{ra} {dec}", radius=sr * u.arcsec, catalog=APOGEE_CATALOGUE)
+                found = cds.vizier_region(ra, dec, sr, APOGEE_CATALOGUE,
+                                          columns=APOGEE_COLUMNS, log=log)
             except Exception as e:
                 raise SourceError("could not query Vizier for APOGEE - "
                                   f"{type(e).__name__}: {e}")
 
-            found = found[0] if found and len(found) else None
-
-            if found is None or not len(found):
+            if found is None:
                 cache.save_empty()
                 log("\nWarning: No APOGEE observations at this position - the "
                     "survey put a fibre on two-thirds of a million stars, "

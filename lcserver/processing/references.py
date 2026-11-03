@@ -18,6 +18,7 @@ the list is SIMBAD's alone.
 
 import os
 import re
+import json
 from urllib.parse import quote
 
 import numpy as np
@@ -27,10 +28,10 @@ from astropy.table import Table, MaskedColumn
 
 from django.conf import settings
 
+from . import cds
 from .utils import cached_votable_query
 
 
-SIMBAD_TAP = 'https://simbad.cds.unistra.fr/simbad/sim-tap/sync'
 ADS_BIGQUERY = 'https://api.adsabs.harvard.edu/v1/search/bigquery'
 
 # The most bibcodes ADS takes in one request
@@ -91,12 +92,7 @@ ADS_NOT_DATA = {'SIMBAD', 'NED'}
 
 def _tap(query):
     """Rows of a SIMBAD TAP query, as dicts."""
-    res = requests.post(SIMBAD_TAP, data={
-        'REQUEST': 'doQuery', 'LANG': 'ADQL', 'FORMAT': 'json',
-        'MAXREC': 1000000, 'query': query}, timeout=TIMEOUT)
-    res.raise_for_status()
-
-    reply = res.json()
+    reply = json.loads(cds.simbad_tap(query, timeout=TIMEOUT))
     names = [_['name'] for _ in reply['metadata']]
 
     return [dict(zip(names, row)) for row in reply['data']]

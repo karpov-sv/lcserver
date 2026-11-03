@@ -16,16 +16,14 @@ import numpy as np
 
 from astropy.table import Table
 from astropy.time import Time
-from astropy.coordinates import SkyCoord
-from astropy import units as u
 
-from astroquery.vizier import Vizier
 
 # STDPipe
 from stdpipe import plots
 
 from .. import surveys
 from ..surveys import survey_source, get_output_files
+from . import cds
 from .utils import (SourceError, cleanup_paths, cached_votable_query,
                     quality_field, quality_level, log_bands, log_conversion,
                     plot_with_errors,
@@ -104,14 +102,12 @@ def _find_object(ra, dec, sr, log):
     by, which is the only way to find a light curve in a file holding a whole
     survey field.
     """
-    v = Vizier(columns=['**', 'recno'], row_limit=50)
-    res = v.query_region(SkyCoord(ra, dec, unit='deg'), radius=sr*u.arcsec,
-                         catalog=NSVS_OBJECTS)
+    table = cds.vizier_region(ra, dec, sr, NSVS_OBJECTS, columns=['**', 'recno'],
+                              row_limit=50, log=log)
 
-    if not res or not len(res[0]):
+    if table is None:
         return None
 
-    table = res[0]
     # Nearest first, so that a crowded field does not hand back a neighbour
     if '_r' in table.colnames:
         table = table[np.argsort(np.asarray(table['_r'], dtype=float))]
@@ -142,8 +138,7 @@ def _find_field(object_id, ra, dec, log):
     the field list, so the objects each field holds partition the record
     numbers.
     """
-    fields = Vizier(columns=['**', 'recno'],
-                    row_limit=-1).get_catalogs(NSVS_FIELDS)[0]
+    fields = cds.vizier_catalog(NSVS_FIELDS, columns=['**', 'recno'], log=log)
     fields = fields[np.argsort(np.asarray(fields['recno'], dtype=int))]
 
     # The last record number of each field

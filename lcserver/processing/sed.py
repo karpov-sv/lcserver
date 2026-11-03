@@ -31,19 +31,20 @@ import collections
 import numpy as np
 
 from astropy.table import Table, vstack
-from astroquery.vizier import Vizier
 
 # STDPipe
 from stdpipe import plots
 
 from ..surveys import survey_source, get_output_files, KIND_SPECTROSCOPY
+from . import cds
 from .utils import (SourceError, cleanup_paths, cached_votable_query,
                     fetch_votable, flambda_from_fnu, shared_cache_dir,
                     write_spectrum)
 
 
-# VizieR's SED service, which its photometry viewer is a page around
-SED_URL = 'https://vizier.cds.unistra.fr/viz-bin/sed'
+# VizieR's SED service, which its photometry viewer is a page around - on
+# whichever VizieR server is answering
+SED_PATH = 'viz-bin/sed'
 
 # How far out to accept a catalogue's source, in arcsec. The service takes a
 # radius of its own but barely honours it - asking for two arcsec against five
@@ -149,10 +150,8 @@ def _fetch_filter_widths(log):
     """VizieR's filter table, as designation and width in Angstrom."""
     log("Querying VizieR for its filter table (METAphot and METAfltr)...")
 
-    vizier = Vizier(columns=['**'], row_limit=-1)
-
-    systems = vizier.get_catalogs(SED_FILTER_TABLES[0])[0]
-    filters = vizier.get_catalogs(SED_FILTER_TABLES[1])[0]
+    systems = cds.vizier_catalog(SED_FILTER_TABLES[0], log=log)
+    filters = cds.vizier_catalog(SED_FILTER_TABLES[1], log=log)
 
     names = dict(zip(np.asarray(systems['photid'], dtype=int),
                      [str(_).strip() for _ in systems['name']]))
@@ -276,9 +275,11 @@ def _query(ra, dec, sr, basepath, log, refresh):
             # This endpoint is the reason fetch_votable checks for a closing
             # tag: it answers 200 with a half-written table often enough, and
             # then serves that same half from its cache until the URL changes
-            table = fetch_votable(
-                SED_URL, params={'-c': f'{ra} {dec:+f}', '-c.rs': sr},
-                service='the SED service', log=log).to_table()
+            table = cds.ask(cds.VIZIER_SERVERS, lambda server: fetch_votable(
+                f"{server}/{SED_PATH}",
+                params={'-c': f'{ra} {dec:+f}', '-c.rs': sr},
+                service='the SED service', log=log).to_table(),
+                'VizieR SED', log=log, key=SED_PATH)
 
             if len(table):
                 cache.save(table)

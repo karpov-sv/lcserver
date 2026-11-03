@@ -16,15 +16,13 @@ from astropy.coordinates import SkyCoord
 from astropy import units as u
 from astropy.time import Time
 
-from astroquery.simbad import Simbad
 from astroquery.ipac.irsa.irsa_dust import IrsaDust
-from astroquery.vizier import Vizier
 
 # STDPipe
 from stdpipe import catalogs, resolve, plots
 
 from ..surveys import survey_source, get_all_output_files, KIND_ALWAYS
-from . import references, vizier
+from . import cds, references, vizier
 from .utils import (cleanup_paths, cached_votable_query, write_spectrum,
                     log_bands, log_conversion, assumed_color, plot_with_errors,
                     r_to_g, R_TO_G_FORMULA,
@@ -561,7 +559,7 @@ def target_info(config, basepath=None, verbose=True, show=False):
     with cached_votable_query(f"resolve_{safe_name}.vot", basepath, log,
                               'name resolver', refresh=refresh_cache) as cache:
         if not cache.hit:
-            target = resolve.resolve(config['target_name'])
+            target = cds.resolve(config['target_name'], log=log)
 
             if target is not None:
                 cache.save(Table({'ra': [target.ra.deg], 'dec': [target.dec.deg]}))
@@ -590,16 +588,19 @@ def target_info(config, basepath=None, verbose=True, show=False):
 
     with cached_votable_query(cache_name, basepath, log, 'SIMBAD', refresh=refresh_cache) as cache:
         if not cache.hit:
-            # Query SIMBAD - only if not cached
-            sim = Simbad()
-            sim.add_votable_fields('otype', 'otypes', 'alltypes', 'ids', 'distance', 'sptype')
+            # Query SIMBAD - only if not cached. Nothing else in the step
+            # depends on it, so a failure is reported and passed
+            try:
+                res = cds.simbad_region(
+                    target, 5*u.arcsec, log=log,
+                    fields=('otype', 'otypes', 'alltypes', 'ids', 'distance', 'sptype'))
 
-            res = sim.query_region(target, radius=5*u.arcsec)
-
-            if res and len(res):
-                cache.save(res)
-            else:
-                cache.save_empty()
+                if res is not None:
+                    cache.save(res)
+                else:
+                    cache.save_empty()
+            except Exception as e:
+                log(f"Error: could not query SIMBAD: {e}")
                 res = None
         else:
             res = cache.data
@@ -658,13 +659,9 @@ def target_info(config, basepath=None, verbose=True, show=False):
                               refresh=refresh_cache) as cache:
         if not cache.hit:
             try:
-                res = Vizier(columns=['**'], row_limit=-1).query_region(
-                    SkyCoord(ra, dec, unit='deg'), radius=VSX_SR*u.arcsec,
-                    catalog=VSX_CATALOGUE)
+                vsx = cds.vizier_region(ra, dec, VSX_SR, VSX_CATALOGUE, log=log)
 
-                vsx = res[0] if res and len(res) else None
-
-                if vsx is not None and len(vsx):
+                if vsx is not None:
                     cache.save(vsx)
                 else:
                     cache.save_empty()
@@ -761,13 +758,16 @@ def target_info(config, basepath=None, verbose=True, show=False):
         with cached_votable_query(cache_name, basepath, log, catalogs.catalogs[catname]['name'], refresh=refresh_cache) as cache:
             if not cache.hit:
                 # Query catalog - only if not cached
-                cat = catalogs.get_cat_vizier(ra, dec, 5/3600,
-                                              catname, get_distance=True, verbose=False)
-                if cat and len(cat):
-                    cache.save(cat)
-                else:
-                    cache.save_empty()
-                    cat = None
+                try:
+                    cat = cds.vizier_cat(ra, dec, 5, catname, get_distance=True,
+                                         log=log)
+                    if cat is not None:
+                        cache.save(cat)
+                    else:
+                        cache.save_empty()
+                except Exception as e:
+                    log(f"Error: could not query VizieR: {e}")
+                    continue
             else:
                 cat = cache.data
 
@@ -815,20 +815,22 @@ def target_info(config, basepath=None, verbose=True, show=False):
     with cached_votable_query(cache_name, basepath, log, 'Gaia DR3 photometry', refresh=refresh_cache) as cache:
         if not cache.hit:
             # Query Gaia DR3 - only if not cached
-            cat = catalogs.get_cat_vizier(ra, dec, 5/3600,
-                                          'I/355/gaiadr3',
-                                          extra=['_RAJ2000', '_DEJ2000', 'e_Gmag', 'e_BPmag', 'e_RPmag',
-                                                 'A0', 'b_A0', 'B_A0', 'AG', 'b_AG', 'B_AG',
-                                                 'Teff', 'b_Teff', 'B_Teff',
-                                                 'logg', 'b_logg', 'B_logg',
-                                                 '[Fe/H]', 'b_[Fe/H]', 'B_[Fe/H]',
-                                                 'RUWE', 'Vbroad', 'VarFlag',
-                                                 'Source', 'XPsamp', 'RVS'],
-                                          get_distance=True, verbose=False)
-            if cat and len(cat):
-                cache.save(cat)
-            else:
-                cache.save_empty()
+            try:
+                cat = cds.vizier_cat(ra, dec, 5, 'I/355/gaiadr3',
+                                     extra=['_RAJ2000', '_DEJ2000', 'e_Gmag', 'e_BPmag', 'e_RPmag',
+                                            'A0', 'b_A0', 'B_A0', 'AG', 'b_AG', 'B_AG',
+                                            'Teff', 'b_Teff', 'B_Teff',
+                                            'logg', 'b_logg', 'B_logg',
+                                            '[Fe/H]', 'b_[Fe/H]', 'B_[Fe/H]',
+                                            'RUWE', 'Vbroad', 'VarFlag',
+                                            'Source', 'XPsamp', 'RVS'],
+                                     get_distance=True, log=log)
+                if cat is not None:
+                    cache.save(cat)
+                else:
+                    cache.save_empty()
+            except Exception as e:
+                log(f"Error: could not query VizieR: {e}")
                 cat = None
         else:
             cat = cache.data
@@ -926,13 +928,10 @@ def target_info(config, basepath=None, verbose=True, show=False):
                     # checked point by point, and identical to the precision
                     # they are stored at - which keeps this on the one service
                     # the rest of the step already talks to
-                    res = Vizier(columns=['**'], row_limit=-1).query_region(
-                        SkyCoord(ra, dec, unit='deg'), radius=GAIA_XP_SR*u.arcsec,
-                        catalog=GAIA_XP_CATALOGUE)
+                    xp = cds.vizier_region(ra, dec, GAIA_XP_SR,
+                                           GAIA_XP_CATALOGUE, log=log)
 
-                    xp = res[0] if res and len(res) else None
-
-                    if xp is not None and len(xp):
+                    if xp is not None:
                         # A cone this size can hold more than one Gaia source,
                         # each with its own spectrum, so the nearest is taken
                         if 'Source' in xp.colnames and config.get('gaia_source'):
@@ -1014,13 +1013,10 @@ def target_info(config, basepath=None, verbose=True, show=False):
                                   refresh=refresh_cache) as cache:
             if not cache.hit:
                 try:
-                    res = Vizier(columns=['**'], row_limit=-1).query_region(
-                        SkyCoord(ra, dec, unit='deg'), radius=GAIA_RVS_SR*u.arcsec,
-                        catalog=GAIA_RVS_CATALOGUE)
+                    rvs = cds.vizier_region(ra, dec, GAIA_RVS_SR,
+                                            GAIA_RVS_CATALOGUE, log=log)
 
-                    rvs = res[0] if res and len(res) else None
-
-                    if rvs is not None and len(rvs):
+                    if rvs is not None:
                         # A cone this size can hold more than one Gaia source,
                         # each with its own spectrum, so the one this step has
                         # settled on is the one taken
@@ -1162,24 +1158,27 @@ def target_info(config, basepath=None, verbose=True, show=False):
                               'Gaia DR3 astrophysical parameters',
                               refresh=refresh_cache) as cache:
         if not cache.hit:
-            cat = catalogs.get_cat_vizier(
-                ra, dec, 5/3600, 'I/355/paramp',
-                extra=['_RAJ2000', '_DEJ2000',
-                       'Teff-HS', 'e_Teff-HS', 'logg-HS', 'e_logg-HS',
-                       'A0-HS', 'e_A0-HS', 'vsini-HS', 'e_vsini-HS',
-                       'Teff-S', 'b_Teff-S', 'B_Teff-S',
-                       'logg-S', 'b_logg-S', 'B_logg-S',
-                       '[Fe/H]-S', 'b_[Fe/H]-S', 'B_[Fe/H]-S',
-                       '[alpha/Fe]-S',
-                       'ClassELS', 'SpType-ELS', 'Teff-UCD', 'e_Teff-UCD',
-                       'Age-Flame', 'b_Age-Flame', 'B_Age-Flame',
-                       'Teff1-MSC', 'Teff2-MSC', 'logg1-MSC', 'logg2-MSC',
-                       'A0-MSC', 'Dist-MSC', 'Flag-MSC'],
-                get_distance=True, verbose=False)
-            if cat and len(cat):
-                cache.save(cat)
-            else:
-                cache.save_empty()
+            try:
+                cat = cds.vizier_cat(
+                    ra, dec, 5, 'I/355/paramp',
+                    extra=['_RAJ2000', '_DEJ2000',
+                           'Teff-HS', 'e_Teff-HS', 'logg-HS', 'e_logg-HS',
+                           'A0-HS', 'e_A0-HS', 'vsini-HS', 'e_vsini-HS',
+                           'Teff-S', 'b_Teff-S', 'B_Teff-S',
+                           'logg-S', 'b_logg-S', 'B_logg-S',
+                           '[Fe/H]-S', 'b_[Fe/H]-S', 'B_[Fe/H]-S',
+                           '[alpha/Fe]-S',
+                           'ClassELS', 'SpType-ELS', 'Teff-UCD', 'e_Teff-UCD',
+                           'Age-Flame', 'b_Age-Flame', 'B_Age-Flame',
+                           'Teff1-MSC', 'Teff2-MSC', 'logg1-MSC', 'logg2-MSC',
+                           'A0-MSC', 'Dist-MSC', 'Flag-MSC'],
+                    get_distance=True, log=log)
+                if cat is not None:
+                    cache.save(cat)
+                else:
+                    cache.save_empty()
+            except Exception as e:
+                log(f"Error: could not query VizieR: {e}")
                 cat = None
         else:
             cat = cache.data
@@ -1305,13 +1304,16 @@ def target_info(config, basepath=None, verbose=True, show=False):
     with cached_votable_query(cache_name, basepath, log, 'Gaia DR3 distances', refresh=refresh_cache) as cache:
         if not cache.hit:
             # Query Gaia DR3 distances - only if not cached
-            cat = catalogs.get_cat_vizier(ra, dec, 5/3600,
-                                          'I/352/gedr3dis', extra=['_RAJ2000', '_DEJ2000'],
-                                          get_distance=True, verbose=False)
-            if cat and len(cat):
-                cache.save(cat)
-            else:
-                cache.save_empty()
+            try:
+                cat = cds.vizier_cat(ra, dec, 5, 'I/352/gedr3dis',
+                                     extra=['_RAJ2000', '_DEJ2000'],
+                                     get_distance=True, log=log)
+                if cat is not None:
+                    cache.save(cat)
+                else:
+                    cache.save_empty()
+            except Exception as e:
+                log(f"Error: could not query VizieR: {e}")
                 cat = None
         else:
             cat = cache.data
@@ -1868,10 +1870,9 @@ def target_info(config, basepath=None, verbose=True, show=False):
             try:
                 # Published for the sources Gaia flags as variable, so most
                 # targets have none of it
-                epphot = catalogs.get_cat_vizier(ra, dec, GAIA_EPPHOT_SR/3600,
-                                                 'I/355/epphot',
-                                                 augment_bands=False, verbose=False)
-                if epphot and len(epphot):
+                epphot = cds.vizier_cat(ra, dec, GAIA_EPPHOT_SR, 'I/355/epphot',
+                                        augment_bands=False, log=log)
+                if epphot is not None:
                     cache.save(epphot)
                 else:
                     cache.save_empty()
