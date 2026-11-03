@@ -157,13 +157,17 @@ def target_kws(config, basepath=None, verbose=True, show=False):
     # Cleanup stale plots
     cleanup_paths(get_output_files('kws'), basepath=basepath)
 
-    # KWS takes no coordinates, but does take a designation made of them. The
-    # name is the fallback for a target the info step has not placed yet - KWS
-    # resolves it through SIMBAD, which fails for a name made of coordinates
+    # KWS takes no coordinates, but does take a designation made of them, which
+    # its own database resolves. The name is the fallback for a target the info
+    # step has not placed yet - KWS resolves it through SIMBAD, which fails for
+    # a name made of coordinates. SIMBAD is asked only then: KWS asks it even
+    # for a designation, and waits as long as SIMBAD does before answering
     if config.get('target_ra') is not None and config.get('target_dec') is not None:
         target_name = kws_designation(config['target_ra'], config['target_dec'])
+        resolver = ''
     else:
         target_name = config.get('target_name')
+        resolver = 'simbad'
     if not target_name:
         log("Error: target_name not found in config")
         raise RuntimeError("Target name required for KWS query")
@@ -184,7 +188,7 @@ def target_kws(config, basepath=None, verbose=True, show=False):
                     "http://kws.cetus-net.org/~maehara/VSdata.py",
                     {
                         "object": target_name,  # a designation, or a name for SIMBAD
-                        "resolver": "simbad",
+                        "resolver": resolver,   # '' is KWS's own database
                         "p_band": "All",
                         "plot": "0",
                         "obs_ys": "",
