@@ -304,18 +304,43 @@
 
       <div class="col-md-auto" style="max-width: 520px">
         {% if 'target_ra' in target.config and 'target_dec' in target.config %}
-          <!-- include Aladin Lite CSS file in the head section of your page -->
-          <link rel="stylesheet" href="https://aladin.u-strasbg.fr/AladinLite/api/v3/latest/aladin.min.css" />
-          <!-- It seems Aladin uses jQuery 1.x, let's also load it and hope it will not break anything -->
-          <script type="text/javascript" src="https://aladin.u-strasbg.fr/AladinLite/api/v3/latest/aladin.js" charset="utf-8"></script>
           {% if not target.celery_id %}
+          {% comment %}
+            Aladin Lite is loaded from CDS, and loaded here, after the page,
+            rather than by a script tag in it: a script tag holds up the whole
+            page below it until CDS answers - or, when CDS is down, for as
+            long as the browser is prepared to wait.
+          {% endcomment %}
           <script type="text/javascript">
            $(document).ready(function(){
-             let aladin;
-             A.init.then(() => {
-               aladin = A.aladin('#aladin-lite-div', {survey: "P/DSS2/color", fov:0.03, projection: 'TAN'});
-               aladin.gotoRaDec({{ target.config.target_ra }}, {{ target.config.target_dec }});
-             });
+             const base = 'https://aladin.u-strasbg.fr/AladinLite/api/v3/latest/';
+             const div = document.getElementById('aladin-lite-div');
+             const say = (text) => { div.textContent = text; };
+
+             const css = document.createElement('link');
+             css.rel = 'stylesheet';
+             css.href = base + 'aladin.min.css';
+             document.head.appendChild(css);
+
+             // Still initialised if it arrives after this, only slowly
+             const slow = setTimeout(() => say('Aladin Lite is not loading - CDS may be down'), 20000);
+
+             const script = document.createElement('script');
+             script.src = base + 'aladin.js';
+             script.charset = 'utf-8';
+             script.onload = () => {
+               clearTimeout(slow);
+               say('');
+               A.init.then(() => {
+                 let aladin = A.aladin('#aladin-lite-div', {survey: "P/DSS2/color", fov:0.03, projection: 'TAN'});
+                 aladin.gotoRaDec({{ target.config.target_ra }}, {{ target.config.target_dec }});
+               }).catch(() => say('Aladin Lite could not start'));
+             };
+             script.onerror = () => {
+               clearTimeout(slow);
+               say('Aladin Lite is not available - CDS is not answering');
+             };
+             document.head.appendChild(script);
            });
           </script>
           {% endif %}
