@@ -14,8 +14,7 @@ from astropy.table import Table
 from astropy.time import Time
 from astropy.timeseries import LombScargle
 from scipy.signal import find_peaks
-
-import lightkurve as lk
+from scipy.interpolate import BSpline
 
 from . import models
 from . import surveys
@@ -380,18 +379,113 @@ PERIOD_NPEAKS = 5
 # solar and sidereal day with their harmonics, and the year
 PERIOD_ALIASES = [1.0, 0.5, 1/3, 0.99726957, 0.49863478, 365.25]
 
-# Order of the polynomial the detrending filter fits inside its window
-DETREND_POLYORDER = 2
+# The trend is a cubic B-spline with a knot every so many days - the window -
+# fitted on each stretch of a series that no gap longer than the window breaks.
+# A stretch shorter than the window gets a constant level only: a polynomial
+# through one isolated night would follow the very signal it is meant to leave.
+DETREND_SPLINE_ORDER = 3
+
+# Outliers are clipped from the fit of the trend, though not from the data
+DETREND_CLIP_SIGMA = 3.0
+DETREND_ITERATIONS = 3
+
+# Weight of the penalty on the curvature of the spline, in units of one point.
+# Too small to bend the trend where there are points to follow, and all there
+# is where there are none - between two nights observed a hundred times each,
+# say - which plain least squares would leave free to fall to zero
+DETREND_PENALTY = 0.1
+
+# The highest peaks are fitted again, the trend and this many harmonics of the
+# period together, rather than one after the other
+PERIOD_HARMONICS = 3
+
+# Trial frequencies across each peak in that fit, spanning one peak width
+PERIOD_REFINE_SAMPLES = 21
+
+# Peaks whose fits differ by less than this, in chi-squared scaled by the
+# reduced chi-squared of the better one, cannot be told apart by the data -
+# five sigma, for two models with the same number of parameters
+PERIOD_AMBIGUOUS_DCHI2 = 25.0
+
+
+def trend_blocks(mjds, window_days):
+    """The columns of a trend slower than `window_days`, a stretch at a time.
+
+    Returns (indices, columns) pairs, one per stretch of the series that no gap
+    longer than the window interrupts: the points of the stretch, and the
+    B-spline basis evaluated at them, with a knot every `window_days` days. The
+    trend over the whole series is block-diagonal in these, so each is fitted
+    on its own.
+
+    Days rather than points, as ground-based sampling is anything but even: a
+    window counted in points, converted at the median cadence, covers no time
+    at all inside a night observed a hundred times and months where a season
+    is sparse. And no polynomial is fitted across a gap, where it has nothing
+    to follow.
+    """
+    x = np.asarray(mjds, dtype=float)
+    order = np.argsort(x)
+    breaks = np.where(np.diff(x[order]) > window_days)[0] + 1
+
+    blocks = []
+    for idx in np.split(order, breaks):
+        lo, hi = x[idx].min(), x[idx].max()
+        nknots = int(round((hi - lo) / window_days))
+        k = DETREND_SPLINE_ORDER
+
+        if nknots < 1 or len(idx) <= nknots + k:
+            blocks.append((idx, np.ones((len(idx), 1))))
+            continue
+
+        knots = np.r_[[lo] * k, np.linspace(lo, hi, nknots + 1), [hi] * k]
+        blocks.append((idx, BSpline.design_matrix(x[idx], knots, k).toarray()))
+
+    return blocks
+
+
+def _curvature(ncols):
+    """Second differences of spline coefficients, the rows the penalty is on."""
+    if ncols < 3:
+        return np.zeros((0, ncols))
+
+    return np.diff(np.eye(ncols), 2, axis=0)
+
+
+def _robust_trend(columns, values):
+    """The penalised least-squares fit of `columns` to `values`, outliers
+    clipped from it."""
+    # About the median, so that whatever the penalty leaves undecided settles
+    # at the level of the series rather than at zero
+    offset = np.median(values)
+    values = values - offset
+
+    penalty = np.sqrt(DETREND_PENALTY) * _curvature(columns.shape[1])
+    zeros = np.zeros(len(penalty))
+    keep = np.ones(len(values), dtype=bool)
+
+    for _ in range(DETREND_ITERATIONS):
+        coeffs = np.linalg.lstsq(np.vstack([columns[keep], penalty]),
+                                 np.r_[values[keep], zeros], rcond=None)[0]
+        resid = values - columns @ coeffs
+
+        sigma = 1.4826 * np.median(np.abs(resid[keep] - np.median(resid[keep])))
+        if not sigma > 0:
+            break
+
+        clipped = np.abs(resid) < DETREND_CLIP_SIGMA * sigma
+        if clipped.sum() <= columns.shape[1] or np.array_equal(clipped, keep):
+            break
+        keep = clipped
+
+    return columns @ coeffs + offset
 
 
 def detrend_series(mjds, values, window_days, subtract):
     """Remove variation slower than `window_days`, and return what it removed.
 
-    A Savitzky-Golay filter, through lightkurve's flatten, which splits the
-    series at its gaps and clips outliers as it goes rather than smoothing
-    across either. The window is given in days and converted here using each
-    series' own cadence, since a selection may put TESS at ten minutes beside
-    K2 at half an hour.
+    The trend is fitted as `trend_blocks` describes it: a cubic spline with a
+    knot every `window_days` days, on each stretch between gaps longer than
+    that, with outliers clipped from the fit.
 
     Slow variation is not noise, and on a target like K2-18 it is the star's
     rotation - the largest real signal there is. This exists so that a short
@@ -401,36 +495,196 @@ def detrend_series(mjds, values, window_days, subtract):
     `subtract` picks the arithmetic: magnitudes are logarithmic, so their trend
     comes off by subtraction, while a flux is divided by it.
     """
-    if len(mjds) < 2 * DETREND_POLYORDER + 3:
+    mjds = np.asarray(mjds, dtype=float)
+    values = np.asarray(values, dtype=float)
+
+    if len(mjds) < 2 * DETREND_SPLINE_ORDER + 3 or not window_days > 0:
         return values, None
 
-    cadence = float(np.median(np.diff(np.sort(mjds))))
-
-    if not np.isfinite(cadence) or cadence <= 0:
-        return values, None
-
-    # An odd window, wide enough for the polynomial to be worth fitting
-    window = int(round(window_days / cadence))
-    window = max(window | 1, DETREND_POLYORDER + 3 | 1)
-
-    if window >= len(mjds):
-        return values, None
-
-    curve = lk.LightCurve(time=Time(mjds, format='mjd'), flux=values)
-
-    with warnings.catch_warnings():
-        warnings.simplefilter('ignore')
-        flat, trend = curve.flatten(window_length=window,
-                                    polyorder=DETREND_POLYORDER,
-                                    return_trend=True)
-
-    trend = np.asarray(trend.flux.value, dtype=float)
+    trend = np.empty_like(values)
+    for idx, columns in trend_blocks(mjds, window_days):
+        trend[idx] = _robust_trend(columns, values[idx])
 
     if subtract:
         # Keep the level, so the series still plots where it did
         return values - trend + np.median(trend), trend
 
-    return np.asarray(flat.flux.value, dtype=float), trend
+    return values / trend, trend
+
+
+def _harmonics(mjds, frequency, nharm):
+    """Sines and cosines of the first `nharm` harmonics of a frequency."""
+    phase = 2 * np.pi * frequency * mjds
+    return np.column_stack([fn((h + 1) * phase)
+                            for h in range(nharm) for fn in (np.sin, np.cos)])
+
+
+class _SeriesFit:
+    """One series and its trend, for fitting harmonics to at any frequency.
+
+    The trend does not depend on the frequency, so it is eliminated once: for a
+    trend of columns B with the curvature penalty P of the detrending, the
+    best trend for any residual r is B (B'B + P)^-1 B' r, and what is left of
+    the data and of each trial set of harmonics after taking it out is all the
+    fit at one frequency needs - a system of 2 * nharm unknowns rather than
+    one of all of them. Weighted by the errors throughout.
+
+    The harmonics themselves may be shared with other series - see
+    `refine_peaks` - so what a series gives at one frequency is its share of
+    the normal equations, not a fit of its own.
+    """
+
+    def __init__(self, mjds, values, errors, window_days, nharm):
+        self.mjds = mjds
+        self.weight = 1.0 / errors
+        self.nharm = nharm
+
+        if window_days:
+            blocks = trend_blocks(mjds, window_days)
+        else:
+            # No trend asked for: the series' own level and nothing else
+            blocks = [(np.arange(len(mjds)), np.ones((len(mjds), 1)))]
+
+        # The penalty is in units of one point, and a point here weighs its
+        # inverse variance
+        scale = DETREND_PENALTY * np.median(self.weight ** 2)
+
+        self.blocks = []
+        self.ntrend = 0
+        for idx, columns in blocks:
+            bw = columns * self.weight[idx, None]
+            curv = _curvature(columns.shape[1])
+            self.blocks.append((idx, bw, np.linalg.pinv(bw.T @ bw + scale * curv.T @ curv)))
+            self.ntrend += columns.shape[1]
+
+        self.yw = values * self.weight
+        self.my = self._detrend(self.yw)
+        self.chi2_trend = float(self.yw @ self.my)
+
+    def _detrend(self, v):
+        """What is left of weighted columns `v` once the best trend is taken out."""
+        out = np.array(v, dtype=float)
+        for idx, bw, inverse in self.blocks:
+            out[idx] -= bw @ (inverse @ (bw.T @ v[idx]))
+        return out
+
+    def normal(self, frequency):
+        """This series' share of the normal equations of the harmonics at
+        `frequency`, once its trend is taken out."""
+        h = _harmonics(self.mjds, frequency, self.nharm) * self.weight[:, None]
+        mh = self._detrend(h)
+
+        return h.T @ mh, mh.T @ self.yw
+
+
+def refine_peaks(series, peaks, window_days, span, nharm=PERIOD_HARMONICS):
+    """The periodogram's highest peaks, fitted again and ranked by that fit.
+
+    `series` are (mjd, value, error, group) of each series as loaded, before
+    any trend came off. At every peak, each series is fitted with its own trend
+    - the same spline the detrending used, or only its level when none was
+    asked for - and `nharm` harmonics of the one period all of them share,
+    which is varied across the width of the peak.
+
+    The harmonics are shared by every series of a group - a survey in one
+    filter - and differ between groups, as the amplitude of a pulsation is not
+    the same in g as in r. Not by every series on its own: a phase free to
+    differ from one TESS sector to the next would throw away the coherence
+    across years that pins a period down, leaving the precision of a month.
+
+    Fitting them together is what the periodogram cannot do: there the trend
+    came off first, taking whatever of the signal it could with it, and the
+    signal was a single sinusoid, which treats a light curve of any other shape
+    as noise. The peaks of a family of aliases come out of a periodogram with
+    much the same power, and the fit is what tells them apart, where anything
+    can.
+
+    Returns the peaks sorted by chi-squared, best first, each with its refined
+    period, its chi-squared and the fraction of the variance about the trend
+    the harmonics explain. And the reduced chi-squared of the best, to scale
+    the differences between them by.
+    """
+    groups = {}
+    for t, y, dy, group in series:
+        groups.setdefault(group, []).append(_SeriesFit(t, y, dy, window_days, nharm))
+
+    # A group with too few points for its harmonics contributes its trend alone
+    fitted = [members for members in groups.values()
+              if sum(len(_.mjds) - _.ntrend for _ in members) > 2 * nharm + 2]
+
+    fits = [_ for members in groups.values() for _ in members]
+    chi2_trend = sum(_.chi2_trend for _ in fits)
+
+    npoints = sum(len(_.mjds) for _ in fits)
+    nparams = sum(_.ntrend for _ in fits) + 2 * nharm * len(fitted)
+    dof = max(npoints - nparams, 1)
+
+    def chi2(frequency):
+        total = chi2_trend
+        for members in fitted:
+            gram, proj = 0, 0
+            for fit in members:
+                g, p = fit.normal(frequency)
+                gram, proj = gram + g, proj + p
+            total -= float(np.linalg.lstsq(gram, proj, rcond=None)[0] @ proj)
+        return total
+
+    refined = []
+    for peak in peaks:
+        f0 = peak['frequency']
+        grid = f0 + np.linspace(-0.5, 0.5, PERIOD_REFINE_SAMPLES) / span
+        grid = grid[grid > 0]
+        values = np.array([chi2(_) for _ in grid])
+        i = int(np.argmin(values))
+
+        # The minimum between the samples, from the parabola through the three
+        # around it
+        f, c = grid[i], values[i]
+        if 0 < i < len(grid) - 1:
+            a, b, d = values[i - 1], values[i], values[i + 1]
+            denom = a - 2 * b + d
+            if denom > 0:
+                step = 0.5 * (a - d) / denom
+                f = grid[i] + step * (grid[1] - grid[0])
+                c = min(chi2(f), b)
+                if c == b:
+                    f = grid[i]
+
+        refined.append(dict(peak,
+                            # Where the periodogram had it, before the fit
+                            periodogram_period=peak['period'],
+                            period=round(float(1.0 / f), 6),
+                            frequency=float(f),
+                            chi2=round(c, 2),
+                            fit_power=round(1.0 - c / chi2_trend, 4)
+                            if chi2_trend > 0 else None))
+
+    refined.sort(key=lambda _: _['chi2'])
+
+    return refined, (refined[0]['chi2'] / dof if refined else None)
+
+
+def alias_kind(f1, f2, span):
+    """What makes two frequencies aliases of each other, or None.
+
+    The day and the year are the sampling of the ground: a frequency shifted by
+    a whole number of cycles per day or per year is seen at the same moments as
+    the original, and so is one reflected about such a shift - f and 1 - f,
+    as a sinusoid of negative frequency is the same sinusoid. Matched to the
+    resolution of the data, one peak width.
+    """
+    tolerance = 1.0 / span
+
+    for diff in (abs(f1 - f2), f1 + f2):
+        for cycles in (1, 2):
+            if abs(diff - cycles) < tolerance:
+                return 'daily'
+
+    for cycles in (1, 2, 3):
+        if abs(abs(f1 - f2) - cycles / 365.25) < tolerance:
+            return 'yearly'
+
+    return None
 
 
 def find_period(mjds, values, errors, pmin, pmax):
@@ -577,6 +831,10 @@ def fit_period(request, id):
         # points the periodogram was computed from
         detrended = []
 
+        # And each series as it was before, for the fit of the highest peaks,
+        # which fits the trend along with the period rather than before it
+        loaded = []
+
         for i, requested in enumerate(series_list):
             label = requested.get('label')
             index = requested.get('index')
@@ -612,6 +870,10 @@ def fit_period(request, id):
                 continue
 
             t, y, dy = t[valid], y[valid], dy[valid]
+            # The survey and filter the series is in, which its harmonics are
+            # shared within
+            loaded.append((t, y, dy, (series.get('source_id'), series.get('filter'),
+                                      series.get('kind'))))
 
             # Detrended one series at a time, before they are pooled: each has
             # its own cadence and its own gaps, and a window in days means a
@@ -702,13 +964,47 @@ def fit_period(request, id):
                 'details': 'No peaks found in the periodogram'
             }, status=500)
 
-        best = pg['peaks'][0]
+        notes = []
+
+        # Ranked again by fitting the trend and the harmonics together, which
+        # can tell apart peaks the periodogram gives the same power. Not worth
+        # failing the fit over: the periodogram's own order is still an answer
+        highest = pg['peaks'][0]
+        try:
+            peaks, scale = refine_peaks(loaded, pg['peaks'], detrend_window,
+                                        time_span)
+        except Exception:
+            import traceback
+            traceback.print_exc()
+            peaks, scale = pg['peaks'], None
+            notes.append('The highest peaks could not be fitted again with the '
+                         'trend and harmonics together, so they are ranked by '
+                         'periodogram power alone.')
+
+        best = peaks[0]
         best_period = best['period']
         best_power = best['power']
         best_freq = best['frequency']
         fap = best['fap']
 
-        notes = []
+        if scale is not None:
+            if best.get('periodogram_period') != highest['period']:
+                notes.append(
+                    f'The highest periodogram peak is at {highest["period"]:.6f} days, '
+                    f'but fitting the trend and {PERIOD_HARMONICS} harmonics of the period '
+                    f'together prefers {best_period:.6f} days.')
+
+            # Peaks the data cannot tell apart. Scaled by the reduced chi-squared,
+            # as the errors of most surveys understate the scatter
+            for other in peaks[1:]:
+                dchi2 = (other['chi2'] - best['chi2']) / max(scale, 1.0)
+                if dchi2 < PERIOD_AMBIGUOUS_DCHI2:
+                    kind = alias_kind(best_freq, other['frequency'], time_span)
+                    notes.append(
+                        f'{other["period"]:.6f} days fits almost as well as {best_period:.6f} days '
+                        f'(scaled chi-squared {dchi2:.1f} higher)'
+                        + (f' - they are {kind} aliases of each other, which the sampling of these data cannot tell apart.'
+                           if kind else '.'))
 
         # Converging to an edge of the searched range usually means the real
         # period lies outside it. Reported rather than raised: the periodogram
@@ -763,7 +1059,8 @@ def fit_period(request, id):
             'time_span': float(time_span),
             # Decimated periodogram for display, plus its highest peaks
             'periodogram': {'periods': pg['periods'], 'power': pg['power']},
-            'peaks': pg['peaks'],
+            'peaks': peaks,
+            'harmonics': PERIOD_HARMONICS,
             'aliases': pg['aliases'],
             'nfreq': pg['nfreq'],
             'truncated': pg['truncated'],

@@ -287,7 +287,7 @@
     <div class="col-auto">
       <input type="number" class="form-control form-control-sm" id="detrend-window-input"
              style="width: 90px;" step="0.1" min="0.01" value="1"
-             title="Window in days. It must be several times the period being looked for, or the filter eats the signal along with the trend."
+             title="Window in days: the trend is a smooth curve with a knot every this many days, broken at gaps longer than that. It must be several times the period being looked for, or it takes the signal along with the trend."
              disabled>
     </div>
     <div class="col-auto">
@@ -1133,6 +1133,9 @@ function updatePeriodogramMarks() {
 }
 
 // Buttons for the highest peaks, as a shortcut to clicking them on the plot
+// How many harmonics the server fitted at each peak, for describing them
+let harmonicsFitted = 0;
+
 function showPeaks(peaks) {
     const list = document.getElementById('peaks-list');
     list.innerHTML = '';
@@ -1141,9 +1144,16 @@ function showPeaks(peaks) {
         const btn = document.createElement('button');
         btn.className = 'btn btn-sm ' + (i === 0 ? 'btn-primary' : 'btn-outline-secondary');
         btn.textContent = peak.period.toFixed(6) + ' d';
-        btn.title = 'power ' + peak.power.toFixed(4)
+        btn.title = 'periodogram power ' + peak.power.toFixed(4)
                   + (peak.fap !== null && peak.fap !== undefined
-                     ? ', FAP ' + peak.fap.toExponential(1) : ', FAP not available');
+                     ? ', FAP ' + peak.fap.toExponential(1) : ', FAP not available')
+                  // From fitting the trend and the harmonics together, which
+                  // is what the peaks are ranked by when it is there
+                  + (peak.fit_power !== null && peak.fit_power !== undefined
+                     ? '\nfit with ' + harmonicsFitted + ' harmonics explains '
+                       + (100 * peak.fit_power).toFixed(1) + '% of the variance about the trend'
+                       + ', chi2 ' + peak.chi2.toFixed(1)
+                     : '');
         btn.onclick = function() { setPeriod(peak.period); };
         list.appendChild(btn);
     });
@@ -1222,6 +1232,7 @@ function plotPeriodogram(data) {
             setPeriod(ev.points[0].x);
     });
 
+    harmonicsFitted = data.harmonics || 0;
     showPeaks(data.peaks || []);
 }
 
@@ -1415,6 +1426,13 @@ function fitPeriod() {
         message += `\nSearch range: ${data.period_min.toFixed(2)} - ${data.period_max.toFixed(2)} days\n`;
         message += `Time span: ${data.time_span.toFixed(2)} days\n`;
         message += `Fitted ${data.n_points} points from ${data.n_series} series.`;
+
+        if (data.peaks && data.peaks.length && data.peaks[0].fit_power !== undefined) {
+            message += `\n\nChosen among the ${data.peaks.length} highest peaks by fitting`
+                     + ` the trend and ${data.harmonics} harmonics of the period together`
+                     + ` - each series its own trend, each survey and filter its own`
+                     + ` amplitudes. Hover over the peak buttons for the fits.`;
+        }
 
         if (data.detrend_window) {
             message += `\n\nVariation slower than ${data.detrend_window} d was removed first`
