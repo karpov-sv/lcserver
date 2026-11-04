@@ -47,6 +47,20 @@ GAIA_XP_SR = 5.0
 GAIA_XP_TO_CGS = 100.0
 GAIA_XP_TO_ANGSTROM = 10.0
 
+# Where the sampled spectrum was not published - most sources, as it was for
+# some 34 million of the 220 million with XP coefficients - it is sampled here
+# from the coefficients, as the archive sampled its own. Two services hold
+# them: the TAP service at AIP, which mirrors the release table, and the
+# mission archive's DataLink. They agree value for value, and the spectrum
+# sampled from them without truncation is the archive's sampled one to the
+# float32 precision it is stored at.
+GAIA_XP_COEFFICIENT_SERVERS = ['https://gaia.aip.de/tap/sync',
+                               'https://gea.esac.esa.int/data-server/data']
+GAIA_XP_TIMEOUT = (10, 60)
+
+# The wavelengths, in nm, the archive's sampled spectra are given at
+GAIA_XP_SAMPLING = np.arange(336, 1021, 2)
+
 # The RVS mean spectra, as Vizier serves them, and the radius to look in.
 #
 # Gaia's third instrument, a narrow window around the calcium triplet that the
@@ -284,6 +298,79 @@ def _vsx_magnitude(row, key):
     band = _text(row, 'n_' + key)
 
     return f"{text} {band}" if band else text
+
+
+def _xp_coefficients(source_id, log=None):
+    """The XP coefficients of one Gaia DR3 source, as a table row, or None
+    where the service asked has none."""
+    def call(server):
+        if 'gaia.aip.de' in server:
+            res = requests.post(server, timeout=GAIA_XP_TIMEOUT, data={
+                'REQUEST': 'doQuery', 'LANG': 'ADQL', 'FORMAT': 'votable',
+                'QUERY': "SELECT * FROM gaiadr3.xp_continuous_mean_spectrum "
+                         f"WHERE source_id = {int(source_id)}"})
+        else:
+            res = requests.get(server, timeout=GAIA_XP_TIMEOUT, params={
+                'RETRIEVAL_TYPE': 'XP_CONTINUOUS', 'ID': int(source_id),
+                'RELEASE': 'Gaia DR3', 'FORMAT': 'votable',
+                'DATA_STRUCTURE': 'DATAMODEL_GAIA'})
+        res.raise_for_status()
+
+        # A refused query is a VOTable too, which would read as no rows
+        if b'QUERY_STATUS" value="ERROR"' in res.content:
+            raise cds.Refused("the query was refused")
+
+        # The DataLink answers a source it has nothing for with an empty body
+        if not res.content.strip():
+            return None
+
+        table = Table.read(BytesIO(res.content), format='votable')
+
+        return table[0] if len(table) else None
+
+    return cds.ask(GAIA_XP_COEFFICIENT_SERVERS, call, 'Gaia DR3 XP coefficients',
+                   log=log, key='gaiadr3_xp_continuous')
+
+
+def _xp_sampled(row, source_id):
+    """The spectrum the XP coefficients describe, at the archive's sampling.
+
+    Without truncation, which the archive's sampled spectra did not use either:
+    the higher-order coefficients carry little signal, but leaving them out
+    gives a different spectrum from the published one.
+    """
+    import contextlib
+    import pandas as pd
+    import matplotlib
+
+    # GaiaXPy turns on LaTeX for all text when imported, and every plot drawn
+    # after it in the worker would then go through latex - which fails on the
+    # first label with an ampersand. Its settings are put back as they were.
+    with matplotlib.rc_context():
+        from gaiaxpy import calibrate
+
+    record = {'source_id': int(source_id)}
+    for name in row.colnames:
+        if name in ('source_id', 'datalinkID'):
+            continue
+
+        value = row[name]
+        if np.ndim(value):
+            value = np.ma.filled(np.ma.asarray(value, dtype=float), np.nan)
+        record[name] = value
+
+    # GaiaXPy reports its progress on the console, which here is a worker's log
+    with open(os.devnull, 'w') as null, \
+            contextlib.redirect_stdout(null), contextlib.redirect_stderr(null):
+        spectra, sampling = calibrate(pd.DataFrame([record]),
+                                      sampling=GAIA_XP_SAMPLING,
+                                      truncation=False, save_file=False)
+
+    return Table({
+        'wavelength': np.asarray(sampling, dtype=float),
+        'flux': np.asarray(spectra['flux'].iloc[0], dtype=float),
+        'flux_error': np.asarray(spectra['flux_error'].iloc[0], dtype=float),
+    })
 
 
 # The three-dimensional maps are read one line of sight at a time, straight out
@@ -897,8 +984,11 @@ def target_info(config, basepath=None, verbose=True, show=False):
 
         # Said rather than left to silence: most sources have no XP spectrum,
         # and its absence below is otherwise indistinguishable from a failure
-        if _number(star, 'XPsamp') == 0:
+        if not _number(star, 'XPsamp') and not _number(star, 'XPcont'):
             log("No XP spectrum was published for this source")
+        elif not _number(star, 'XPsamp'):
+            log("Only the XP coefficients were published for this source, "
+                "so the spectrum is sampled from them")
 
         if _number(star, 'RVS') == 0:
             log("No RVS spectrum was published for this source")
@@ -914,8 +1004,10 @@ def target_info(config, basepath=None, verbose=True, show=False):
     # Gaia DR3 XP spectrum
     #
     # Published for a fraction of the catalogue only, and the catalogue says
-    # which - so nothing is asked for that is known not to be there.
-    if config.get('gaia_source') and _number(star, 'XPsamp'):
+    # which - so nothing is asked for that is known not to be there. The
+    # sampled spectrum where it was published, and otherwise the one the
+    # coefficients describe, which is also the way round Vizier being down.
+    if config.get('gaia_source') and (_number(star, 'XPsamp') or _number(star, 'XPcont')):
         log("\n---- Gaia DR3 XP spectrum ----\n")
 
         cache_name = f"gaiaxp_{ra:.4f}_{dec:.4f}.vot"
@@ -923,35 +1015,56 @@ def target_info(config, basepath=None, verbose=True, show=False):
         with cached_votable_query(cache_name, basepath, log, 'Gaia DR3 XP spectrum',
                                   refresh=refresh_cache) as cache:
             if not cache.hit:
-                try:
-                    # Vizier serves the same spectra as the mission archive -
-                    # checked point by point, and identical to the precision
-                    # they are stored at - which keeps this on the one service
-                    # the rest of the step already talks to
-                    xp = cds.vizier_region(ra, dec, GAIA_XP_SR,
-                                           GAIA_XP_CATALOGUE, log=log)
+                xp = None
+                # Whether every service asked answered, so that an empty
+                # answer may be cached as one
+                answered = True
 
-                    if xp is not None:
-                        # A cone this size can hold more than one Gaia source,
-                        # each with its own spectrum, so the nearest is taken
-                        if 'Source' in xp.colnames and config.get('gaia_source'):
-                            wanted = xp['Source'] == config['gaia_source']
-                            if np.sum(wanted):
-                                xp = xp[wanted]
+                if _number(star, 'XPsamp'):
+                    try:
+                        # Vizier serves the same spectra as the mission archive -
+                        # checked point by point, and identical to the precision
+                        # they are stored at - which keeps this on the one service
+                        # the rest of the step already talks to
+                        xp = cds.vizier_region(ra, dec, GAIA_XP_SR,
+                                               GAIA_XP_CATALOGUE, log=log)
 
-                        xp = Table({
-                            'wavelength': np.asarray(xp['lambda'], dtype=float),
-                            'flux': np.asarray(xp['Flux'], dtype=float),
-                            'flux_error': np.asarray(xp['e_Flux'], dtype=float),
-                        })
-                        xp.sort('wavelength')
-                        cache.save(xp)
-                    else:
-                        cache.save_empty()
+                        if xp is not None:
+                            # A cone this size can hold more than one Gaia source,
+                            # each with its own spectrum, so the nearest is taken
+                            if 'Source' in xp.colnames and config.get('gaia_source'):
+                                wanted = xp['Source'] == config['gaia_source']
+                                if np.sum(wanted):
+                                    xp = xp[wanted]
+
+                            xp = Table({
+                                'wavelength': np.asarray(xp['lambda'], dtype=float),
+                                'flux': np.asarray(xp['Flux'], dtype=float),
+                                'flux_error': np.asarray(xp['e_Flux'], dtype=float),
+                            })
+                            xp.sort('wavelength')
+                    except Exception as e:
+                        log(f"Error: could not fetch the sampled XP spectrum: {e}")
+                        answered = False
                         xp = None
-                except Exception as e:
-                    log(f"Error: could not fetch the XP spectrum: {e}")
-                    xp = None
+
+                if xp is None and _number(star, 'XPcont'):
+                    try:
+                        row = _xp_coefficients(config['gaia_source'], log=log)
+
+                        if row is not None:
+                            xp = _xp_sampled(row, config['gaia_source'])
+                            log("Sampled from the XP coefficients, at the wavelengths "
+                                "the archive samples its own spectra at")
+                    except Exception as e:
+                        log(f"Error: could not get the XP spectrum from its coefficients: {e}")
+                        answered = False
+                        xp = None
+
+                if xp is not None:
+                    cache.save(xp)
+                elif answered:
+                    cache.save_empty()
             else:
                 xp = cache.data
 

@@ -25,3 +25,5 @@ corner
 extinction
 h5py
 pyphot
+
+gaiaxpy
