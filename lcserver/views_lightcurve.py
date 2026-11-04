@@ -787,6 +787,20 @@ def fit_period(request, id):
         except (TypeError, ValueError):
             detrend_window = 0.0
 
+        # The dates to search within, in MJD. Either end may be left open
+        try:
+            mjd_min, mjd_max = (None if data.get(_) in (None, '') else float(data[_])
+                                for _ in ('mjd_min', 'mjd_max'))
+        except (TypeError, ValueError):
+            return JsonResponse({'error': 'Invalid date range',
+                                 'details': 'The dates must be MJDs'}, status=400)
+
+        if mjd_min is not None and mjd_max is not None and mjd_max <= mjd_min:
+            return JsonResponse({
+                'error': 'Invalid date range',
+                'details': f'The end of the date range (MJD {mjd_max}) must be after its start (MJD {mjd_min})'
+            }, status=400)
+
         if detrend_window and detrend_window <= 0:
             return JsonResponse({
                 'error': 'Invalid detrending window',
@@ -865,15 +879,25 @@ def fit_period(request, id):
 
             # Filter out non-finite values
             valid = np.isfinite(t) & np.isfinite(y) & np.isfinite(dy) & (dy > 0)
+            t, y, dy = t[valid], y[valid], dy[valid]
 
-            if not np.any(valid):
+            # Only the dates asked for are searched, while the trend is taken
+            # off the whole series: the viewer shows every point, so it gets
+            # every point back
+            searched = np.ones(len(t), dtype=bool)
+            if mjd_min is not None:
+                searched &= t >= mjd_min
+            if mjd_max is not None:
+                searched &= t <= mjd_max
+
+            if not np.any(searched):
                 continue
 
-            t, y, dy = t[valid], y[valid], dy[valid]
             # The survey and filter the series is in, which its harmonics are
             # shared within
-            loaded.append((t, y, dy, (series.get('source_id'), series.get('filter'),
-                                      series.get('kind'))))
+            loaded.append((t[searched], y[searched], dy[searched],
+                           (series.get('source_id'), series.get('filter'),
+                            series.get('kind'))))
 
             # Detrended one series at a time, before they are pooled: each has
             # its own cadence and its own gaps, and a window in days means a
@@ -889,6 +913,8 @@ def fit_period(request, id):
                         'mjd': [round(float(_), 6) for _ in t],
                         'value': [round(float(_), 6) for _ in y],
                     })
+
+            t, y, dy = t[searched], y[searched], dy[searched]
 
             # Every series sits at a level of its own - magnitudes differ from
             # band to band, and the normalized fluxes of the TESS sectors are
@@ -906,6 +932,7 @@ def fit_period(request, id):
             return JsonResponse({
                 'error': 'No valid data points to fit',
                 'details': 'All data points were invalid (NaN, Inf, or non-positive errors)'
+                + (' or outside the date range' if mjd_min is not None or mjd_max is not None else '')
             }, status=400)
 
         # Concatenate all data
@@ -1057,6 +1084,8 @@ def fit_period(request, id):
             'period_min': float(period_min),
             'period_max': float(period_max),
             'time_span': float(time_span),
+            'mjd_min': mjd_min,
+            'mjd_max': mjd_max,
             # Decimated periodogram for display, plus its highest peaks
             'periodogram': {'periods': pg['periods'], 'power': pg['power']},
             'peaks': peaks,

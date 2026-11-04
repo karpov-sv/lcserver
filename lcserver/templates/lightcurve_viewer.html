@@ -295,10 +295,44 @@
     </div>
   </div>
 
+  <div class="row g-2 align-items-center mt-2">
+    <div class="col-auto">
+      <label class="col-form-label col-form-label-sm text-muted"
+             title="Only the points between these dates are searched for a period and shown folded. Either end may be left empty.">Dates (MJD):</label>
+    </div>
+    <div class="col-auto">
+      <label for="mjd-min-input" class="col-form-label col-form-label-sm">From:</label>
+    </div>
+    <div class="col-auto">
+      <input type="number" class="form-control form-control-sm" id="mjd-min-input"
+             style="width: 120px;" step="1" placeholder="start"
+             onchange="onDateRangeChange()">
+    </div>
+    <div class="col-auto">
+      <label for="mjd-max-input" class="col-form-label col-form-label-sm">To:</label>
+    </div>
+    <div class="col-auto">
+      <input type="number" class="form-control form-control-sm" id="mjd-max-input"
+             style="width: 120px;" step="1" placeholder="end"
+             onchange="onDateRangeChange()">
+    </div>
+    <div class="col-auto">
+      <button class="btn btn-sm btn-outline-secondary" onclick="dateRangeFromZoom()"
+              title="Take the dates from the time range the plot is zoomed to">
+        <i class="fa fa-search-plus"></i> From zoom
+      </button>
+    </div>
+    <div class="col-auto">
+      <button class="btn btn-sm btn-outline-secondary" onclick="clearDateRange()">
+        <i class="fa fa-times"></i> All dates
+      </button>
+    </div>
+  </div>
+
   <div class="mt-2">
     <small class="text-muted">
       Set period to enable phase folding. Phase range: -0.6 to 1.6 with wrapped data.
-      Use "Fit Period" to automatically find the best period using visible data sources and error filters,
+      Use "Fit Period" to automatically find the best period using visible data sources, error filters and dates,
       then click any peak of the periodogram below to fold at it.
     </small>
   </div>
@@ -316,6 +350,24 @@
 </div>
 
 <!-- Statistics of whatever is currently on display -->
+<!-- What a period fit found, with its notes - too long for an alert -->
+<div class="modal fade" id="fit-result-modal" tabindex="-1" aria-labelledby="fit-result-modal-title" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="fit-result-modal-title">Period Fit</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <div id="fit-result-text" class="small" style="white-space: pre-wrap;"></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <div class="modal fade" id="stats-modal" tabindex="-1" aria-labelledby="stats-modal-title" aria-hidden="true">
   <div class="modal-dialog modal-lg modal-dialog-scrollable">
     <div class="modal-content">
@@ -608,6 +660,7 @@ function updatePlot() {
         if (isPhaseFolded) {
             // Phase-folded mode (with caching for performance)
             const phaseData = preparePhaseData(series, index, phasePeriod, phaseEpoch);
+            const dates = dateRange();
             totalPoints = phaseData.phases.length;
 
             // Filter and build arrays in a single pass (more efficient)
@@ -619,7 +672,8 @@ function updatePlot() {
             const hasMaxErrorFilter = isMagnitudeMode && state.maxError !== null;
 
             for (let i = 0; i < totalPoints; i++) {
-                if (!hasMaxErrorFilter || withinMaxError(phaseData.errs[i], state.maxError)) {
+                if ((!hasMaxErrorFilter || withinMaxError(phaseData.errs[i], state.maxError))
+                        && inDateRange(phaseData.mjds[i], dates)) {
                     xData.push(phaseData.phases[i]);
                     yData.push(phaseData.values[i] + state.offset);
                     errData.push(phaseData.errs[i]);
@@ -812,7 +866,7 @@ function updatePlot() {
                         dash: 'dash'
                     }
                 }
-            ] : (!isMagnitudeMode ? [
+            ] : dateRangeShapes(useMJDMode).concat(!isMagnitudeMode ? [
                 {
                     type: 'line',
                     x0: 0,
@@ -909,7 +963,7 @@ function updatePlot() {
                         dash: 'dash'
                     }
                 }
-            ] : (!isMagnitudeMode ? [
+            ] : dateRangeShapes(useMJDMode).concat(!isMagnitudeMode ? [
                 {
                     type: 'line',
                     x0: 0,
@@ -989,6 +1043,84 @@ function clearPhaseFolding() {
         updatePlot();
         plotInitialized = true;
     }
+}
+
+// ----------------------------------------------------------------- date range
+
+// The dates the period is searched in and the folded curve is drawn from, in
+// MJD, either end null when open. The time plot still shows every point, with
+// the range shaded, so that what is left out stays in sight.
+function dateRange() {
+    const read = (id) => {
+        const v = parseFloat(document.getElementById(id).value);
+        return isFinite(v) ? v : null;
+    };
+    return {min: read('mjd-min-input'), max: read('mjd-max-input')};
+}
+
+function inDateRange(mjd, range) {
+    return (range.min === null || mjd >= range.min) && (range.max === null || mjd <= range.max);
+}
+
+function dateRangeShapes(useMJD) {
+    const range = dateRange();
+    if (range.min === null && range.max === null)
+        return [];
+
+    // An open end reaches past anything there is to plot
+    const lo = range.min === null ? 0 : range.min;
+    const hi = range.max === null ? 100000 : range.max;
+    const x = useMJD ? (v) => v : mjdToDate;
+
+    return [{
+        type: 'rect', xref: 'x', yref: 'paper',
+        x0: x(lo), x1: x(hi), y0: 0, y1: 1,
+        fillcolor: 'rgba(44, 160, 44, 0.08)', line: {width: 0}, layer: 'below'
+    }];
+}
+
+function onDateRangeChange() {
+    const range = dateRange();
+    if (range.min !== null && range.max !== null && range.max <= range.min) {
+        alert('Invalid date range! The start must be before the end.');
+        return;
+    }
+
+    // Kept zoom and all, as only the shading or the folded points change
+    if (plotInitialized) {
+        plotInitialized = false;
+        updatePlot();
+        plotInitialized = true;
+    }
+}
+
+// The time range the plot is zoomed to, as the date range
+function dateRangeFromZoom() {
+    const layout = document.getElementById('plotly-container').layout;
+
+    if (phasePeriod > 0) {
+        alert('The plot is folded. Clear the period to zoom in time, then take the dates from there.');
+        return;
+    }
+
+    if (!layout || !layout.xaxis || !layout.xaxis.range) {
+        alert('The plot has no range to take yet.');
+        return;
+    }
+
+    // An axis of dates holds them as strings, one of MJDs as numbers
+    const mjd = (v) => typeof v === 'number' ? v : axisValue(v) / 86400000 + 40587;
+    const ends = layout.xaxis.range.map(mjd).sort((a, b) => a - b);
+
+    document.getElementById('mjd-min-input').value = ends[0].toFixed(2);
+    document.getElementById('mjd-max-input').value = ends[1].toFixed(2);
+    onDateRangeChange();
+}
+
+function clearDateRange() {
+    document.getElementById('mjd-min-input').value = '';
+    document.getElementById('mjd-max-input').value = '';
+    onDateRangeChange();
 }
 
 // Multiply period by 2
@@ -1286,10 +1418,22 @@ function restoreDetrended() {
 }
 
 function applyDetrended(detrended) {
-    if (!detrended || !detrended.length) return;
+    detrended = detrended || [];
 
     const key = isMagnitudeMode ? 'mag' : 'flux';
     const errKey = isMagnitudeMode ? 'magerr' : 'flux_err';
+
+    // A series an earlier fit detrended but this one left out - hidden since,
+    // or with no points in the dates - goes back to what it was
+    const labels = new Set(detrended.map(part => part.label));
+    lightcurveData.forEach(series => {
+        if (series._undetrended && !labels.has(series.label)) {
+            series.mjd = series._undetrended.mjd;
+            series[key] = series._undetrended.value;
+            series[errKey] = series._undetrended.error;
+            delete series._undetrended;
+        }
+    });
 
     detrended.forEach(part => {
         const series = lightcurveData.find(s => s.label === part.label);
@@ -1311,7 +1455,7 @@ function applyDetrended(detrended) {
         series[errKey] = part.mjd.map(t => errors.has(t) ? errors.get(t) : 0);
     });
 
-    detrendedApplied = true;
+    detrendedApplied = lightcurveData.some(series => series._undetrended);
     redrawAfterDetrend();
 }
 
@@ -1362,6 +1506,12 @@ function fitPeriod() {
         return;
     }
 
+    const dates = dateRange();
+    if (dates.min !== null && dates.max !== null && dates.max <= dates.min) {
+        alert('Invalid date range! The start must be before the end.');
+        return;
+    }
+
     // Disable button and show loading state
     const btn = document.getElementById('fit-period-btn');
     const originalHtml = btn.innerHTML;
@@ -1380,7 +1530,9 @@ function fitPeriod() {
             mode: isMagnitudeMode ? 'magnitude' : 'flux',
             period_min: periodMin,
             period_max: periodMax,
-            detrend_window: detrendWindow()
+            detrend_window: detrendWindow(),
+            mjd_min: dates.min,
+            mjd_max: dates.max
         })
     })
     .then(response => {
@@ -1424,6 +1576,10 @@ function fitPeriod() {
         }
 
         message += `\nSearch range: ${data.period_min.toFixed(2)} - ${data.period_max.toFixed(2)} days\n`;
+        if (data.mjd_min !== null || data.mjd_max !== null) {
+            message += `Dates: MJD ${data.mjd_min !== null ? data.mjd_min : 'start'}`
+                     + ` to ${data.mjd_max !== null ? data.mjd_max : 'end'}\n`;
+        }
         message += `Time span: ${data.time_span.toFixed(2)} days\n`;
         message += `Fitted ${data.n_points} points from ${data.n_series} series.`;
 
@@ -1448,7 +1604,9 @@ function fitPeriod() {
             });
         }
 
-        alert(message);
+        // Text, not HTML: the notes quote whatever the server wrote
+        document.getElementById('fit-result-text').textContent = message;
+        bootstrap.Modal.getOrCreateInstance(document.getElementById('fit-result-modal')).show();
 
         // Before the plot is touched, so that both it and the phase fold show
         // the same points the period was found in
