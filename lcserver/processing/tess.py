@@ -38,6 +38,11 @@ from .utils import (break_at_gaps, cleanup_paths, cached_lightkurve_search,
 # with no uncertainties and no flags.
 TESS_AUTHORS = ['TESS-SPOC', 'QLP', 'SPOC']
 
+# How far from the target a TIC entry may be and still be taken as it. A TESS
+# pixel is 21 arcsec, so a wider radius is how to reach the light curve of a
+# neighbour whose aperture the target falls into when it has none of its own
+TESS_SR = 10.0
+
 # The pipelines read here rather than by lightkurve, which cannot open either
 TESS_OWN_READERS = {'TEQUILA': download_tequila_lightcurve,
                     'TARS': download_tars_lightcurve}
@@ -96,6 +101,12 @@ def select_detrended_flux(lc, log):
     output_files=['tess.log', 'tess_lc_*.vot', 'tess_lc_*.txt', 'tess_lc_*.png'],
     button_text='Get TESS lightcurves',
     form_fields={
+        'tess_sr': {
+            'type': 'float',
+            'label': 'Search radius, arcsec',
+            'initial': TESS_SR,
+            'required': False,
+        },
         'tess_author': {
             'type': 'choice',
             'label': 'Pipeline',
@@ -180,7 +191,7 @@ def target_tess(config, basepath=None, verbose=True, show=False):
     if 'target_ra' not in config or 'target_dec' not in config:
         raise RuntimeError("Cannot operate without target coordinates")
 
-    tess_sr = config.get('tess_sr', 10.0)
+    tess_sr = float(config.get('tess_sr') or TESS_SR)
 
     # Which reduction to take, in order of preference. Asking for one by name
     # keeps the others out, so that a sector is either that pipeline's or absent
