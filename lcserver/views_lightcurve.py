@@ -811,6 +811,59 @@ OC_SHIFT_SAMPLES = 200
 # Points a window needs beyond its trend for a phase shift to be measured
 OC_MIN_POINTS = 10
 
+# And how much of the cycle it needs to cover, in this many bins of phase:
+# the scraps the windows leave at the ends of a TESS sector cover a tenth of
+# a cycle of a slow rotator, which a template free to scale fits whatever its
+# phase. Not whole cycles - a day of WISE on a three day period covers half
+# of one, and is what counts the cycles across the years WISE had alone.
+OC_MIN_COVERAGE = 0.4
+OC_COVERAGE_BINS = 20
+
+# Chi-squared per window of the O-C about the model above which its scatter
+# is noted as more than the errors account for - twice them, in rms
+OC_EXCESS_SCATTER = 4.0
+
+# The residuals are binned by this fraction of a cycle to see whether they
+# average down as white noise would - the timescale a phase is measured on
+RED_NOISE_BIN_CYCLES = 0.1
+
+
+def red_noise_factor(times, residuals, bin_days):
+    """How much worse than white the noise of `residuals` is on `bin_days`.
+
+    The residuals, weighted, are averaged in bins of that many days. White
+    noise of variance s^2 leaves the mean of n points with s^2 / n, so the
+    mean of n * mean^2 over the bins is s^2 again; anything slower than the
+    bin - spots, granulation, the systematics of a sector - stays in the means
+    and makes it more. The ratio of the two scatters is the factor any
+    uncertainty taken from the residuals as if white has to grow by, the
+    beta of Pont, Zucker and Queloz (2006).
+
+    One when there are too few bins with more than one point to tell, as for
+    a survey that sees the star once a night.
+    """
+    times = np.asarray(times, dtype=float)
+    residuals = np.asarray(residuals, dtype=float)
+    if not bin_days > 0 or len(times) < 4:
+        return 1.0
+
+    residuals = residuals - np.mean(residuals)
+    _, index, counts = np.unique(np.floor((times - times.min()) / bin_days),
+                                 return_inverse=True, return_counts=True)
+    sums = np.bincount(index, weights=residuals)
+
+    full = counts > 1
+    if full.sum() < 3:
+        return 1.0
+
+    inside = full[index]
+    white = np.mean(residuals[inside] ** 2)
+    binned = np.mean(sums[full] ** 2 / counts[full])
+    if not white > 0:
+        return 1.0
+
+    return float(max(np.sqrt(binned / white), 1.0))
+
 
 class _PhaseModel:
     """A phase, in cycles, linear in the coefficients of a frequency that
@@ -962,9 +1015,13 @@ def fit_phase_model(series, window_days, model, coeffs, nharm=PERIOD_HARMONICS):
     the coefficients and makes the covariance of those the one marginalised
     over the rest.
 
-    Returns the coefficients, their covariance scaled by the reduced
-    chi-squared, the chi-squared and the degrees of freedom, and the harmonics
-    of every group as {group: coefficients}.
+    Returns the coefficients, their covariance, the chi-squared and the
+    degrees of freedom, the harmonics of every group as {group: coefficients},
+    and how much worse than white the residuals are on a tenth of a cycle -
+    `red_noise_factor`. The covariance is scaled by the reduced chi-squared
+    and by the square of that factor, as white noise is what it otherwise
+    assumes: a spotted star's light curve wanders from night to night in ways
+    no harmonics follow, and a period fitted through it is known no better.
     """
     from scipy.optimize import least_squares
 
@@ -1016,10 +1073,18 @@ def fit_phase_model(series, window_days, model, coeffs, nharm=PERIOD_HARMONICS):
     c = c0 + result.x * scale
     chi2 = float(2 * result.cost) + chi2_unfitted
 
-    jac = result.jac
-    cov = np.linalg.pinv(jac.T @ jac) * scale[:, None] * scale[None, :] * (chi2 / dof)
+    alpha = harmonics(c)
+    times = np.concatenate([fit.mjds for members in fitted.values() for fit, _ in members])
+    resid = np.concatenate([fit.residuals(basis @ c, alpha[g])[:len(fit.mjds)]
+                            for g, members in fitted.items() for fit, basis in members])
+    frequency = float(model.frequency_basis(model.tref)[0] @ c)
+    beta = red_noise_factor(times, resid, RED_NOISE_BIN_CYCLES / frequency)
 
-    return c, cov, chi2, dof, harmonics(c)
+    jac = result.jac
+    cov = (np.linalg.pinv(jac.T @ jac) * scale[:, None] * scale[None, :]
+           * (chi2 / dof) * beta ** 2)
+
+    return c, cov, chi2, dof, alpha, beta
 
 
 def _oc_windows(times, length):
@@ -1102,7 +1167,23 @@ def local_periods(series, window_days, frequency, length, nharm=PERIOD_HARMONICS
             continue
 
         f = grid[i] + 0.5 * step * (prev - nxt) / denom
-        error = np.sqrt(max(best / dof, 1.0) / (denom / (2 * step ** 2)))
+
+        # As for the O-C, no better known than the noise allows when it does
+        # not average down as white noise would
+        resid, rtimes = [], []
+        for members in fitted:
+            gram, proj = 0, 0
+            for fit in members:
+                g, p = fit.normal(f)
+                gram, proj = gram + g, proj + p
+            alpha = np.linalg.lstsq(gram, proj, rcond=None)[0]
+            for fit in members:
+                resid.append(fit.residuals(f * fit.mjds, alpha)[:len(fit.mjds)])
+                rtimes.append(fit.mjds)
+        beta = red_noise_factor(np.concatenate(rtimes), np.concatenate(resid),
+                                RED_NOISE_BIN_CYCLES / f)
+
+        error = np.sqrt(max(best / dof, 1.0) / (denom / (2 * step ** 2))) * beta
 
         out.append((float(np.mean(times)), float(times.min()), float(times.max()),
                     int(len(times)), float(f), float(error)))
@@ -1188,8 +1269,15 @@ def measure_oc(series, window_days, phase, templates, length, nharm=PERIOD_HARMO
     and would push the shift about if held to it.
 
     Returns per window (mean MJD, first and last MJD, number of points, phase
-    shift, its uncertainty, amplitude), the shift in [-0.5, 0.5) and its
-    uncertainty scaled by the reduced chi-squared of the window when above one.
+    shift, its uncertainty, amplitude, red noise factor), the shift in
+    [-0.5, 0.5). Its uncertainty is that of white noise, scaled by the reduced
+    chi-squared of the window when above one and then by how much worse than
+    white the residuals are on a tenth of a cycle - `red_noise_factor`. Night
+    to night variability the template does not follow does not average down
+    over the thousands of points of a TESS sector, and the shift is no better
+    known than it allows.
+
+    Windows covering less than OC_MIN_COVERAGE of the cycle are left out.
     """
     alltimes = np.concatenate([t for t, _, _, _ in series])
     grid = np.arange(OC_SHIFT_SAMPLES) / OC_SHIFT_SAMPLES - 0.5
@@ -1197,7 +1285,11 @@ def measure_oc(series, window_days, phase, templates, length, nharm=PERIOD_HARMO
     out = []
 
     for a, b in _oc_windows(alltimes, length):
+        # Cycles per day of the reference, which the phase is linear in
+        frequency = float(phase(np.array([a + 1.0]))[0] - phase(np.array([a]))[0])
+
         parts = {}
+        members = []
         chi2_trend, npts, ntrend = 0.0, 0, 0
         times = []
         for t, y, dy, group in series:
@@ -1205,15 +1297,22 @@ def measure_oc(series, window_days, phase, templates, length, nharm=PERIOD_HARMO
             if group not in templates or not np.any(k):
                 continue
             fit = _SeriesFit(t[k], y[k], dy[k], window_days, nharm)
-            gram, proj = fit.normal_at(phase(t[k]))
+            ph = phase(t[k])
+            gram, proj = fit.normal_at(ph)
             g0, p0 = parts.get(group, (0, 0))
             parts[group] = (g0 + gram, p0 + proj)
+            members.append((fit, ph, group))
             chi2_trend += fit.chi2_trend
             npts += k.sum()
             ntrend += fit.ntrend
             times.append(t[k])
 
         if npts < ntrend + 2 + OC_MIN_POINTS:
+            continue
+
+        times = np.concatenate(times)
+        covered = np.unique(np.floor((phase(times) % 1.0) * OC_COVERAGE_BINS)).size
+        if covered < OC_MIN_COVERAGE * OC_COVERAGE_BINS:
             continue
 
         num, den = 0.0, 0.0
@@ -1232,16 +1331,24 @@ def measure_oc(series, window_days, phase, templates, length, nharm=PERIOD_HARMO
             continue
 
         shift = grid[i] + 0.5 * step * (prev - nxt) / (prev - 2 * best + nxt)
+        amplitude = float(num[i] / den[i])
         reduced = best / max(npts - ntrend - 2, 1)
-        error = np.sqrt(max(reduced, 1.0) / curv)
+
+        # The residuals of the template as fitted, to see how white they are
+        residuals = np.concatenate([
+            fit.residuals(ph, amplitude * _rotate(templates[group], shift, nharm)[0])[:len(ph)]
+            for fit, ph, group in members])
+        beta = red_noise_factor(np.concatenate([fit.mjds for fit, _, _ in members]),
+                                residuals, RED_NOISE_BIN_CYCLES / frequency)
+
+        error = np.sqrt(max(reduced, 1.0) / curv) * beta
 
         # Not measured, only guessed at: no better than a quarter of a cycle
         if error > 0.25:
             continue
 
-        times = np.concatenate(times)
         out.append((float(np.mean(times)), float(times.min()), float(times.max()), int(npts),
-                    float((shift + 0.5) % 1.0 - 0.5), float(error), float(num[i] / den[i])))
+                    float((shift + 0.5) % 1.0 - 0.5), float(error), amplitude, beta))
 
     return out
 
@@ -1806,13 +1913,13 @@ def _fit_period_change(request, id):
             if fitted[2] < stages[-1][1][2]:
                 stages[-1] = (model, fitted)
 
-        coeffs, cov, chi2, dof, harmonics = stages[-1][1]
+        coeffs, cov, chi2, dof, harmonics, red_noise = stages[-1][1]
         reduced = chi2 / dof
 
         # Each stage scored against the scatter the last one leaves, as the
         # errors of most surveys understate it
         scored = []
-        for m, (c, _, x2, d, _) in stages:
+        for m, (c, _, x2, d, _, _) in stages:
             scored.append({'model': m.describe(), 'ncoef': m.ncoef,
                            'chi2': round(x2, 2),
                            'bic': round(x2 / max(reduced, 1e-12) + m.ncoef * np.log(npoints), 2)})
@@ -1857,13 +1964,28 @@ def _fit_period_change(request, id):
         # Each shift taken a whole number of cycles from where the model has it,
         # which is what counts the cycles across the gaps
         oc_points = {'mjd': [], 'mjd_min': [], 'mjd_max': [], 'n': [], 'oc': [],
-                     'oc_err': [], 'amplitude': []}
-        for tm, ta, tb, n, shift, err, amp in oc:
+                     'oc_err': [], 'amplitude': [], 'red_noise': []}
+        for tm, ta, tb, n, shift, err, amp, beta in oc:
             shift += np.round(offset(tm)[0] - shift)
             for key, value in zip(oc_points, (round(tm, 4), round(ta, 4), round(tb, 4), n,
                                               round(float(shift * period), 6),
-                                              round(err * period, 6), round(amp, 4))):
+                                              round(err * period, 6), round(amp, 4),
+                                              round(beta, 2))):
                 oc_points[key].append(value)
+
+        # How far the O-C strays from the model, against its errors. Well
+        # above one, the phase wanders more than the noise accounts for -
+        # which on a spotted star is the spots, growing, decaying and
+        # migrating, and otherwise a model too simple for the period
+        oc_scatter = None
+        if len(oc_points['mjd']) > 1:
+            dev = (np.array(oc_points['oc']) / period - offset(np.array(oc_points['mjd'])))
+            oc_scatter = float(np.mean((dev * period / np.array(oc_points['oc_err'])) ** 2))
+            if oc_scatter > OC_EXCESS_SCATTER:
+                notes.append(f'The O-C scatters about the model {np.sqrt(oc_scatter):.1f} times more than '
+                             f'its errors allow (chi-squared {oc_scatter:.1f} per window) - the phase '
+                             f'wanders beyond the noise, as spots make it on a spotted star, or the '
+                             f'model is too simple for how the period changes.')
 
         # A window the model misses by a good part of a cycle has its cycle
         # count in doubt, and with it the model around it
@@ -1941,6 +2063,11 @@ def _fit_period_change(request, id):
                 'offset_err': [round(float(_), 8) for _ in offset_err],
             },
             'oc': oc_points,
+            # Chi-squared per window of the O-C about the model
+            'oc_scatter': oc_scatter,
+            # How much worse than white the residuals of the fit are, which the
+            # errors of the model are scaled by
+            'red_noise': round(red_noise, 2),
             'detrended': detrended,
             # The period within each window, on its own
             'local': {

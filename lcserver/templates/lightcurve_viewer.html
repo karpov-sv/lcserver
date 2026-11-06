@@ -1920,8 +1920,9 @@ function fitPeriodChange() {
             + `  P = ${data.period_tref.toFixed(6)} ± ${data.period_tref_err.toExponential(1)} d\n`
             + `  dP/dt = ${data.pdot.toExponential(3)} ± ${data.pdot_err.toExponential(1)} d/d`
             + ` = ${(data.pdot * perYear).toExponential(3)} d/yr\n\n`
-            + `χ² = ${data.chi2.toFixed(1)}, reduced ${data.reduced_chi2.toFixed(2)} `
-            + `- the errors above are scaled by it\n`
+            + `χ² = ${data.chi2.toFixed(1)}, reduced ${data.reduced_chi2.toFixed(2)}; `
+            + `the noise is ${data.red_noise.toFixed(1)}× worse than white on a tenth of a cycle `
+            + `- the errors above are scaled by both\n`
             + `Fitted ${data.n_points} points from ${data.n_series} series over ${data.time_span.toFixed(1)} days`
             + (data.detrend_window ? `, each with its trend slower than ${data.detrend_window} d` : '')
             + `.\n\nBy model (lower BIC is better):\n`;
@@ -1931,7 +1932,11 @@ function fitPeriodChange() {
         });
 
         message += `\nO−C measured in ${data.oc.mjd.length} windows of ${data.oc_window} d, `
-                 + `the period on its own in ${data.local.mjd.length} of them.`;
+                 + `the period on its own in ${data.local.mjd.length} of them.`
+                 + (data.oc_scatter !== null
+                    ? ` The O−C scatters about the model with χ² ${data.oc_scatter.toFixed(1)} per window`
+                      + ` - about one if its errors account for all of it.`
+                    : '');
 
         if (data.warnings && data.warnings.length > 0) {
             message += '\n\n⚠️  Warnings:\n';
@@ -2001,9 +2006,11 @@ function plotOC(data) {
         x: oc.mjd, y: oc.oc, mode: 'markers', type: 'scatter', name: 'O−C',
         error_y: {type: 'data', array: oc.oc_err, visible: true, thickness: 1},
         marker: {color: '#1f77b4', size: 6},
-        customdata: oc.mjd.map((_, i) => [oc.mjd_min[i], oc.mjd_max[i], oc.n[i], oc.amplitude[i], oc.oc_err[i]]),
+        customdata: oc.mjd.map((_, i) => [oc.mjd_min[i], oc.mjd_max[i], oc.n[i], oc.amplitude[i],
+                                          oc.oc_err[i], oc.red_noise[i]]),
         hovertemplate: 'MJD %{customdata[0]:.1f} – %{customdata[1]:.1f}, %{customdata[2]} points'
                      + '<br>O−C %{y:.4f} ± %{customdata[4]:.4f} d'
+                     + ' (noise %{customdata[5]:.1f}× worse than white)'
                      + '<br>amplitude %{customdata[3]:.2f} × the template<extra></extra>'
     }, Object.assign({}, band, {
         x: curve.mjd, y: resUpper, yaxis: 'y3', line: {width: 0}, showlegend: false
@@ -2058,7 +2065,10 @@ function plotOC(data) {
     const good = local.period.filter((p, i) => local.period_err[i] < Math.max(span, 1e-4 * data.period));
     const all = curve.period.concat(good, [data.period]);
     const lo = Math.min(...all), hi = Math.max(...all);
-    const pad = 0.1 * (hi - lo) || 1e-4 * data.period;
+    // At least as wide as the band is where it is typical, so that a period
+    // that barely changes is not drawn as filling the panel with its band
+    const errs = curve.period_err.slice().sort((a, b) => a - b);
+    const pad = Math.max(0.1 * (hi - lo), 2 * errs[errs.length >> 1], 1e-6 * data.period);
 
     const axis = {showline: true, linecolor: theme.linecolor, gridcolor: theme.gridcolor,
                   zeroline: false, automargin: true};
