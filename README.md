@@ -9,7 +9,7 @@ survey in turn for whatever photometry they hold, from Hipparcos transits of
 1989 to last week's ZTF. Each survey's data is kept in its own band as
 published, plots and tables are written per source, and an interactive viewer
 overlays them so a variable star's behaviour over thirty years can be looked at
-in one place.
+in one place, searched for a period, and followed when that period changes.
 
 Alongside the light curves it collects what else is on record for the same
 position: archival spectra, a spectral energy distribution built from the
@@ -63,18 +63,21 @@ pair of axes — the whole record, and the recent years on their own.
 
 | | Coverage |
 | --- | --- |
+| IUE | INES archive, 1978–1996, 1150–3350 Å, low resolution and echelle rebinned to it |
 | SDSS | DR17, 3600–10400 Å |
 | LAMOST | DR11, northern sky, 3700–9100 Å |
 | DESI | DR1, 3600–9800 Å, northern sky |
 | APOGEE | DR17, H band, 1.51–1.70 µm |
 | SPHEREx | QR2+QR3 spectrophotometry, all sky, 0.75–5 µm |
 | ESO archive | reduced UVES, X-shooter, FEROS, HARPS, GIRAFFE and the rest |
+| IACOB | Galactic OB stars at R = 25000–85000, 3500–9200 Å, continuum normalised |
 | Gaia | DR3 XP and RVS, fetched by the info step |
 
 Every spectrum is stored on one physical scale — wavelength in Å, flux in
 erg/s/cm²/Å — whatever the survey published in, so they can be read against
 each other. A source with no flux calibration says so and is divided by its own
-median instead.
+median instead. IACOB's spectra are normalised to the continuum, and the
+viewer loads them unticked.
 
 ### Catalogue photometry
 
@@ -83,6 +86,32 @@ catalogues cover the target, 0.15 to 22 µm, each point carrying the width of
 the band it was measured in and a note of where on the sky it was measured —
 GALEX and AllWISE do not centroid alike, and a point several arcsec away may
 belong to something else.
+
+## Period analysis
+
+The light curve viewer folds any selection of series at a period, and searches
+for one. The Lomb-Scargle periodogram is of the series pooled, each about its
+own median; its highest peaks are then fitted again — each series with its own
+trend, each survey and filter with its own harmonics — and ranked by that fit,
+which is what tells apart the aliases a periodogram gives the same power. A
+slow trend can be fitted alongside, so that a short period can be looked for
+underneath it, and the search limited to a range of dates.
+
+A period that changes is fitted from there: the phase as the integral of a
+frequency that is a polynomial in time, or a spline with a knot every so many
+days, started from the period being folded at. Counting the cycles across the
+seasonal gaps is what such a fit lives or dies by, so it starts both from the
+phases of windows that follow the seasons, linked one window at a time, and
+from the periods found within each window, and keeps whichever fits best. The
+answer is drawn as an O−C diagram against the period and T₀ folded at, with
+the model and its band, the residuals from it, and the period with time beside
+the period each window finds on its own — the one check on the count of
+cycles that does not depend on it. The light curve can then be folded with the
+model's phase.
+
+The errors allow for noise that does not average down as white noise would,
+which over the thousands of points of a TESS sector is most of it, and the
+summary says when the O−C wanders beyond them — as on a spotted star it will.
 
 ## Fitting a photosphere
 
@@ -100,11 +129,11 @@ submillimetre bands take a flux and not a magnitude: SPIRE PMW and PLW lie past
 the red end of the reference Vega spectrum, so there is no zero point to read a
 magnitude against, and the picker says so.
 
-Twenty-one grids are installed and twelve are on the form, several at a time:
-BT-Settl, Phoenix, BOSZ, Castelli & Kurucz, Kurucz, TLUSTY and Koester, and
-five PoWR grids for the Wolf-Rayet and OB stars with winds. They are not
-averaged. Two grids that both cover the regime disagree by an amount that is
-the systematic from the atmosphere physics, and that is reported as it stands.
+Several grids can be fitted at once — BT-Settl, Phoenix, BOSZ, Castelli &
+Kurucz, Kurucz, TLUSTY and Koester, and PoWR for the Wolf-Rayet and OB stars
+with winds, as far as they are installed. They are not averaged. Two grids that
+both cover the regime disagree by an amount that is the systematic from the
+atmosphere physics, and that is reported as it stands.
 What each of them actually says — where a colour stops following temperature,
 where two of them part company, which bands one can answer for at all — is the
 [`/models/`](#pages) page.
@@ -183,13 +212,16 @@ them.
 | | |
 | --- | --- |
 | `/targets/{id}/` | the target: every source, its form, its log and its plots |
-| `/targets/{id}/lightcurve/` | interactive viewer — series toggled and offset, folded, and a Lomb-Scargle period search that can look underneath a slow trend |
+| `/targets/{id}/lightcurve/` | interactive viewer — series toggled and offset, folded, a period search, and a period that changes with its O−C diagram |
 | `/targets/{id}/spectrum/` | spectral viewer, on the physical scale, with the lines marked that fall inside the range on show — and the photosphere fit, its runs and their figures |
+| `/targets/{id}/references/` | every paper SIMBAD links to the target, ranked by how much each is about it |
+| `/targets/{id}/catalogues/` | every VizieR catalogue with an entry at the target, those of the papers about it first |
 | `/targets/{id}/files/` | file browser over the target directory, previewing FITS, images and tables |
 | `/cutouts/` | multi-wavelength cutouts of any position, resolved on the fly — no target, no worker, no login |
 | `/passbands/` | the photometric conversions written out and calculable, over the transmission curves they run between |
 | `/models/` | what the model grids say — any parameter against any colour, magnitude or bolometric correction, over as many grids at once as you ask for, with the reddening and the radius as sliders; the families of spectra behind the cubes; and which bands each grid can answer for |
 | `/queue/` | Celery queue, chain positions, and the controls to stop a run |
+| `/about/` | where the data comes from — each archive and grid as it describes itself, with the acknowledgements they ask for |
 
 Plots follow the theme the reader is in.
 
@@ -198,10 +230,8 @@ Plots follow the theme the reader is in.
 - Python 3.11
 - Redis on `localhost`, database `1` — Celery's broker, result backend and cache
 - The packages in `requirements.txt`
-- For the photosphere fit, a directory of model grids. `astroARIADNE`, which is
-  not on PyPI, is where the first of them came from; once they have been read
-  and written out here it is not wanted again, and nothing in this application
-  imports it.
+- For the photosphere fit, a directory of model grids - see
+  [Model grids](#model-grids)
 - Optionally `dustmaps`, with `dustmaps.edenhofer2023.fetch()` and
   `dustmaps.bayestar.fetch()`, for extinction resolved in distance
 
@@ -213,45 +243,30 @@ python manage.py migrate
 python manage.py createsuperuser
 ```
 
-For the photosphere fit, some model grids. Any directory of them will do —
-`sedgrid --ingest-*` builds them from what the groups publish — and the quickest
-way to a first one is astroARIADNE, which ships a set:
+### Model grids
+
+The photosphere fit reads a directory of grids, `SEDFIT_GRIDS`. A grid is a
+file, and the directory is the registry: each grid is `<name>.h5`, the cube the
+fit interpolates, optionally beside `<name>.spectra.h5`, the spectra it was
+convolved from. Both carry what a reader should be told - a label, a
+description, how far out the grid may be believed - so nothing about a grid is
+written down anywhere else, and adding one is putting one there.
+
+`sedgrid --ingest-*` builds them from what the groups publish. The quickest way
+to a first set is astroARIADNE, which is not on PyPI and ships 46 MB of cubes:
 
 ```sh
 pip install git+https://github.com/jvines/astroARIADNE.git
+python manage.py sedgrid --split --to data/grids
 ```
 
-That is 46 MB of HDF5 cubes, installed beside the package, and they are found
-there without being told. `sedgrid --split` writes them out in this
-application's own layout, after which the package can go: nothing here imports
-it, and the passbands the cubes are keyed by are kept in
-`lcserver/processing/filters.py` rather than borrowed from it.
-
-`astroARIADNE.fetch.fetch_spectra_cache()` fetches a further 2.8 GB of the
-spectra those cubes were convolved from, which is what lets a model be drawn as
-a line rather than as a flux per band. It is optional, and a grid without it
-says so.
-
-### The grid directory
-
-A grid is a file, and the directory is the registry: what is installed is what
-is there, and adding one is putting one there. Each grid is `<name>.h5`, the
-cube the fit interpolates, optionally beside `<name>.spectra.h5`, the spectra it
-was convolved from. Both carry what a reader should be told - a label, a
-description, how far out the grid may be believed - so nothing about a grid is
-written down anywhere else.
-
-astroARIADNE's own layout, which names its files differently and keeps every
-spectrum in one cache, is read as it stands. To lay it out the other way:
-
-```sh
-python manage.py sedgrid --list
-python manage.py sedgrid --split --to /where/the/grids/should/live
-```
-
-and point `SEDFIT_GRIDS` at that directory. Splitting is worth it once you
-build grids of your own: adding one is then a file rather than an edit to a
-2.8 GB cache.
+and point `SEDFIT_GRIDS` at `data/grids`, after which the package can go:
+nothing here imports it, and the passbands the cubes are keyed by are kept in
+`lcserver/processing/filters.py` rather than borrowed from it. Left unset,
+`SEDFIT_GRIDS` reads astroARIADNE's own directory as it stands. `astroARIADNE.fetch.fetch_spectra_cache()` fetches a further
+2.8 GB of the spectra those cubes were convolved from, which is what lets a
+model be drawn as a line rather than as a flux per band; it is optional, and a
+grid without it says so.
 
 ## Running
 
@@ -326,100 +341,30 @@ terminal as it goes.
 
 ```sh
 python manage.py sedgrid --list
-python manage.py sedgrid --split --to ~/sedgrids
 python manage.py sedgrid --split --to ~/sedgrids --only btsettl tlusty
-python manage.py sedgrid --ingest-powr ~/Downloads/griddl-gal-ob-vd3-sed \
-    --to data/grids --label 'PoWR Gal OB Vd3' --description 'Galactic OB stars'
+python manage.py sedgrid --ingest-cdbs ~/tmp/kurucz/.../ck04models --to data/grids
 python manage.py sedgrid --ingest-powr ~/Downloads/griddl-wne-sed \
     --to data/grids --label 'PoWR WNE' --description 'early WN, Galactic'
-python manage.py sedgrid --ingest-tlusty ~/Downloads/obstar_merged_3d.ascii \
-    --to data/grids
-python manage.py sedgrid --ingest-cdbs ~/tmp/kurucz/.../k93models --to data/grids
-python manage.py sedgrid --ingest-cdbs ~/tmp/kurucz/.../ck04models --to data/grids
-python manage.py sedgrid --ingest-koester ~/Downloads/models_.../koester2 \
-    --to data/grids
-python manage.py sedgrid --ingest-bosz ~/tmp/bosz --to data/grids
-python manage.py sedgrid --ingest-btsettl ~/Downloads/bt-settl.medres.grid.fits \
-    --to data/grids
 python manage.py sedgrid --scatter            # or --scatter btsettl bosz
 python manage.py sedgrid --xp                 # or --xp tlusty bosz
-python manage.py sedgrid --iue                # or --iue tlusty bosz
 ```
 
-`--ingest-powr` converts a [PoWR](https://www.astro.physik.uni-potsdam.de/PoWR/)
-download - one file per model, the star as seen from ten parsecs - into a cube
-convolved through the same passbands every other grid was built with, plus the
-spectra to draw it from. It appears on the form as soon as it is written; there
-is nothing else to edit. It reads the OB grids and the Wolf-Rayet ones alike,
-and works out from the download's own table which quantity it varies beside the
-temperature: gravity for the OB grids, and for the WR grids the **transformed
-radius**, a wind density in disguise, since those hold luminosity fixed and give
-one gravity per temperature. Where that happens the file says so, the fit leaves
-any gravity prior off that axis, and every log and figure names it `log Rt`
-rather than reporting a wind density as a surface gravity.
+| | |
+| --- | --- |
+| `--list` | what the grid directory holds, where each grid's spectra are, and which are offered on the form - a grid is offered when it can say what it is |
+| `--split` | astroARIADNE's grids, one cube and one spectrum file each |
+| `--ingest-cdbs` | the 1993 Kurucz and 2004 Castelli & Kurucz atlases as STScI distributes them, to 50000 K where astroARIADNE's cubes stop at 12000; believed only to 8.5 µm, past which they are a Rayleigh-Jeans tail |
+| `--ingest-powr` | a [PoWR](https://www.astro.physik.uni-potsdam.de/PoWR/) download, OB or Wolf-Rayet; the WR grids vary the transformed radius rather than gravity, and say `log Rt` wherever it shows |
+| `--ingest-tlusty` | the [TLUSTY](https://tlusty.oca.eu/) OB grid from its merged file for Cloudy, with the spectra astroARIADNE's cube lacks |
+| `--ingest-bosz` | the spectra of one [BOSZ](https://archive.stsci.edu/hlsp/bosz) composition and broadening, out to 32 µm; a download holding more than one is refused |
+| `--ingest-btsettl` | BT-Settl's spectra from a nanometre to a millimetre, from the grid published for [pystellibs](https://github.com/mfouesneau/pystellibs) |
+| `--ingest-koester` | Koester's white-dwarf spectra, one file per model as SVO hands them out |
+| `--scatter` | a grid stored as a lattice rewritten as the models it actually holds, which gives back the band of parameter space a lattice with holes refuses - a sixth of it on BT-Settl |
+| `--xp`, `--iue` | each grid's Gaia XP bins (30 nm) or IUE bins (100 Å, 1250–3150 Å), from its spectra, for the fit to take as points |
 
-`--ingest-tlusty` reads a [TLUSTY](https://tlusty.oca.eu/) OB-star grid from the
-single merged file it is published in for Cloudy - which is what astroARIADNE's
-own TLUSTY cube was built from, so the new one is compared against the installed
-one band by band and the ratios printed. What it adds is the spectra, which that
-cube has none of, and the low-gravity edge a lattice with holes in it refuses.
-
-`--ingest-cdbs` reads an atlas in the layout STScI distributes them in — a
-directory per metallicity, one FITS per temperature, a flux column per gravity.
-The 1993 Kurucz atlas and the 2004 Castelli & Kurucz one are both this shape,
-and astroARIADNE's cubes for both came from them and stop at 12000 K, which is
-less than half of either: 7618 and 3808 models reaching 50000 K. Past about ten
-microns the atlases are a Rayleigh-Jeans tail rather than a model, so those
-grids are written believing themselves only to 8.5 µm.
-
-`--ingest-btsettl` writes BT-Settl's spectra from the medium-resolution grid
-published for [pystellibs](https://github.com/mfouesneau/pystellibs), which run
-from a nanometre to a millimetre where astroARIADNE's cache stopped at 4.63 µm.
-Only the spectra: that file covers 8132 of the cube's 14183 models, starting at
-2600 K where the cube starts at 400, so a cube from it would cost the cool and
-metal-poor ends. The two files are allowed to hold different models, and a fit
-outside the spectra is drawn per band as it was before.
-
-`--ingest-bosz` reads a [BOSZ](https://archive.stsci.edu/hlsp/bosz) download.
-That library is organised by rather more than the three axes a fit varies here —
-alpha enhancement, carbon abundance and microturbulence besides metallicity, and
-eight instrumental broadenings — so only one composition at one broadening is
-wanted, and only about one file in eight hundred of the archive. The cube here
-already came from the solar-abundance, 2 km/s slice; what the download adds is
-its spectra, out to 32 µm, which is further than any other grid here reaches at
-those temperatures. The ingest refuses a download holding more than one
-composition rather than average two of them together.
-
-`--ingest-koester` reads Koester's white-dwarf models as SVO hands them out, one
-file per model. The cube here was built from the same models and has no spectra;
-these are finely sampled through the optical, where a DA's Balmer lines are the
-whole of what there is to see. They stop at three microns, where a
-Rayleigh-Jeans tail takes over for the four bands just beyond — which the models
-are measurably already in, and which the cube it replaces got wrong, having W2
-brighter than W1 on a white dwarf.
-
-`--xp` writes each grid's Gaia XP bins beside it, from its spectra: a small
-cube — under a megabyte — holding a flux per 30 nm bin per model, which is what
-lets a fit take the spectrum as points rather than only compare with it. A grid
-with no spectra has nothing to bin and is skipped.
-
-`--iue` does the same for the IUE bins, 100 A from 1250 to 3150 A. A grid whose
-spectra start redward of 1250 A gets none, and a model with no flux in some
-bin - the coolest BOSZ ones - is left out of the cube.
-
-`--scatter` rewrites a grid stored as a lattice as the models it actually holds.
-A cube on a lattice has a place for every combination of its three axes and a
-real grid never computed most of them, so a box whose corners are not all models
-cannot be interpolated in and the fit refuses a band of parameter space all the
-way around the region that exists. Written as the models and triangulated over,
-that band comes back — a sixth of the reachable space on BT-Settl — and where
-both layouts answer they agree to about one per cent. Nothing is downloaded and
-no flux is recomputed.
-
-`--list` says what the grid directory holds, where each grid's spectra are, and
-which of them are offered on the fitting form — a grid is offered when it can
-say what it is, so the specialist grids astroARIADNE ships stay loadable by
-name without being put in front of someone who has been told nothing about them.
+A new grid is offered on the form as soon as it is written; there is nothing
+else to edit. What each ingest reads and why is in its module under
+`lcserver/ingest/`.
 
 ### `maintenance` — system checks and housekeeping
 
@@ -433,10 +378,8 @@ python manage.py maintenance --cleanup-old --days 30
 
 Anything destructive takes `--dry-run` first.
 
-`--check` includes a scan for Django template comments written across more than
-one line. `{# … #}` closes at the newline whether or not anything closed it, so
-the remainder of such a comment is rendered into the page; nothing else in the
-stack warns about it.
+`--check` also catches Django template comments written across more than one
+line, which render the rest of the comment into the page.
 
 ## Layout
 
@@ -455,15 +398,19 @@ lcserver/
 │   ├── bosz.py       a BOSZ download, one composition of the library
 │   ├── btsettl.py    BT-Settl's medium-resolution spectra, from their grid file
 │   ├── koester.py    white-dwarf models, one file each, as SVO hands them out
-│   └── scatter.py    a lattice rewritten as the models it actually holds
+│   ├── scatter.py    a lattice rewritten as the models it actually holds
+│   ├── xp.py         a grid's spectra binned as Gaia XP
+│   └── iue.py        a grid's spectra binned as IUE
 ├── surveys.py      the registry - metadata, bands, form fields, layout
 ├── celery_tasks.py task generation, and the canvas a full run is built into
 ├── views.py        pages, file browser
-├── views_lightcurve.py  the viewer, and the period search behind it
+├── views_lightcurve.py  the viewer, the period search and the period change fit
 ├── views_spectrum.py    the spectral viewer, and the photosphere fit behind it
 ├── views_cutouts.py     cutouts of any position, outside the target loop
 ├── views_passbands.py   the conversions, and the passbands they run between
 ├── views_models.py      the grids themselves - parameters, colours, spectra
+├── views_references.py  the papers about the target, and their catalogues
+├── views_about.py       where the data comes from, from the registry
 ├── views_celery.py      the queue
 └── templates/
 data/grids/         one model grid per file, the register the fitter reads
