@@ -313,10 +313,15 @@ Only the low dispersion spectra through the large aperture are used.">
           <input type="number" step="500" id="fit-nlive" class="form-control form-control-sm d-inline-block" style="width:75px" value="500">
         </div>
 
-        <button class="btn btn-sm btn-primary" id="fit-run" onclick="runFit()">
-          <i class="fa fa-play"></i> Fit
-        </button>
-        <span id="fit-status" class="spectrum-info"></span>
+        <div class="d-flex align-items-center gap-2">
+          <button class="btn btn-sm btn-primary" id="fit-run" onclick="runFit()">
+            <i class="fa fa-play"></i> Fit
+          </button>
+          <div class="d-flex flex-column gap-1">
+            <span id="fit-progress" class="gap-1" style="display: none;"></span>
+            <span id="fit-status" class="spectrum-info"></span>
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -1329,6 +1334,7 @@ Only the low dispersion spectra through the large aperture are used.">
      }))
      .then(data => {
          setFitStatus('Fitting - this takes tens of seconds per grid');
+         showFitProgress(null, grids);
          showFitLog(data.run_id);
          waitForFit(data.run_id);
      })
@@ -1379,6 +1385,78 @@ Only the low dispersion spectra through the large aperture are used.">
      button.innerHTML = running
          ? '<i class="fa fa-spinner fa-spin"></i> Fitting...'
          : FIT_BUTTON_IDLE;
+
+     // Shown and hidden by its style rather than by hidden, which a display
+     // class would override
+     if (!running) document.getElementById('fit-progress').style.display = 'none';
+ }
+
+ // How far a grid's sampler has got. Nested sampling stops when the evidence
+ // still unaccounted for falls to a tolerance, and that falls roughly
+ // exponentially - so the measure is how much of the way, on a log scale, it
+ // has come from the first value that meant anything. It is a guide, not a
+ // clock: it moves faster towards the end.
+ function samplingFraction(state) {
+     const now = state.dlogz, start = state.dlogz_start, end = state.dlogz_target;
+     if (now == null || start == null || !(end > 0)) return 0;
+     if (now <= end || start <= end) return 1;
+     return Math.min(1, Math.max(0,
+         Math.log(start / now) / Math.log(start / end)));
+ }
+
+ const FIT_STAGES = {
+     loading: 'loading the grid',
+     summarising: 'summarising',
+     finishing: 'comparing and writing',
+     plotting: 'plotting',
+     done: 'done',
+ };
+
+ // One segment per grid beside the button: those done full, the one being
+ // sampled filling, and a line of text saying which grid and what it is doing.
+ // Before the fit has written anything, the segments are there and empty.
+ function showFitProgress(state, grids) {
+     const host = document.getElementById('fit-progress');
+     grids = (state && state.grids) || grids || [];
+     if (!grids.length) return;
+
+     const at = state ? state.at : 0;
+     const current = state && state.stage === 'sampling'
+         ? samplingFraction(state)
+         : (state && state.stage === 'summarising' ? 1 : 0);
+
+     host.innerHTML = grids.map((grid, n) => {
+         const done = n < at ? 1 : (n === at ? current : 0);
+         return `<div class="progress" style="width: 3rem; height: 6px;" title="${grid}">
+                   <div class="progress-bar" style="width: ${(100 * done).toFixed(0)}%"></div>
+                 </div>`;
+     }).join('');
+     host.style.display = 'inline-flex';
+
+     if (!state) return;
+
+     let text;
+     if (state.stage === 'sampling') {
+         text = `${grids[at]} ${at + 1}/${grids.length}: ${state.niter} iterations`;
+         if (state.dlogz != null)
+             text += `, dlogz ${state.dlogz.toFixed(2)} of ${state.dlogz_target.toFixed(2)}`;
+     } else if (at < grids.length) {
+         text = `${grids[at]} ${at + 1}/${grids.length}: ${FIT_STAGES[state.stage] || state.stage}`;
+     } else {
+         text = (FIT_STAGES[state.stage] || state.stage)
+             + (state.grid ? ` ${state.grid}` : '');
+     }
+     setFitStatus(text);
+ }
+
+ function updateFitProgress(runId) {
+     fetch(`/targets/{{ target_id }}/view/sedfit/${runId}/progress.json`,
+           {cache: 'no-store'})
+         .then(r => r.ok ? r.json() : null)
+         .then(state => {
+             if (state && fitPoll) showFitProgress(state);
+         })
+         .catch(() => {});
  }
 
  // Polled on the target rather than on the task: the target is what carries a
@@ -1394,7 +1472,10 @@ Only the low dispersion spectra through the large aperture are used.">
                  // same code the target page uses on a running step
                  updateFitLog(data.logs);
 
-                 if (data.celery_id) return;
+                 if (data.celery_id) {
+                     updateFitProgress(runId);
+                     return;
+                 }
 
                  clearInterval(fitPoll);
                  fitPoll = null;

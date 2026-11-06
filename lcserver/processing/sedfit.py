@@ -326,6 +326,28 @@ def model_flux(theta, columns, ext_unit, grid):
 
 # ------------------------------------------------------------------- priors
 
+def prior_outside_grid(priors, grid):
+    """The prior that lies wholly outside the grid, in words, or None.
+
+    Such a prior leaves the sampler nothing but points the grid has no flux
+    for, and nested sampling does not fail on that: every likelihood is equally
+    bad, it calls the flat surface converged, and the run goes on to summarise
+    a posterior with no model in it. Only a prior with edges is checked - one
+    that only overlaps the grid in part is left as it is, the temperature
+    prior being meant to be the same whichever grid is fitted.
+    """
+    for p, (lo, hi) in grid.limits.items():
+        spec = priors.get(p)
+        if not spec or spec[0] not in ('uniform', 'loguniform'):
+            continue
+
+        if spec[2] < lo or spec[1] > hi:
+            return (f"its {p} of {lo:g}-{hi:g} is outside the prior"
+                    f" {spec[1]:g}-{spec[2]:g}")
+
+    return None
+
+
 def make_prior(spec, limits=None):
     """One parameter's prior as an inverse CDF, from a short specification.
 
@@ -407,6 +429,24 @@ def default_priors(grid, distance=None, distance_err=None, av_max=1.0):
 # a dozen lines saying how it got there, not a thousand saying it is alive.
 PROGRESS_SECONDS = 10.0
 
+# And how often it says so to the page, which only wants the latest - so it is
+# a file rewritten in place rather than a line appended, and can be frequent
+STATE_SECONDS = 1.0
+
+
+def write_progress(path, state):
+    """Where a running fit has got to, as progress.json in its directory.
+
+    Replaced whole rather than written into, so that a page reading it while
+    the fit writes never sees half a file.
+    """
+    import json
+
+    tmp = os.path.join(path, 'progress.json.tmp')
+    with open(tmp, 'w') as f:
+        json.dump(state, f, default=float)
+    os.replace(tmp, os.path.join(path, 'progress.json'))
+
 
 def log_likelihood(flux, flux_err, model, jitter):
     """How likely the fluxes are under a model, with the jitter the fit allows.
@@ -420,7 +460,8 @@ def log_likelihood(flux, flux_err, model, jitter):
 
 
 def fit(bands, wave_um, flux, flux_err, grid, priors,
-        nlive=500, dlogz=0.5, seed=None, verbose=True, progress=None):
+        nlive=500, dlogz=0.5, seed=None, verbose=True, progress=None,
+        state=None):
     """Sample the posterior for one grid. Returns whole rows, never marginals.
 
     The result carries ``samples`` as (n, 7) - equal-weight draws from the
@@ -458,33 +499,48 @@ def fit(bands, wave_um, flux, flux_err, grid, priors,
     # What is known at every iteration is how far the remaining evidence is
     # from the tolerance it is going to stop at, and that is what is reported.
     def announce(results, niter, ncall, *args, **kwargs):
-        now = time.time()
-        if now - announce.last < PROGRESS_SECONDS:
-            return
-
-        announce.last = now
-
         # The sampler's own record of how much evidence it thinks is still
         # out there, against the tolerance it will stop at. Above a million
         # it means nothing has been bracketed yet, which dynesty itself
         # prints as infinity.
         left = getattr(results, 'delta_logz', None)
-        target = kwargs.get('dlogz')
+        target = kwargs.get('dlogz') or dlogz
+        known = isinstance(left, float) and np.isfinite(left) and left < 1e6
+
+        # The first of it that means anything, which is what the page measures
+        # the rest of the way from
+        if known and announce.first is None:
+            announce.first = left
+
+        now = time.time()
+        if state and now - announce.last_state >= STATE_SECONDS:
+            announce.last_state = now
+            state({'niter': int(niter), 'ncall': int(ncall),
+                   'dlogz': float(left) if known else None,
+                   'dlogz_start': announce.first,
+                   'dlogz_target': float(target)})
+
+        if not progress or now - announce.last < PROGRESS_SECONDS:
+            return
+
+        announce.last = now
 
         line = f"  {niter} iterations, {ncall} likelihood calls"
-        if isinstance(left, float) and np.isfinite(left) and left < 1e6:
-            line += f", dlogz {left:.2f} of {target or dlogz:.2f} to go"
+        if known:
+            line += f", dlogz {left:.2f} of {target:.2f} to go"
 
         progress(line)
 
-    announce.last = time.time()
+    announce.last = announce.last_state = time.time()
+    announce.first = None
 
     sampler = dynesty.NestedSampler(
         likelihood, prior_transform, len(PARAMETERS),
         nlive=nlive, bound='multi', sample='rwalk',
         rstate=np.random.default_rng(seed))
-    sampler.run_nested(dlogz=dlogz, print_progress=bool(verbose or progress),
-                       print_func=announce if progress else None)
+    sampler.run_nested(dlogz=dlogz,
+                       print_progress=bool(verbose or progress or state),
+                       print_func=announce if progress or state else None)
 
     results = sampler.results
     weights = np.exp(results.logwt - results.logz[-1])
@@ -567,6 +623,9 @@ def summarise(result, grid=None):
 
     if grid is not None:
         best, chi2 = best_row(result, grid)
+        if best is None:
+            raise SourceError('no posterior sample has a model flux in every'
+                              ' band - the prior hardly reaches the grid')
         out['best'] = dict(zip(PARAMETERS, best))
         out['chi2'] = chi2
 
@@ -2578,8 +2637,18 @@ def target_sed_fit(config, basepath='.', outpath=None, selection=None,
             f" {xp['wave_um'][0] * 1e3:.0f} to {xp['wave_um'][-1] * 1e3:.0f} nm."
             f" It is compared with each fit and fitted by none of them")
 
+    # Where the fit has got to, for the page that started it: which grid of
+    # how many, and what that grid is doing
+    names = list(options.get('grids') or ['btsettl'])
+    os.makedirs(outpath, exist_ok=True)
+
+    def step(stage, at, **fields):
+        write_progress(outpath, {'stage': stage, 'grids': names, 'at': at,
+                                 **fields})
+
     runs, summaries = [], {}
-    for name in options.get('grids') or ['btsettl']:
+    for at, name in enumerate(names):
+        step('loading', at)
         # The bins are loaded whether or not they are fitted: unfitted, they
         # are what the comparison is made against, and that needs the same cube
         grid = load_grid(name, xp=xp is not None, iue=fit_iue)
@@ -2613,15 +2682,28 @@ def target_sed_fit(config, basepath='.', outpath=None, selection=None,
             log(f"\n{name}: {reason} - skipped")
             continue
 
+        outside = prior_outside_grid(priors, grid)
+        if outside:
+            log(f"\n{name}: {outside} - skipped")
+            continue
+
         log(f"\n---- Fitting {name} ----\n")
         log(f"Teff {grid.teff.min():.0f}-{grid.teff.max():.0f} K,"
             f" {len(grid.teff)} models")
         run = fit(bands, wave, flux, err, grid, priors,
                   nlive=options.get('nlive', 500), seed=options.get('seed', 0),
-                  verbose=False, progress=log)
+                  verbose=False, progress=log,
+                  state=lambda fields: step('sampling', at, **fields))
+        step('summarising', at)
         run['wave_drawn_um'] = drawn
         run['axis_logg'] = grid.axis_logg
-        summary = summarise(run, grid)
+        try:
+            summary = summarise(run, grid)
+        except SourceError as e:
+            # The other grids' runs are worth keeping, and this one says why
+            # it has nothing to add
+            log(f"{name}: {e} - skipped")
+            continue
         summary['axis_logg'] = grid.axis_logg
         summary['shrink'] = shrinkage(run, priors['teff'])
         summary['residuals'] = residual_table(run, summary, grid)
@@ -2674,6 +2756,8 @@ def target_sed_fit(config, basepath='.', outpath=None, selection=None,
 
     os.makedirs(outpath, exist_ok=True)
     for run, grid in runs:
+        step('finishing', len(names), grid=grid.name)
+
         # Named before anything is written under it. Unheaded, this pass put
         # three identical-looking XP tables one after another, each identified
         # only by the line that came after it - so the first was read as
@@ -2743,6 +2827,8 @@ def target_sed_fit(config, basepath='.', outpath=None, selection=None,
     # figure that will not render is not a reason to throw away an hour of
     # sampling. Whichever ones worked are on disk and the viewer finds them.
     if options.get('figures', True):
+        step('plotting', len(names))
+
         def drawn(what, filename):
             """A figure, named the way every other log names what it wrote."""
             if filename:
@@ -2770,6 +2856,8 @@ def target_sed_fit(config, basepath='.', outpath=None, selection=None,
     if len(summaries) > 1:
         log("\n---- Cross model comparison ----\n")
         log(f"grid-to-grid Teff spread {result['spread']['teff']:.0f} K")
+
+    step('done', len(names))
 
     return result
 
