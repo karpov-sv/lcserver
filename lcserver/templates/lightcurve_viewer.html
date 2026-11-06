@@ -96,6 +96,13 @@
     font-size: 0.9rem;
     text-shadow: 0 1px 2px rgba(0,0,0,0.3);
 }
+
+/* The summary of the last fit, wrapped as written and selectable */
+.fit-log pre {
+    white-space: pre-wrap;
+    background-color: var(--bs-body-bg);
+    color: var(--bs-body-color);
+}
 </style>
 {% endblock %}
 
@@ -201,6 +208,10 @@
     <button class="btn btn-sm btn-outline-primary pull-right" onclick="showStatistics()"
             title="Mean, median and scatter of every displayed source, over the points currently in view">
       <i class="fa fa-calculator"></i> Statistics
+    </button>
+    <button class="btn btn-sm btn-outline-primary pull-right me-2" onclick="downloadLightcurve()"
+            title="The points of every displayed source as CSV - as filtered, detrended if they are, and with their phase when folded">
+      <i class="fa fa-download"></i> Download
     </button>
   </div>
 </div>
@@ -349,6 +360,28 @@
     <div id="peaks-list" class="d-flex flex-wrap gap-1 mt-1"></div>
   </div>
 
+  <!-- What the last period search said, kept in sight to be checked or copied -->
+  <div id="period-log" class="fit-log mt-2" style="display: none;">
+    <div class="d-flex align-items-center mb-1">
+      <small class="text-muted me-auto panel-toggle collapsed" data-bs-toggle="collapse"
+             data-bs-target="#period-log-body" role="button" aria-expanded="false" aria-controls="period-log-body"
+             title="Click to show or hide the summary">
+        <i class="fa fa-caret-down"></i> Last period fit
+      </small>
+      <button class="btn btn-sm btn-outline-secondary me-2" onclick="downloadPeriodogram()"
+              title="The periodogram as drawn, and its highest peaks, as CSV">
+        <i class="fa fa-download"></i> Periodogram
+      </button>
+      <button class="btn btn-sm btn-outline-secondary" onclick="copyLog('period-log-text', this)"
+              title="Copy the text below">
+        <i class="fa fa-clipboard"></i> Copy
+      </button>
+    </div>
+    <div class="collapse" id="period-log-body">
+      <pre id="period-log-text" class="small border rounded p-2 mb-0"></pre>
+    </div>
+  </div>
+
   <!-- A period that changes with time, and the O-C of the data against the
        period folded at - a task of its own, once a period has been found -->
   <div class="border-top mt-3 pt-3">
@@ -419,6 +452,32 @@
   <div id="oc-box" class="plotly-resizable mt-2" style="height: 650px; display: none;">
     <div id="oc-container" class="plotly-chart"></div>
     <div class="plot-resize-handle" role="separator" title="Drag to resize the plot"></div>
+  </div>
+
+  <!-- What the last period change fit said - goes with its diagram -->
+  <div id="pc-log" class="fit-log mt-2" style="display: none;">
+    <div class="d-flex align-items-center mb-1">
+      <small class="text-muted me-auto panel-toggle collapsed" data-bs-toggle="collapse"
+             data-bs-target="#pc-log-body" role="button" aria-expanded="false" aria-controls="pc-log-body"
+             title="Click to show or hide the summary">
+        <i class="fa fa-caret-down"></i> Last period change fit
+      </small>
+      <button class="btn btn-sm btn-outline-secondary me-2" onclick="downloadOC()"
+              title="The O−C of every window, with the model and the residual from it, as CSV">
+        <i class="fa fa-download"></i> O−C
+      </button>
+      <button class="btn btn-sm btn-outline-secondary me-2" onclick="downloadModel()"
+              title="The period of the model with time and its O−C, with their errors, as CSV">
+        <i class="fa fa-download"></i> Model
+      </button>
+      <button class="btn btn-sm btn-outline-secondary" onclick="copyLog('pc-log-text', this)"
+              title="Copy the text below">
+        <i class="fa fa-clipboard"></i> Copy
+      </button>
+    </div>
+    <div class="collapse" id="pc-log-body">
+      <pre id="pc-log-text" class="small border rounded p-2 mb-0"></pre>
+    </div>
   </div>
 </div>
 
@@ -1644,6 +1703,8 @@ function fitPeriod() {
         return;
     }
 
+    const trendWindow = detrendWindow();
+
     // Disable button and show loading state
     const btn = document.getElementById('fit-period-btn');
     const originalHtml = btn.innerHTML;
@@ -1662,7 +1723,7 @@ function fitPeriod() {
             mode: isMagnitudeMode ? 'magnitude' : 'flux',
             period_min: periodMin,
             period_max: periodMax,
-            detrend_window: detrendWindow(),
+            detrend_window: trendWindow,
             mjd_min: dates.min,
             mjd_max: dates.max
         })
@@ -1713,7 +1774,8 @@ function fitPeriod() {
                      + ` to ${data.mjd_max !== null ? data.mjd_max : 'end'}\n`;
         }
         message += `Time span: ${data.time_span.toFixed(2)} days\n`;
-        message += `Fitted ${data.n_points} points from ${data.n_series} series.`;
+        message += `Fitted ${data.n_points} points from ${data.n_series} series: `
+                 + seriesSummary(visibleSeries) + '.';
 
         if (data.peaks && data.peaks.length && data.peaks[0].fit_power !== undefined) {
             message += `\n\nChosen among the ${data.peaks.length} highest peaks by fitting`
@@ -1735,6 +1797,12 @@ function fitPeriod() {
                 message += '  • ' + warning + '\n';
             });
         }
+
+        // Kept with it, for the periodogram's download
+        data.settings = {series: visibleSeries, detrend_window: trendWindow,
+                         mjd_min: dates.min, mjd_max: dates.max};
+        lastPeriodFit = data;
+        showLog('period-log', message);
 
         // Text, not HTML: the notes quote whatever the server wrote
         document.getElementById('fit-result-modal-title').textContent = 'Period Fit';
@@ -1808,6 +1876,8 @@ function dropPeriodModel() {
         box.style.display = 'none';
     }
     document.getElementById('oc-stale').style.display = 'none';
+    document.getElementById('pc-log').style.display = 'none';
+    lastChangeFit = null;
 }
 
 // What a period change fit is made from, short of the ephemeris it starts at:
@@ -1924,6 +1994,7 @@ function fitPeriodChange() {
             + `the noise is ${data.red_noise.toFixed(1)}× worse than white on a tenth of a cycle `
             + `- the errors above are scaled by both\n`
             + `Fitted ${data.n_points} points from ${data.n_series} series over ${data.time_span.toFixed(1)} days`
+            + ` - ${seriesSummary(selection.series)}`
             + (data.detrend_window ? `, each with its trend slower than ${data.detrend_window} d` : '')
             + `.\n\nBy model (lower BIC is better):\n`;
 
@@ -1944,6 +2015,9 @@ function fitPeriodChange() {
                 message += '  • ' + warning + '\n';
             });
         }
+
+        lastChangeFit = data;
+        showLog('pc-log', message);
 
         document.getElementById('fit-result-modal-title').textContent = 'Period Change Fit';
         document.getElementById('fit-result-text').textContent = message;
@@ -2095,6 +2169,188 @@ function plotOC(data) {
         plot_bgcolor: theme.plot_bgcolor,
         showlegend: true
     }, {responsive: true, displaylogo: false});
+}
+
+// ------------------------------------------------------- logs and downloads
+
+const TARGET_NAME = '{{ target.name|escapejs }}';
+
+// The fits whose logs are on show, for their downloads
+let lastPeriodFit = null;
+let lastChangeFit = null;
+
+// Which series a fit was asked for, and how filtered, for its log
+function seriesSummary(series) {
+    return series.map(s => s.label + (s.max_error !== null && s.max_error !== undefined
+                                      ? ` (errors ≤ ${s.max_error})` : '')).join(', ');
+}
+
+function showLog(id, text) {
+    document.getElementById(id + '-text').textContent = text;
+    document.getElementById(id).style.display = 'block';
+}
+
+function copyLog(id, button) {
+    const text = document.getElementById(id).textContent;
+    const done = () => {
+        const html = button.innerHTML;
+        button.innerHTML = '<i class="fa fa-check"></i> Copied';
+        setTimeout(() => { button.innerHTML = html; }, 1500);
+    };
+    // The clipboard API wants a secure context, which a server reached by
+    // its address on the network is not - selecting the text is the fallback
+    if (navigator.clipboard && window.isSecureContext) {
+        navigator.clipboard.writeText(text).then(done);
+    } else {
+        const range = document.createRange();
+        range.selectNodeContents(document.getElementById(id));
+        const selection = window.getSelection();
+        selection.removeAllRanges();
+        selection.addRange(range);
+        document.execCommand('copy');
+        done();
+    }
+}
+
+function csvField(value) {
+    if (value === null || value === undefined || (typeof value === 'number' && !isFinite(value)))
+        return '';
+    const text = String(value);
+    return /[",\n]/.test(text) ? '"' + text.replace(/"/g, '""') + '"' : text;
+}
+
+// A CSV file with what it is said in comment lines above the header
+function downloadCSV(filename, comments, header, rows) {
+    const lines = comments.map(c => '# ' + c);
+    lines.push(header.map(csvField).join(','));
+    rows.forEach(row => lines.push(row.map(csvField).join(',')));
+
+    const blob = new Blob([lines.join('\n') + '\n'], {type: 'text/csv'});
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+}
+
+function filePrefix() {
+    return `target{{ target_id }}_${isMagnitudeMode ? 'mag' : 'flux'}`;
+}
+
+// What any fit was made from, in comment lines
+function settingsComments(settings) {
+    const out = [`Series: ${seriesSummary(settings.series || [])}`];
+    if (settings.mjd_min !== null || settings.mjd_max !== null)
+        out.push(`Dates: MJD ${settings.mjd_min ?? 'start'} to ${settings.mjd_max ?? 'end'}`);
+    if (settings.detrend_window)
+        out.push(`Trend slower than ${settings.detrend_window} d fitted along`);
+    return out;
+}
+
+// Every point of every displayed source, as filtered on the plot - not the
+// offsets, which are for drawing - and with its phase when folded, as folded
+function downloadLightcurve() {
+    if (!dataLoaded) return;
+
+    const folded = phasePeriod > 0;
+    const dates = dateRange();
+    const valueKey = isMagnitudeMode ? 'mag' : 'flux';
+    const errKey = isMagnitudeMode ? 'magerr' : 'flux_err';
+    const rows = [];
+
+    lightcurveData.forEach((series, index) => {
+        const state = seriesState[index];
+        if (!state.visible) return;
+        const filtered = isMagnitudeMode && state.maxError !== null;
+
+        for (let i = 0; i < series.mjd.length; i++) {
+            const t = series.mjd[i];
+            if (filtered && !withinMaxError(series[errKey][i], state.maxError)) continue;
+            if (folded && !inDateRange(t, dates)) continue;
+            const row = [series.label, t, series[valueKey][i], series[errKey][i]];
+            if (folded) row.push(foldPhase(t, phasePeriod, phaseEpoch));
+            rows.push(row);
+        }
+    });
+
+    if (!rows.length) {
+        alert('No points are displayed.');
+        return;
+    }
+
+    const comments = [`${TARGET_NAME} - ${isMagnitudeMode ? 'magnitudes' : '{{ flux_sources }} flux'}`];
+    if (folded) {
+        comments.push(foldModel
+            ? `Folded with the period change model (${foldModel.model}) against P = ${phasePeriod} d, T0 = ${phaseEpoch} MJD`
+            : `Folded at P = ${phasePeriod} d, T0 = ${phaseEpoch} MJD`);
+        if (dates.min !== null || dates.max !== null)
+            comments.push(`Dates: MJD ${dates.min ?? 'start'} to ${dates.max ?? 'end'}`);
+    }
+    if (detrendedApplied)
+        comments.push('Values detrended as the last period fit sent them back');
+
+    const header = ['series', 'mjd', valueKey, errKey];
+    if (folded) header.push('phase');
+
+    downloadCSV(`${filePrefix()}_lightcurve.csv`, comments, header, rows);
+}
+
+function downloadPeriodogram() {
+    const data = lastPeriodFit;
+    if (!data || !data.periodogram) return;
+
+    const comments = [
+        `${TARGET_NAME} - Lomb-Scargle periodogram of ${data.n_points} points from ${data.n_series} series`,
+        ...settingsComments(data.settings),
+        `Periods searched: ${data.period_min} to ${data.period_max} d, decimated to the highest power in each bin`,
+        'Highest peaks (period d, power, false alarm probability, chi2 of the refit):'
+    ];
+    (data.peaks || []).forEach(peak => comments.push(
+        `  ${peak.period}, ${peak.power}, ${peak.fap ?? ''}, ${peak.chi2 ?? ''}`));
+
+    const pg = data.periodogram;
+    downloadCSV(`${filePrefix()}_periodogram.csv`, comments, ['period', 'power'],
+                pg.periods.map((p, i) => [p, pg.power[i]]));
+}
+
+function changeComments(data) {
+    return [
+        `${TARGET_NAME} - period changing as a ${data.model}, ${data.harmonics} harmonics`,
+        `O-C against P = ${data.period} d, T0 = ${data.epoch} MJD; times in days`,
+        `At MJD ${data.tref}: P = ${data.period_tref} +- ${data.period_tref_err} d, dP/dt = ${data.pdot} +- ${data.pdot_err}`,
+        `chi2 ${data.chi2}, reduced ${data.reduced_chi2}, red noise factor ${data.red_noise}`,
+        ...settingsComments(JSON.parse(data.selection)),
+        `O-C windows of ${data.oc_window} d`
+    ];
+}
+
+function downloadOC() {
+    const data = lastChangeFit;
+    if (!data) return;
+
+    const oc = data.oc;
+    const rows = oc.mjd.map((t, i) => {
+        const model = modelOffset(data, t) * data.period;
+        return [t, oc.mjd_min[i], oc.mjd_max[i], oc.n[i], oc.oc[i], oc.oc_err[i],
+                model, oc.oc[i] - model, oc.amplitude[i], oc.red_noise[i]];
+    });
+
+    downloadCSV(`${filePrefix()}_oc.csv`, changeComments(data),
+                ['mjd', 'mjd_min', 'mjd_max', 'n', 'oc', 'oc_err', 'model_oc', 'residual',
+                 'amplitude', 'red_noise'], rows);
+}
+
+function downloadModel() {
+    const data = lastChangeFit;
+    if (!data) return;
+
+    const c = data.curve;
+    downloadCSV(`${filePrefix()}_model.csv`, changeComments(data),
+                ['mjd', 'period', 'period_err', 'oc', 'oc_err'],
+                c.mjd.map((t, i) => [t, c.period[i], c.period_err[i],
+                                     c.offset[i] * data.period, c.offset_err[i] * data.period]));
 }
 
 // Toggle series visibility
