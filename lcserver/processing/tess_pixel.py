@@ -73,7 +73,7 @@ from stdpipe import plots
 
 from .utils import (break_at_gaps, cached_lightkurve_search, cached_votable_query,
                     mast_download_dir, mission_quality_mask, log_quality,
-                    quality_level)
+                    quality_level, bin_width, bin_sector)
 
 
 # The cutout, in TESS pixels of 21 arcsec, and how much of it is fitted around
@@ -553,12 +553,19 @@ def target_tess_pixel(config, basepath, log, show=False, refresh=False):
         # spacing measured comes out a second or two off it
         spacing = np.median(np.diff(table['btjd']))*86400
         cadence = min(FFI_CADENCES, key=lambda c: abs(c - spacing))
-        lcname = f"tess_lc_{sector}_PIXEL_{cadence}.png"
 
         keep = mission_quality_mask(table['quality'], 'TESS', level)
-        mean, scatter = table.meta['TARGET_FLUX'], table.meta['SCATTER']
-        normalized = mean > MIN_FLUX_TO_SCATTER*scatter
         log_quality(log, table['quality'], ~keep, 'TESS')
+
+        table, keep, cadence = bin_sector(table, keep, cadence, bin_width(config, 'tess'), log)
+        lcname = f"tess_lc_{sector}_PIXEL_{cadence:.0f}.png"
+
+        # Whether the target's own light stands out of the noise, judged on
+        # the light curve as written - averaging may be what lifts it out
+        mean = table.meta['TARGET_FLUX']
+        change = np.asarray(table['flux_change'], dtype=float)[keep]
+        scatter = 1.4826*np.median(np.abs(np.diff(change)))/np.sqrt(2) if len(change) > 2 else np.inf
+        normalized = mean > MIN_FLUX_TO_SCATTER*scatter
 
         with plots.figure_saver(os.path.join(basepath, lcname), figsize=(8, 4), show=show) as fig:
             ax = fig.add_subplot(1, 1, 1)
@@ -592,9 +599,9 @@ def target_tess_pixel(config, basepath, log, show=False, refresh=False):
             table.write(os.path.join(basepath, votname), format='votable', overwrite=True)
             log(f"    Sector lightcurve written to file:{votname}")
         else:
-            floor = 5*scatter/np.sqrt(3600/cadence)
+            floor = 5*scatter/np.sqrt(max(3600/cadence, 1))
             log(f"    Not offered to the light curve viewer: the target's own light, "
-                f"{mean:.1f} e/s, is lost in the frame-to-frame scatter of {scatter:.1f} e/s. "
+                f"{mean:.1f} e/s, is lost in the point-to-point scatter of {scatter:.1f} e/s. "
                 f"A change of more than ~{floor:.1f} e/s over an hour - a source of "
                 f"Tmag {TESS_ZP - 2.5*np.log10(floor):.1f} appearing - would still show "
                 f"in the text file")

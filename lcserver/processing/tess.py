@@ -19,7 +19,7 @@ from .utils import (break_at_gaps, cleanup_paths, cached_lightkurve_search,
                     download_tars_lightcurve, download_tequila_lightcurve,
                     drop_mast_downloads, mast_download_dir,
                     mission_quality_mask, log_quality, quality_field,
-                    quality_level,
+                    quality_level, BINNING_CHOICES, bin_width, bin_sector,
                     QUALITY_STANDARD, QUALITY_RELAXED, QUALITY_PUBLISHED)
 from .tess_pixel import target_tess_pixel
 
@@ -117,7 +117,7 @@ def select_detrended_flux(lc, log):
                         ('SPOC', 'SPOC'),
                         ('TEQUILA', 'TEQUILA (faint variables, sectors 1-26)'),
                         ('TARS', 'TARS (rotation, flux only)'),
-                        ('PIXEL', 'Pixel-level, from full-frame images (faint or blended stars, not bright isolated ones)')],
+                        ('PIXEL', 'Pixel-level (faint or blended stars)')],
             'initial': 'auto',
             'required': False,
         },
@@ -126,6 +126,13 @@ def select_detrended_flux(lc, log):
             QUALITY_RELAXED: 'Drop only what the mission calls unusable',
             QUALITY_PUBLISHED: 'None - every cadence as published',
         }),
+        'tess_bin': {
+            'type': 'choice',
+            'label': 'Time resolution',
+            'choices': BINNING_CHOICES,
+            'initial': 'none',
+            'required': False,
+        },
     },
     help_text='NASA TESS space telescope',
     order=30,
@@ -294,25 +301,38 @@ def target_tess(config, basepath=None, verbose=True, show=False):
                             f"amplitude {lc.meta['PERIOD_AMPLITUDE']:.4f}, "
                             f"S/N {lc.meta['PERIOD_SNR']:.1f}")
 
+                    # Remove time column that cannot be serialized
+                    lc1 = lc.to_table()
+                    lc1['mjd'] = lc1['time'].mjd
+                    lc1['btjd'] = lc1['time'].btjd
+                    lc1.remove_column('time')
+
+                    flux = np.ma.filled(np.ma.asarray(lc1['flux'], dtype=float), np.nan)
+                    keep = np.ones(len(lc1), dtype=bool)
+                    # Not every pipeline reports one - K2SFF publishes
+                    # eight columns and no quality among them
+                    if 'quality' in lc1.colnames:
+                        keep = mission_quality_mask(
+                            lc1['quality'], 'TESS',
+                            quality_level(config, 'tess'))
+                        # What the mask costs, rather than what it marks:
+                        # the SPOC pipelines have already emptied the flux
+                        # of every cadence they flagged
+                        log_quality(log, lc1['quality'], np.isfinite(flux) & ~keep, 'TESS')
+
+                    cadence = row.exptime[0].value
+                    lc1, keep, cadence = bin_sector(lc1, keep & np.isfinite(flux), cadence,
+                                                    bin_width(config, 'tess'), log)
+
                     # Plot the lightcurve
-                    lcname = f"tess_lc_{lc.meta['SECTOR']}_{lc.meta['AUTHOR']}_{row.exptime[0].value:.0f}.png"
+                    lcname = f"tess_lc_{lc.meta['SECTOR']}_{lc.meta['AUTHOR']}_{cadence:.0f}.png"
                     with plots.figure_saver(os.path.join(basepath, lcname), figsize=(8, 4), show=show) as fig:
                         ax = fig.add_subplot(1, 1, 1)
 
-                        time = lc.time.btjd
-                        flux = lc.normalize().flux
-                        # Not every pipeline reports one - K2SFF publishes
-                        # eight columns and no quality among them
-                        if 'quality' in lc.colnames:
-                            keep = mission_quality_mask(
-                                lc['quality'], 'TESS',
-                                quality_level(config, 'tess'))
-                            # What the mask costs, rather than what it marks:
-                            # the SPOC pipelines have already emptied the flux
-                            # of every cadence they flagged
-                            had = np.isfinite(flux)
-                            flux[~keep] = np.nan
-                            log_quality(log, lc['quality'], had & ~keep, 'TESS')
+                        time = np.asarray(lc1['btjd'], dtype=float)
+                        flux = np.ma.filled(np.ma.asarray(lc1['flux'], dtype=float), np.nan)
+                        flux = flux/np.nanmedian(flux[keep])
+                        flux[~keep] = np.nan
 
                         ax.axhline(1, ls='--', color='gray', alpha=0.3)
                         ax.plot(*break_at_gaps(time, flux),
@@ -322,15 +342,7 @@ def target_tess(config, basepath=None, verbose=True, show=False):
 
                         ax.set_ylabel('Normalized ' + lc.meta['FLUX_ORIGIN'])
                         ax.set_xlabel('Time - 2457000, BTJD days')
-                        ax.set_title(f"{config['target_name']} - TESS Sector {lc.meta['SECTOR']} - {lc.meta['AUTHOR']} - {row.exptime[0].value:.0f} s")
-
-                    # log(f"   Sector lightcurve written to file:{lcname}")
-
-                    # Remove time column that cannot be serialized
-                    lc1 = lc.to_table()
-                    lc1['mjd'] = lc1['time'].mjd
-                    lc1['btjd'] = lc1['time'].btjd
-                    lc1.remove_column('time')
+                        ax.set_title(f"{config['target_name']} - TESS Sector {lc.meta['SECTOR']} - {lc.meta['AUTHOR']} - {cadence:.0f} s")
 
                     votname = os.path.splitext(lcname)[0] + '.vot'
                     txtname = os.path.splitext(lcname)[0] + '.txt'

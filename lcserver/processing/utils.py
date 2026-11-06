@@ -323,6 +323,139 @@ def plot_with_errors(ax, x, y, yerr=None, xerr=None, color=None, label=None,
     return line
 
 
+# The coarser time resolutions a space photometry light curve may be averaged
+# to, in seconds, as a form field offers them
+BINNING_CHOICES = [('none', 'As published'),
+                   ('600', '10 min'),
+                   ('1800', '30 min'),
+                   ('3600', '1 hour'),
+                   ('7200', '2 hours')]
+
+
+def bin_width(config, source_id):
+    """The bin width a source was asked for, in seconds, or None for none."""
+    value = str(config.get(f'{source_id}_bin') or 'none')
+
+    try:
+        return float(value) if value != 'none' else None
+    except ValueError:
+        return None
+
+
+def bin_flux_table(table, width, keep, time='btjd', quality='quality'):
+    """Average a flux light curve in bins of `width` seconds.
+
+    Only the cadences in `keep` enter, so the binned light curve has the
+    quality filtering already applied and its quality column is all zeros.
+    Every numeric column is averaged; columns whose names end in ``_err`` are
+    propagated from the errors of the cadences averaged, or, where those are
+    missing, as the scatter within the bin over the square root of its count.
+    A bin holding less than half of the cadences it could is dropped, being
+    mostly a gap's edge. Returns None where the light curve is already at
+    that resolution or coarser - there is nothing to average.
+
+    Parameters
+    ----------
+    table : `astropy.table.Table`
+        The light curve, one row per cadence
+    width : float
+        Bin width, s
+    keep : array of bool
+        The cadences to use
+    time : str
+        The time column, in days
+    quality : str
+        The quality column, if any
+
+    Returns
+    -------
+    binned : `astropy.table.Table` or None
+    """
+    from astropy.table import Table
+
+    keep = np.asarray(keep, dtype=bool)
+    t = np.asarray(table[time], dtype=float)
+    keep &= np.isfinite(t)
+    if keep.sum() < 2:
+        return None
+
+    cadence = np.median(np.diff(t[keep]))*86400
+    if not width > 1.5*cadence:
+        return None
+
+    idx = np.floor((t[keep] - t[keep].min())/(width/86400)).astype(int)
+    counts = np.bincount(idx)
+    good = counts >= max(2, 0.5*width/cadence)
+    if not np.any(good):
+        return None
+
+    binned = Table()
+    binned.meta.update(table.meta)
+    names = [name for name in table.colnames
+             if np.asarray(table[name]).dtype.kind in 'fiu' and np.ndim(table[name]) == 1]
+
+    for name in names:
+        values = np.ma.filled(np.ma.asarray(table[name], dtype=float), np.nan)[keep]
+
+        if name == quality:
+            binned[name] = np.zeros(good.sum(), dtype=int)
+            continue
+
+        finite = np.isfinite(values)
+        n = np.bincount(idx, finite.astype(float), minlength=len(counts))
+        total = np.bincount(idx, np.where(finite, values, 0), minlength=len(counts))
+        mean = np.where(n > 0, total/np.maximum(n, 1), np.nan)
+
+        if name.endswith('_err'):
+            var = np.bincount(idx, np.where(finite, values**2, 0), minlength=len(counts))
+            mean = np.where(n > 0, np.sqrt(var)/np.maximum(n, 1), np.nan)
+
+        binned[name] = mean[good]
+
+    binned['n_points'] = counts[good]
+
+    # A pipeline that gives no errors - an empty column, or none, as TARS -
+    # still gets them, from the bins themselves
+    missing = [name for name in binned.colnames
+               if name.endswith('_err') and not np.any(np.isfinite(binned[name]))]
+    if 'flux' in names and 'flux_err' not in binned.colnames:
+        missing.append('flux_err')
+
+    for name in missing:
+        base = name[:-len('_err')]
+        if base in names:
+            values = np.ma.filled(np.ma.asarray(table[base], dtype=float), np.nan)[keep]
+            finite = np.isfinite(values)
+            n = np.bincount(idx, finite.astype(float), minlength=len(counts))
+            s1 = np.bincount(idx, np.where(finite, values, 0), minlength=len(counts))
+            s2 = np.bincount(idx, np.where(finite, values**2, 0), minlength=len(counts))
+            var = np.maximum(s2/np.maximum(n, 1) - (s1/np.maximum(n, 1))**2, 0)
+            binned[name] = np.sqrt(var/np.maximum(n - 1, 1))[good]
+
+    return binned
+
+
+def bin_sector(table, keep, cadence, width, log):
+    """Average a segment's light curve to the time resolution asked for, if any.
+
+    Returns the table, which of its cadences to show, and its cadence in s -
+    the bin width where it was averaged, so that its files are named by the
+    resolution they hold.
+    """
+    if not width:
+        return table, keep, cadence
+
+    binned = bin_flux_table(table, width, keep)
+    if binned is None:
+        log(f"    Already at {cadence:.0f} s, no finer than the {width:.0f} s asked for - left as it is")
+        return table, keep, cadence
+
+    log(f"    Averaged in {width/60:.0f}-minute bins: {len(binned)} points from {int(np.sum(keep))}, "
+        f"after the quality filtering")
+
+    return binned, np.ones(len(binned), dtype=bool), width
+
+
 def break_at_gaps(time, flux, tolerance=1.5):
     """Keep a line from being drawn across a gap in the sampling.
 
