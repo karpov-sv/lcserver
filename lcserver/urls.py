@@ -60,6 +60,7 @@ urlpatterns = [
     path('targets/<int:id>/lightcurve_data/', views_lightcurve.load_lightcurve_data, name='load_lightcurve_data'),
     path('targets/<int:id>/fit_period/', views_lightcurve.fit_period, name='fit_period'),
     path('targets/<int:id>/fit_period_change/', views_lightcurve.fit_period_change, name='fit_period_change'),
+    path('targets/<int:id>/dynamic_periodogram/', views_lightcurve.dynamic_periodogram, name='dynamic_periodogram'),
     path('targets/<int:id>/spectrum/', views_spectrum.target_spectrum, name='target_spectrum'),
     path('targets/<int:id>/spectrum_data/', views_spectrum.load_spectrum_json, name='load_spectrum_json'),
     path('targets/<int:id>/fit_sed/', views_spectrum.fit_sed, name='fit_sed'),

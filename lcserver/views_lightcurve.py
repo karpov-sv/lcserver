@@ -578,7 +578,12 @@ class _SeriesFit:
     def normal_at(self, phase):
         """The same, for harmonics of a phase in cycles - one that need not
         grow linearly with time, for a period that changes."""
-        h = _harmonics(phase, 1.0, self.nharm) * self.weight[:, None]
+        return self.normal_of(_harmonics(phase, 1.0, self.nharm))
+
+    def normal_of(self, columns):
+        """The same, for any columns - the harmonics of several frequencies
+        at once, say."""
+        h = columns * self.weight[:, None]
         mh = self._detrend(h)
 
         return h.T @ mh, mh.T @ self.yw
@@ -587,7 +592,11 @@ class _SeriesFit:
         """The weighted residuals of the harmonics `coeffs` at `phase` and of
         the best trend under them, followed by the rows of the curvature
         penalty - whose squares sum to the chi-squared `normal_at` minimises."""
-        v = self.yw - (_harmonics(phase, 1.0, self.nharm) * self.weight[:, None]) @ coeffs
+        return self.residuals_of(_harmonics(phase, 1.0, self.nharm), coeffs)
+
+    def residuals_of(self, columns, coeffs):
+        """The same, for any columns."""
+        v = self.yw - (columns * self.weight[:, None]) @ coeffs
         out = np.array(v)
         penalty = []
         for (idx, bw, inverse), pen in zip(self.blocks, self.penalties):
@@ -706,6 +715,143 @@ def alias_kind(f1, f2, span):
             return 'yearly'
 
     return None
+
+
+def _frequency_columns(mjds, frequencies, nharm):
+    """Harmonics of every frequency, side by side."""
+    return np.hstack([_harmonics(mjds, f, nharm) for f in frequencies])
+
+
+def fit_frequencies(series, window_days, frequencies, nharm=PERIOD_HARMONICS):
+    """Several frequencies fitted together, for prewhitening.
+
+    `series` are (mjd, value, error, group) as `refine_peaks` takes them, and
+    the model is the one it fits at a single frequency - every series its own
+    trend, the harmonics shared within a group - with the harmonics of all of
+    `frequencies` at once, and the frequencies themselves free. Each is
+    refined in the presence of the others rather than one after another,
+    which is what keeps a frequency found early from carrying the leakage of
+    one found later.
+
+    Returns the frequencies, their uncertainties - from the covariance, scaled
+    by the reduced chi-squared and, each, by `red_noise_factor` on a tenth of
+    its own cycle: a slow frequency is as uncertain as the noise is red on its
+    timescale, which bins sized for a fast one do not see - and {group:
+    coefficients}, the harmonics of each frequency in turn, nharm sine and
+    cosine pairs apiece.
+    """
+    from scipy.optimize import least_squares
+
+    frequencies = np.asarray(frequencies, dtype=float)
+
+    groups = {}
+    for t, y, dy, group in series:
+        groups.setdefault(group, []).append(_SeriesFit(t, y, dy, window_days, nharm))
+
+    ncols = 2 * nharm * len(frequencies)
+    fitted = {g: members for g, members in groups.items()
+              if sum(len(f.mjds) - f.ntrend for f in members) > ncols + 2}
+
+    if not fitted:
+        raise ValueError('Too few points for the harmonics of the removed frequencies')
+
+    allfits = [f for members in fitted.values() for f in members]
+    span = max(f.mjds.max() for f in allfits) - min(f.mjds.min() for f in allfits)
+    npoints = sum(len(f.mjds) for f in allfits)
+    dof = max(npoints - sum(f.ntrend for f in allfits) - ncols * len(fitted)
+              - len(frequencies), 1)
+
+    def coefficients(freqs):
+        out = {}
+        for g, members in fitted.items():
+            gram, proj = 0, 0
+            for fit in members:
+                gm, pm = fit.normal_of(_frequency_columns(fit.mjds, freqs, nharm))
+                gram, proj = gram + gm, proj + pm
+            out[g] = np.linalg.lstsq(gram, proj, rcond=None)[0]
+        return out
+
+    # A step that moves the phase by a fixed fraction of a cycle over the data
+    scale = PERIOD_CHANGE_PHASE_STEP / span
+
+    def residuals(x):
+        freqs = frequencies + x * scale
+        coeffs = coefficients(freqs)
+        return np.concatenate([fit.residuals_of(_frequency_columns(fit.mjds, freqs, nharm), coeffs[g])
+                               for g, members in fitted.items() for fit in members])
+
+    result = least_squares(residuals, np.zeros(len(frequencies)), method='trf',
+                           diff_step=PERIOD_CHANGE_DIFF_STEP, x_scale=1.0)
+
+    freqs = frequencies + result.x * scale
+    coeffs = coefficients(freqs)
+    chi2 = float(2 * result.cost)
+
+    times = np.concatenate([fit.mjds for members in fitted.values() for fit in members])
+    resid = np.concatenate([fit.residuals_of(_frequency_columns(fit.mjds, freqs, nharm),
+                                             coeffs[g])[:len(fit.mjds)]
+                            for g, members in fitted.items() for fit in members])
+    beta = np.array([red_noise_factor(times, resid, RED_NOISE_BIN_CYCLES / f) for f in freqs])
+
+    cov = np.linalg.pinv(result.jac.T @ result.jac) * scale ** 2 * max(chi2 / dof, 1.0)
+
+    return freqs, np.sqrt(np.diag(cov)) * beta, coeffs
+
+
+def _group_name(group):
+    """How a group - a survey in one filter - is named to a reader."""
+    source, band, kind = group
+    config = surveys.SURVEY_SOURCES.get(source, {})
+    name = config.get('short_name') or source or '?'
+    if band:
+        name += ' ' + band
+    if kind and kind != 'native':
+        name += f' ({kind})'
+    return name
+
+
+def _prewhiten(requested, window_days, frequencies, nharm=PERIOD_HARMONICS):
+    """Take the signal of `frequencies` off the series a fit asked for.
+
+    The frequencies are fitted together on the points of the dates searched -
+    see `fit_frequencies` - and the harmonics they come to subtracted from
+    every point of every series, so that the viewer can show and fold what is
+    left. The trend fitted along with them stays in: it is the detrending's
+    to take off, when asked, as before.
+
+    Returns the series in the form `_requested_series` gives them, and per
+    frequency its refined value and uncertainty and its full amplitude in
+    each group, peak to peak. A series whose group had too few points to fit
+    is left as it was.
+    """
+    loaded = [(t[s], y[s], dy[s], _series_group(series))
+              for index, series, t, y, dy, s in requested]
+
+    freqs, errors, coeffs = fit_frequencies(loaded, window_days, frequencies, nharm)
+
+    out = []
+    for index, series, t, y, dy, s in requested:
+        c = coeffs.get(_series_group(series))
+        if c is not None:
+            y = y - _frequency_columns(t, freqs, nharm) @ c
+        out.append((index, series, t, y, dy, s))
+
+    phase = np.arange(200) / 200.0
+    removed = []
+    for k, (f, e) in enumerate(zip(freqs, errors)):
+        amplitudes = {}
+        for group, c in coeffs.items():
+            curve = _harmonics(phase, 1.0, nharm) @ c[2 * nharm * k:2 * nharm * (k + 1)]
+            amplitudes[_group_name(group)] = round(float(np.ptp(curve)), 5)
+        removed.append({
+            'frequency': float(f),
+            'frequency_err': float(e),
+            'period': float(1.0 / f),
+            'period_err': float(e / f ** 2),
+            'amplitudes': amplitudes,
+        })
+
+    return out, removed
 
 
 def find_period(mjds, values, errors, pmin, pmax):
@@ -1470,6 +1616,26 @@ def _requested_series(target, series_list, mode, mjd_min, mjd_max):
     return out
 
 
+def _prewhiten_request(requested, window_days, data):
+    """The series with the frequencies a request asks to remove taken off -
+    see `_prewhiten` - and what was removed; as they were when none is."""
+    try:
+        frequencies = [float(_) for _ in data.get('prewhiten') or []]
+    except (TypeError, ValueError):
+        raise _BadRequest('Invalid frequencies to remove', 'They must be numbers')
+
+    if not frequencies:
+        return requested, []
+
+    if not all(np.isfinite(_) and _ > 0 for _ in frequencies):
+        raise _BadRequest('Invalid frequencies to remove', 'They must be positive')
+
+    try:
+        return _prewhiten(requested, window_days, frequencies)
+    except ValueError as e:
+        raise _BadRequest('Prewhitening failed', str(e))
+
+
 def _series_group(series):
     """The survey and filter a series is in, which its harmonics are shared within."""
     return (series.get('source_id'), series.get('filter'), series.get('kind'))
@@ -1479,6 +1645,16 @@ def _series_group(series):
 @require_http_methods(["POST"])
 def fit_period(request, id):
     """Fit period using Lomb-Scargle multiband periodogram with comprehensive error handling"""
+    # Thousands of products of small matrices, in the peak refit and in
+    # prewhitening, which OpenBLAS spreads over threads at a cost of
+    # milliseconds each - see fit_period_change
+    from threadpoolctl import threadpool_limits
+
+    with threadpool_limits(limits=1, user_api='blas'):
+        return _fit_period(request, id)
+
+
+def _fit_period(request, id):
     target = models.Target.objects.get(id=id)
 
     # Check permissions
@@ -1495,6 +1671,7 @@ def fit_period(request, id):
             detrend_window, mjd_min, mjd_max = _fit_options(data)
             requested = _requested_series(target, data.get('series', []), mode,
                                           mjd_min, mjd_max)
+            requested, removed = _prewhiten_request(requested, detrend_window, data)
         except _BadRequest as e:
             return e.response()
 
@@ -1516,8 +1693,8 @@ def fit_period(request, id):
         values = []
         errors = []
 
-        # What detrending left behind, so the viewer can show and fold the same
-        # points the periodogram was computed from
+        # What detrending and prewhitening left behind, so the viewer can
+        # show and fold the same points the periodogram was computed from
         detrended = []
 
         # And each series as it was before, for the fit of the highest peaks,
@@ -1534,17 +1711,18 @@ def fit_period(request, id):
             # Detrended one series at a time, before they are pooled: each has
             # its own cadence and its own gaps, and a window in days means a
             # different number of points in each
+            trend = None
             if detrend_window:
                 y, trend = detrend_series(t, y, detrend_window,
                                           subtract=(mode != 'flux'))
 
-                if trend is not None:
-                    detrended.append({
-                        'index': index if isinstance(index, int) else None,
-                        'label': series['label'],
-                        'mjd': [round(float(_), 6) for _ in t],
-                        'value': [round(float(_), 6) for _ in y],
-                    })
+            if trend is not None or removed:
+                detrended.append({
+                    'index': index if isinstance(index, int) else None,
+                    'label': series['label'],
+                    'mjd': [round(float(_), 6) for _ in t],
+                    'value': [round(float(_), 6) for _ in y],
+                })
 
             t, y, dy = t[searched], y[searched], dy[searched]
 
@@ -1729,6 +1907,8 @@ def fit_period(request, id):
             # The points the periodogram was actually computed from, so that
             # what is folded and drawn is what was fitted
             'detrended': detrended,
+            # The frequencies taken off before the search, refined together
+            'prewhitened': removed,
         }
 
         if fap is not None:
@@ -1817,19 +1997,25 @@ def _fit_period_change(request, id):
 
             requested = _requested_series(target, data.get('series', []), mode,
                                           mjd_min, mjd_max)
+            # The frequencies removed for the search are removed here too, so
+            # that what is left - a second mode, say - can be followed in turn
+            requested, removed = _prewhiten_request(requested, detrend_window, data)
         except _BadRequest as e:
             return e.response()
 
         loaded = [(t[s], y[s], dy[s], _series_group(series))
                   for index, series, t, y, dy, s in requested]
 
-        # The light curve with its trend taken off, as "Fit Period" sends it,
-        # so that the fold shows the variation the phase was fitted to
+        # The light curve with its trend taken off and the removed frequencies,
+        # as "Fit Period" sends it, so that the fold shows the variation the
+        # phase was fitted to
         detrended = []
-        if detrend_window:
+        if detrend_window or removed:
             for index, series, t, y, dy, s in requested:
-                y, trend = detrend_series(t, y, detrend_window, subtract=(mode != 'flux'))
-                if trend is not None:
+                trend = None
+                if detrend_window:
+                    y, trend = detrend_series(t, y, detrend_window, subtract=(mode != 'flux'))
+                if trend is not None or removed:
                     detrended.append({
                         'index': index if isinstance(index, int) else None,
                         'label': series['label'],
@@ -2069,6 +2255,7 @@ def _fit_period_change(request, id):
                 'offset_err': [round(float(_), 8) for _ in offset_err],
             },
             'oc': oc_points,
+            'prewhitened': removed,
             # Chi-squared per window of the O-C about the model
             'oc_scatter': oc_scatter,
             # How much worse than white the residuals of the fit are, which the
@@ -2096,6 +2283,195 @@ def _fit_period_change(request, id):
         traceback.print_exc()
         return JsonResponse({
             'error': 'Unexpected error during the period change fit',
+            'details': str(e),
+            'traceback': traceback.format_exc()
+        }, status=500)
+
+
+# The time-resolved periodogram: at most so many windows, each searched on a
+# grid of at most so many frequencies, and sent back decimated to so many
+# bins, the highest power in each - a grid fine enough for a window of a
+# century of DASCH is far more than a heat map can show
+DYNAMIC_MAX_WINDOWS = 300
+DYNAMIC_MAX_FREQUENCIES = 20000
+DYNAMIC_PLOT_POINTS = 600
+
+# The window when none is asked for, as a fraction of the span of the data -
+# no one length suits both two sectors of TESS and a century of DASCH
+DYNAMIC_AUTO_WINDOW = 0.1
+
+# Points, and the fraction of its length, a window needs for its periodogram
+DYNAMIC_MIN_POINTS = 10
+DYNAMIC_MIN_COVERAGE = 0.25
+
+
+def dynamic_power(series, pmin, pmax, window, step):
+    """Lomb-Scargle periodograms in a window sliding along the light curve.
+
+    `series` are (mjd, value, error) of each series, ready to be searched.
+    Within each window every series is centred on its own median there - its
+    level drifts, and pooled as it is that drift would be all the window
+    showed - and the periodogram is of them pooled, on one frequency grid for
+    every window, as fine as the window resolves.
+
+    Returns the window centres, the number of points in each, the periods of
+    the grid as decimated, and the power, a row per window - None for a
+    window with too few points, or covering too little of itself, to say
+    anything.
+    """
+    tmin = min(t.min() for t, _, _ in series)
+    tmax = max(t.max() for t, _, _ in series)
+
+    centres = np.arange(tmin + window / 2, tmax - window / 2 + step / 2, step)
+    if not len(centres):
+        centres = np.array([0.5 * (tmin + tmax)])
+    if len(centres) > DYNAMIC_MAX_WINDOWS:
+        centres = np.linspace(centres[0], centres[-1], DYNAMIC_MAX_WINDOWS)
+
+    fmin, fmax = 1.0 / pmax, 1.0 / pmin
+    # Never coarser than a few hundred, so that a narrow range is drawn smooth
+    nfreq = int(np.clip(np.ceil(PERIOD_SAMPLES_PER_PEAK * window * (fmax - fmin)),
+                        3 * DYNAMIC_PLOT_POINTS // 2, DYNAMIC_MAX_FREQUENCIES))
+    freq = np.linspace(fmin, fmax, nfreq)
+
+    # Bins of the grid kept for the plot, each its highest power
+    nbins = min(DYNAMIC_PLOT_POINTS, nfreq)
+    edges = np.linspace(0, nfreq, nbins + 1).astype(int)
+    centre_index = (edges[:-1] + edges[1:]) // 2
+
+    counts, rows = [], []
+    for c in centres:
+        tt, yy, ee = [], [], []
+        for t, y, dy in series:
+            k = np.abs(t - c) <= window / 2
+            if k.sum() < 2:
+                continue
+            tt.append(t[k])
+            yy.append(y[k] - np.median(y[k]))
+            ee.append(dy[k])
+
+        n = sum(len(_) for _ in tt)
+        counts.append(int(n))
+        if n < DYNAMIC_MIN_POINTS:
+            rows.append(None)
+            continue
+
+        tt, yy, ee = np.concatenate(tt), np.concatenate(yy), np.concatenate(ee)
+        if np.ptp(tt) < DYNAMIC_MIN_COVERAGE * window:
+            rows.append(None)
+            continue
+
+        power = LombScargle(tt, yy, ee).power(freq)
+        rows.append([round(float(np.max(power[a:b])), 4) if b > a else None
+                     for a, b in zip(edges[:-1], edges[1:])])
+
+    return {
+        'mjd': [round(float(_), 3) for _ in centres],
+        'n': counts,
+        'periods': [round(float(1.0 / freq[i]), 6) for i in centre_index],
+        'power': rows,
+        'nfreq': nfreq,
+    }
+
+
+@login_required
+@require_http_methods(["POST"])
+def dynamic_periodogram(request, id):
+    """The periodogram in a window sliding along the light curve, for how a
+    period - or which of several - comes and goes with time.
+
+    Of the same points "Fit Period" searches: the series and filters asked
+    for, within the dates, with the removed frequencies taken off and the
+    trend, if asked, too.
+    """
+    from threadpoolctl import threadpool_limits
+
+    target = models.Target.objects.get(id=id)
+
+    if not target.can_view(request.user):
+        return JsonResponse({'error': 'Forbidden'}, status=403)
+
+    try:
+        data = json.loads(request.body)
+        mode = data.get('mode', 'magnitude')
+
+        try:
+            detrend_window, mjd_min, mjd_max = _fit_options(data)
+            period_min = _positive(data, 'period_min', 0.1)
+            period_max = _positive(data, 'period_max', 100)
+            window = float(data['window']) if data.get('window') not in (None, '') else None
+            if window is not None and not window > 0:
+                raise _BadRequest('Invalid window', 'The window must be a positive number of days')
+            if period_max <= period_min:
+                raise _BadRequest('Invalid period range',
+                                  f'Maximum period ({period_max}) must be greater than minimum period ({period_min})')
+            step = float(data.get('step') or 0)
+            if step < 0:
+                raise _BadRequest('Invalid step', 'The step must be a positive number of days')
+
+            requested = _requested_series(target, data.get('series', []), mode,
+                                          mjd_min, mjd_max)
+            with threadpool_limits(limits=1, user_api='blas'):
+                requested, removed = _prewhiten_request(requested, detrend_window, data)
+        except _BadRequest as e:
+            return e.response()
+
+        series = []
+        for index, s, t, y, dy, searched in requested:
+            if detrend_window:
+                y, _ = detrend_series(t, y, detrend_window, subtract=(mode != 'flux'))
+            series.append((t[searched], y[searched], dy[searched]))
+
+        if not series:
+            return JsonResponse({'error': 'No valid data points',
+                                 'details': 'No series has points in the dates'}, status=400)
+
+        span = max(t.max() for t, _, _ in series) - min(t.min() for t, _, _ in series)
+        if window is None:
+            window = round(float(DYNAMIC_AUTO_WINDOW * span), 1)
+        step = step or window / 4
+
+        if window > span:
+            return JsonResponse({
+                'error': 'Window too long',
+                'details': f'The window ({window:g} d) is longer than the data ({span:.1f} d) - '
+                           'there is nothing to slide it along'}, status=400)
+
+        # A window says nothing of a period it does not hold two cycles of, so
+        # the range stops there - the period search's own range, up to 100
+        # days by default, would otherwise rule out any window shorter than
+        # two hundred
+        searched_max = min(period_max, window / 2)
+        if searched_max <= period_min:
+            return JsonResponse({
+                'error': 'Window too short',
+                'details': f'A window of {window:g} d holds two cycles only of periods up to '
+                           f'{window / 2:g} d, below the shortest searched ({period_min:g} d) - '
+                           'lengthen the window'}, status=400)
+
+        result = dynamic_power(series, period_min, searched_max, window, step)
+        result.update({
+            'window': window,
+            'step': (result['mjd'][1] - result['mjd'][0]) if len(result['mjd']) > 1 else step,
+            'period_min': period_min,
+            'period_max': searched_max,
+            # Whether the range was cut short of the one asked for
+            'period_max_limited': bool(searched_max < period_max),
+            'n_points': int(sum(len(t) for t, _, _ in series)),
+            'n_series': len(series),
+            'detrend_window': float(detrend_window),
+            'prewhitened': removed,
+        })
+        return JsonResponse(result)
+
+    except json.JSONDecodeError as e:
+        return JsonResponse({'error': 'Invalid JSON in request body', 'details': str(e)}, status=400)
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return JsonResponse({
+            'error': 'Unexpected error computing the time-resolved periodogram',
             'details': str(e),
             'traceback': traceback.format_exc()
         }, status=500)

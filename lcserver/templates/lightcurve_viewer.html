@@ -358,6 +358,17 @@
   <div id="peaks-container" class="mt-2" style="display: none;">
     <small class="text-muted">Highest peaks:</small>
     <div id="peaks-list" class="d-flex flex-wrap gap-1 mt-1"></div>
+
+    <div class="d-flex flex-wrap align-items-center gap-1 mt-2">
+      <button class="btn btn-sm btn-outline-primary me-2" onclick="prewhitenFolded()"
+              title="Fit the period folded at, take its signal off the light curve, and search again - every removed period is refitted along with the others each time">
+        <i class="fa fa-minus-circle"></i> Remove folded period
+      </button>
+      <small class="text-muted me-1" id="removed-label" style="display: none;">Removed:</small>
+      <span id="removed-list" class="d-flex flex-wrap gap-1"></span>
+      <button class="btn btn-sm btn-link text-danger p-0 ms-2" id="removed-clear" style="display: none;"
+              onclick="clearRemoved()" title="Put every removed period back and search again">clear</button>
+    </div>
   </div>
 
   <!-- What the last period search said, kept in sight to be checked or copied -->
@@ -382,13 +393,67 @@
     </div>
   </div>
 
+  <!-- The periodogram in a window sliding along the light curve -->
+  <div class="border-top mt-3 pt-3">
+    <h6 class="mb-0 panel-toggle collapsed" data-bs-toggle="collapse" data-bs-target="#dyn-section"
+        role="button" aria-expanded="false" aria-controls="dyn-section"
+        title="Lomb-Scargle periodograms in a window sliding along the light curve, for how a period - or which of several - comes and goes with time. Click to show or hide.">
+      <i class="fa fa-caret-down"></i> Time-Resolved Periodogram
+    </h6>
+
+    <div class="collapse" id="dyn-section">
+    <div class="row g-2 align-items-center mt-1">
+      <div class="col-auto">
+        <label for="dyn-window" class="col-form-label col-form-label-sm">Window:</label>
+      </div>
+      <div class="col-auto">
+        <input type="number" class="form-control form-control-sm" id="dyn-window"
+               style="width: 80px;" step="1" min="0" placeholder="auto"
+               title="Days of data in each periodogram; left empty, a tenth of the span of the data. It resolves periods no finer than about P²/window, and searches them only up to half its length, whatever the period search range says.">
+      </div>
+      <div class="col-auto">
+        <small class="text-muted">d, every</small>
+      </div>
+      <div class="col-auto">
+        <input type="number" class="form-control form-control-sm" id="dyn-step"
+               style="width: 80px;" step="1" min="0" placeholder="auto"
+               title="Days between windows; left empty, a quarter of the window">
+      </div>
+      <div class="col-auto">
+        <small class="text-muted">d</small>
+      </div>
+      <div class="col-auto">
+        <button class="btn btn-sm btn-primary" onclick="computeDynamic()" id="dyn-btn">
+          <i class="fa fa-th"></i> Compute
+        </button>
+      </div>
+    </div>
+
+    <div class="mt-2">
+      <small class="text-muted">
+        Over the period search range, of the same points "Fit Period" searches - the visible sources, error filters,
+        dates and trend, with any removed periods taken off. Click it to fold at a period.
+      </small>
+    </div>
+
+    <div id="dyn-box" class="plotly-resizable mt-2" style="height: 450px; display: none;">
+      <div id="dyn-container" class="plotly-chart"></div>
+      <div class="plot-resize-handle" role="separator" title="Drag to resize the plot"></div>
+    </div>
+    </div>
+  </div>
+
   <!-- A period that changes with time, and the O-C of the data against the
        period folded at - a task of its own, once a period has been found -->
   <div class="border-top mt-3 pt-3">
-    <h6 class="mb-2"
-        title="Fit a period that changes with time, starting from the one folded at, and measure the O-C of the data against it">Period Change</h6>
+    <h6 class="mb-0 panel-toggle collapsed" data-bs-toggle="collapse" data-bs-target="#pc-section"
+        role="button" aria-expanded="false" aria-controls="pc-section"
+        title="Fit a period that changes with time, starting from the one folded at, and measure the O-C of the data against it. Click to show or hide.">
+      <i class="fa fa-caret-down"></i> Period Change
+    </h6>
 
-    <div class="row g-2 align-items-center">
+    <div class="collapse" id="pc-section">
+    <div class="row g-2 align-items-center mt-1">
       <div class="col-auto">
         <select class="form-select form-select-sm" id="pc-model" onchange="onPeriodModelChange(); checkPeriodChangeStale()">
           <option value="polynomial" selected>Polynomial</option>
@@ -442,7 +507,6 @@
         and moves T₀ to the nearest maximum of light. It uses the same visible sources, error filters, dates and trend as "Fit Period".
       </small>
     </div>
-  </div>
 
   <!-- O-C diagram and the period with time, shown once a period change fit has been run -->
   <div id="oc-stale" class="alert alert-warning small py-1 px-2 mt-2 mb-0" style="display: none;">
@@ -477,6 +541,8 @@
     </div>
     <div class="collapse" id="pc-log-body">
       <pre id="pc-log-text" class="small border rounded p-2 mb-0"></pre>
+    </div>
+  </div>
     </div>
   </div>
 </div>
@@ -1198,6 +1264,7 @@ function updatePhaseFolding() {
 
     // The periodogram marks the period being folded at, and its aliases
     updatePeriodogramMarks();
+    updateDynamicMarks();
 
     // Force reinitialize plot when switching modes
     if (plotInitialized) {
@@ -1724,6 +1791,7 @@ function fitPeriod() {
             period_min: periodMin,
             period_max: periodMax,
             detrend_window: trendWindow,
+            prewhiten: removedFrequencies.slice(),
             mjd_min: dates.min,
             mjd_max: dates.max
         })
@@ -1790,6 +1858,11 @@ function fitPeriod() {
                      + ` to put it back.`;
         }
 
+        if (data.prewhitened && data.prewhitened.length) {
+            message += `\n\nRemoved before the search, fitted together - the plot now shows what was left:\n`
+                     + removedSummary(data.prewhitened);
+        }
+
         // Add warnings if present
         if (data.warnings && data.warnings.length > 0) {
             message += '\n\n⚠️  Warnings:\n';
@@ -1799,7 +1872,11 @@ function fitPeriod() {
         }
 
         // Kept with it, for the periodogram's download
+        removedFrequencies = (data.prewhitened || []).map(r => r.frequency);
+        showRemoved(data.prewhitened || []);
+
         data.settings = {series: visibleSeries, detrend_window: trendWindow,
+                         prewhiten: removedFrequencies.slice(),
                          mjd_min: dates.min, mjd_max: dates.max};
         lastPeriodFit = data;
         showLog('period-log', message);
@@ -1811,7 +1888,7 @@ function fitPeriod() {
 
         // Before the plot is touched, so that both it and the phase fold show
         // the same points the period was found in
-        if (data.detrend_window) {
+        if (data.detrended && data.detrended.length) {
             applyDetrended(data.detrended);
         } else if (detrendedApplied) {
             restoreDetrended();
@@ -1824,6 +1901,10 @@ function fitPeriod() {
         updatePhaseFolding();
     })
     .catch(error => {
+        // What the last fit that worked removed, not what this one asked for
+        removedFrequencies = (lastPeriodFit && lastPeriodFit.settings.prewhiten) || [];
+        showRemoved((lastPeriodFit && lastPeriodFit.prewhitened) || []);
+
         console.error('Error fitting period:', error);
         alert(`Period fitting failed:\n\n${error.message}\n\nSee console for details.`);
     })
@@ -1893,6 +1974,7 @@ function periodChangeSelection() {
         knot_days: model === 'spline' ? parseFloat(document.getElementById('pc-knots').value) : null,
         oc_window: parseFloat(document.getElementById('pc-window').value),
         detrend_window: detrendWindow(),
+        prewhiten: removedFrequencies.slice(),
         mjd_min: dates.min,
         mjd_max: dates.max
     };
@@ -2002,6 +2084,9 @@ function fitPeriodChange() {
             message += `  ${stage.model}: χ² ${stage.chi2.toFixed(1)}, BIC ${stage.bic.toFixed(1)}\n`;
         });
 
+        if (data.prewhitened && data.prewhitened.length)
+            message += `\nRemoved first, fitted together:\n${removedSummary(data.prewhitened)}`;
+
         message += `\nO−C measured in ${data.oc.mjd.length} windows of ${data.oc_window} d, `
                  + `the period on its own in ${data.local.mjd.length} of them.`
                  + (data.oc_scatter !== null
@@ -2024,7 +2109,7 @@ function fitPeriodChange() {
         bootstrap.Modal.getOrCreateInstance(document.getElementById('fit-result-modal')).show();
 
         // As "Fit Period" does, the plot shows what was fitted
-        if (data.detrend_window) {
+        if (data.detrended && data.detrended.length) {
             applyDetrended(data.detrended);
         } else if (detrendedApplied) {
             restoreDetrended();
@@ -2171,6 +2256,200 @@ function plotOC(data) {
     }, {responsive: true, displaylogo: false});
 }
 
+// ------------------------------------------------- time-resolved periodogram
+
+let dynamicData = null;
+
+// Where the line of the folded period sits among the traces of plotDynamic()
+const DYN_PERIOD_TRACE = 1;
+
+function foldedLine(data) {
+    const p = parseFloat(document.getElementById('period-input').value);
+    if (!(p >= data.period_min && p <= data.period_max))
+        return {x: [], y: []};
+    return {x: [data.mjd[0], data.mjd[data.mjd.length - 1]], y: [p, p]};
+}
+
+function updateDynamicMarks() {
+    if (!dynamicData)
+        return;
+    const line = foldedLine(dynamicData);
+    Plotly.restyle('dyn-container', {x: [line.x], y: [line.y]}, [DYN_PERIOD_TRACE]);
+}
+
+function computeDynamic() {
+    if (!dataLoaded) {
+        alert('Data is still loading. Please wait...');
+        return;
+    }
+
+    const visibleSeries = requestedSeries();
+    if (!visibleSeries.length) {
+        alert('No visible series! Please enable at least one data source.');
+        return;
+    }
+
+    const periodMin = parseFloat(document.getElementById('period-min-input').value) || 0.1;
+    const periodMax = parseFloat(document.getElementById('period-max-input').value) || 100;
+    const dates = dateRange();
+
+    const btn = document.getElementById('dyn-btn');
+    const originalHtml = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fa fa-spinner fa-spin"></i> Computing...';
+
+    fetch(`/targets/{{ target_id }}/dynamic_periodogram/`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json', 'X-CSRFToken': getCookie('csrftoken')},
+        body: JSON.stringify({
+            series: visibleSeries,
+            mode: isMagnitudeMode ? 'magnitude' : 'flux',
+            period_min: periodMin,
+            period_max: periodMax,
+            window: parseFloat(document.getElementById('dyn-window').value) || null,
+            step: parseFloat(document.getElementById('dyn-step').value) || null,
+            detrend_window: detrendWindow(),
+            prewhiten: removedFrequencies.slice(),
+            mjd_min: dates.min,
+            mjd_max: dates.max
+        })
+    })
+    .then(response => response.json().then(data => {
+        if (!response.ok)
+            throw new Error((data.error || 'Server error') + (data.details ? '\n\n' + data.details : ''));
+        return data;
+    }))
+    .then(data => plotDynamic(data))
+    .catch(error => {
+        console.error('Error computing the time-resolved periodogram:', error);
+        alert(`Time-resolved periodogram failed:\n\n${error.message}`);
+    })
+    .finally(() => {
+        btn.disabled = false;
+        btn.innerHTML = originalHtml;
+    });
+}
+
+function plotDynamic(data) {
+    dynamicData = data;
+    document.getElementById('dyn-box').style.display = 'block';
+
+    const theme = plotlyTheme();
+
+    // A row per window from the server, a row per period for the heat map
+    const z = data.periods.map((_, j) => data.power.map(row => row === null ? null : row[j]));
+    const line = foldedLine(data);
+
+    const traces = [{
+        x: data.mjd, y: data.periods, z: z, type: 'heatmap',
+        colorscale: 'Viridis', zmin: 0, colorbar: {title: {text: 'power'}, thickness: 12},
+        customdata: data.periods.map(() => data.n),
+        hovertemplate: 'MJD %{x:.0f}<br>P %{y:.5f} d<br>power %{z:.3f}<br>%{customdata} points<extra></extra>'
+    }, {
+        // Kept at DYN_PERIOD_TRACE, where updateDynamicMarks() expects it
+        x: line.x, y: line.y, mode: 'lines', type: 'scatter', name: 'Folded period',
+        line: {color: '#ffffff', width: 1, dash: 'dash'}, hoverinfo: 'skip', showlegend: false
+    }];
+
+    // The period of a period change model, where it has one
+    if (lastChangeFit) {
+        traces.push({
+            x: lastChangeFit.curve.mjd, y: lastChangeFit.curve.period, mode: 'lines', type: 'scatter',
+            name: 'Period change model', line: {color: '#d62728', width: 1.5},
+            hoverinfo: 'skip', showlegend: false
+        });
+    }
+
+    let title = `Lomb-Scargle in windows of ${data.window} d every ${data.step.toFixed(1)} d - `
+              + `${data.n_points} ${isMagnitudeMode ? 'magnitudes' : '{{ flux_sources }} flux points'}`
+              + ` from ${data.n_series} series`;
+    if (data.detrend_window)
+        title += `, trend slower than ${data.detrend_window} d removed`;
+    if (data.prewhitened && data.prewhitened.length)
+        title += `, ${data.prewhitened.length} period${data.prewhitened.length > 1 ? 's' : ''} removed`;
+    if (data.period_max_limited)
+        title += ` - periods up to ${data.period_max} d, half the window`;
+
+    const axis = {showline: true, linecolor: theme.linecolor, automargin: true, zeroline: false};
+
+    Plotly.newPlot('dyn-container', traces, {
+        title: {text: title, font: {size: 12}},
+        xaxis: Object.assign({}, axis, {title: {text: 'MJD'}}),
+        yaxis: Object.assign({}, axis, {title: {text: 'Period, days'}, type: 'log'}),
+        hovermode: 'closest',
+        autosize: true,
+        margin: {t: 30, r: 30},
+        font: {size: 10, color: theme.font.color},
+        paper_bgcolor: theme.paper_bgcolor,
+        plot_bgcolor: theme.plot_bgcolor
+    }, {responsive: true, displaylogo: false});
+
+    // Clicking folds at the period of the cell, as on the periodogram
+    document.getElementById('dyn-container').on('plotly_click', function(ev) {
+        if (ev.points && ev.points.length && ev.points[0].curveNumber === 0)
+            setPeriod(ev.points[0].y);
+    });
+}
+
+// ------------------------------------------------------------ prewhitening
+
+// Frequencies taken off the light curve before a search, in cycles per day,
+// as the last fit refined them
+let removedFrequencies = [];
+
+function removedSummary(removed) {
+    return removed.map(r => `  P = ${r.period.toFixed(6)} ± ${r.period_err.toExponential(1)} d`
+        + ' - peak to peak ' + Object.entries(r.amplitudes)
+              .map(([name, a]) => `${a.toPrecision(3)} in ${name}`).join(', ')).join('\n') + '\n';
+}
+
+function showRemoved(removed) {
+    const list = document.getElementById('removed-list');
+    list.innerHTML = '';
+
+    removed.forEach((r, i) => {
+        const btn = document.createElement('button');
+        btn.className = 'btn btn-sm btn-outline-secondary';
+        btn.innerHTML = `${r.period.toFixed(6)} d <i class="fa fa-times ms-1"></i>`;
+        btn.title = `± ${r.period_err.toExponential(1)} d; peak to peak `
+                  + Object.entries(r.amplitudes).map(([name, a]) => `${a.toPrecision(3)} in ${name}`).join(', ')
+                  + '\nClick to put it back and search again';
+        btn.onclick = () => {
+            removedFrequencies.splice(i, 1);
+            fitPeriod();
+        };
+        list.appendChild(btn);
+    });
+
+    document.getElementById('removed-label').style.display = removed.length ? '' : 'none';
+    document.getElementById('removed-clear').style.display = removed.length ? '' : 'none';
+}
+
+function prewhitenFolded() {
+    const period = parseFloat(document.getElementById('period-input').value);
+    if (!(period > 0)) {
+        alert('No period to remove! Fold at one first - from a peak, or by "Fit Period".');
+        return;
+    }
+
+    // Already gone, to the resolution of the data: the search would only
+    // find it again as what is left of it
+    const span = lastPeriodFit ? lastPeriodFit.time_span : 0;
+    if (span && removedFrequencies.some(f => Math.abs(f - 1 / period) < 1 / span)) {
+        alert(`${period} d has already been removed.`);
+        return;
+    }
+
+    removedFrequencies.push(1 / period);
+    fitPeriod();
+}
+
+function clearRemoved() {
+    removedFrequencies = [];
+    showRemoved([]);
+    fitPeriod();
+}
+
 // ------------------------------------------------------- logs and downloads
 
 const TARGET_NAME = '{{ target.name|escapejs }}';
@@ -2246,6 +2525,8 @@ function settingsComments(settings) {
         out.push(`Dates: MJD ${settings.mjd_min ?? 'start'} to ${settings.mjd_max ?? 'end'}`);
     if (settings.detrend_window)
         out.push(`Trend slower than ${settings.detrend_window} d fitted along`);
+    if (settings.prewhiten && settings.prewhiten.length)
+        out.push('Removed first: periods ' + settings.prewhiten.map(f => (1 / f).toFixed(6)).join(', ') + ' d');
     return out;
 }
 
@@ -2289,7 +2570,7 @@ function downloadLightcurve() {
             comments.push(`Dates: MJD ${dates.min ?? 'start'} to ${dates.max ?? 'end'}`);
     }
     if (detrendedApplied)
-        comments.push('Values detrended as the last period fit sent them back');
+        comments.push('Values as the last fit sent them back - detrended, or with periods removed, as it says');
 
     const header = ['series', 'mjd', valueKey, errKey];
     if (folded) header.push('phase');
@@ -2840,6 +3121,7 @@ document.addEventListener('DOMContentLoaded', function() {
     plotlyResizable('plotly-container');
     plotlyResizable('periodogram-container');
     plotlyResizable('oc-container');
+    plotlyResizable('dyn-container');
 });
 </script>
 
