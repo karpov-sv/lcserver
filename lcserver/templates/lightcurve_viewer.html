@@ -2442,6 +2442,15 @@ function loadLightcurveData() {
     document.getElementById('control-panel').style.display = 'none';
     document.getElementById('phase-panel').style.display = 'none';
 
+    // The light curve of the other mode goes as soon as the new one is asked
+    // for, rather than staying in sight, and seemingly current, for as long
+    // as the load takes - and for good when the new mode has no data at all
+    document.getElementById('plotly-box').style.display = 'none';
+    const plot = document.getElementById('plotly-container');
+    if (plot.data)
+        Plotly.purge(plot);
+    plotInitialized = false;
+
     updateLoadingStatus(`Requesting ${modeLabel} data from server...`);
 
     // Make AJAX request to load data
