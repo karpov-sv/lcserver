@@ -941,8 +941,14 @@ class _PhaseModel:
 
         Outliers are clipped, as a window a few nights fall in can find a
         period well away from the rest, and claim to know it better than any.
+        The errors are floored at their median first: one such window weighed
+        at face value pulls the first fit so far towards it that the clipping
+        then takes out the windows at the ends instead - those that carry the
+        change of the period - and the start lands a cycle count away. A start
+        has to be robust more than it has to be optimal.
         """
         basis = self.frequency_basis(t)
+        error = np.maximum(error, np.median(error))
         keep = np.ones(len(t), dtype=bool)
 
         for _ in range(DETREND_ITERATIONS + 1):
