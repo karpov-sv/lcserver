@@ -13,6 +13,7 @@ astropy
 ztfquery
 george
 scipy
+threadpoolctl
 skypatrol
 lightkurve
 watchdog

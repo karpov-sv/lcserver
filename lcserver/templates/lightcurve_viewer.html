@@ -286,6 +286,7 @@
     </div>
     <div class="col-auto">
       <input type="number" class="form-control form-control-sm" id="detrend-window-input"
+             onchange="checkPeriodChangeStale()"
              style="width: 90px;" step="0.1" min="0.01" value="1"
              title="Window in days: the trend is a smooth curve with a knot every this many days, broken at gaps longer than that. It must be several times the period being looked for, or it takes the signal along with the trend."
              disabled>
@@ -346,6 +347,78 @@
   <div id="peaks-container" class="mt-2" style="display: none;">
     <small class="text-muted">Highest peaks:</small>
     <div id="peaks-list" class="d-flex flex-wrap gap-1 mt-1"></div>
+  </div>
+
+  <!-- A period that changes with time, and the O-C of the data against the
+       period folded at - a task of its own, once a period has been found -->
+  <div class="border-top mt-3 pt-3">
+    <h6 class="mb-2"
+        title="Fit a period that changes with time, starting from the one folded at, and measure the O-C of the data against it">Period Change</h6>
+
+    <div class="row g-2 align-items-center">
+      <div class="col-auto">
+        <select class="form-select form-select-sm" id="pc-model" onchange="onPeriodModelChange(); checkPeriodChangeStale()">
+          <option value="polynomial" selected>Polynomial</option>
+          <option value="spline">Spline</option>
+        </select>
+      </div>
+      <div class="col-auto" id="pc-order-group">
+        <input type="number" class="form-control form-control-sm" id="pc-order" onchange="checkPeriodChangeStale()"
+               style="width: 70px;" step="1" min="0" max="6" value="2"
+               title="Order of the polynomial the frequency changes by: 0 for a constant period, 1 for one changing at a constant rate">
+      </div>
+      <div class="col-auto" id="pc-order-label">
+        <small class="text-muted">order</small>
+      </div>
+      <div class="col-auto" id="pc-knots-group" style="display: none;">
+        <input type="number" class="form-control form-control-sm" id="pc-knots" onchange="checkPeriodChangeStale()"
+               style="width: 80px;" step="1" min="1" value="365"
+               title="Days between the knots of the spline the frequency follows">
+      </div>
+      <div class="col-auto" id="pc-knots-label" style="display: none;">
+        <small class="text-muted">d between knots</small>
+      </div>
+      <div class="col-auto">
+        <label for="pc-window" class="col-form-label col-form-label-sm">O−C window:</label>
+      </div>
+      <div class="col-auto">
+        <input type="number" class="form-control form-control-sm" id="pc-window" onchange="checkPeriodChangeStale()"
+               style="width: 80px;" step="1" min="1" value="100"
+               title="Days of data each point of the O-C diagram is measured from. Each window starts at the first point after the last one, so that they follow the seasons.">
+      </div>
+      <div class="col-auto">
+        <small class="text-muted">d</small>
+      </div>
+      <div class="col-auto">
+        <button class="btn btn-sm btn-primary" onclick="fitPeriodChange()" id="fit-pc-btn">
+          <i class="fa fa-line-chart"></i> Fit Period Change
+        </button>
+      </div>
+      <div class="col-auto">
+        <div class="form-check">
+          <input class="form-check-input" type="checkbox" id="pc-fold" onchange="onModelFoldToggle()" disabled
+                 title="Fold with the phase of the fitted model rather than with a constant period">
+          <label class="form-check-label small" for="pc-fold">Fold with model</label>
+        </div>
+      </div>
+    </div>
+
+    <div class="mt-2">
+      <small class="text-muted">
+        "Fit Period Change" starts from the period being folded at, uses it with T₀ as the reference ephemeris of the O−C diagram,
+        and moves T₀ to the nearest maximum of light. It uses the same visible sources, error filters, dates and trend as "Fit Period".
+      </small>
+    </div>
+  </div>
+
+  <!-- O-C diagram and the period with time, shown once a period change fit has been run -->
+  <div id="oc-stale" class="alert alert-warning small py-1 px-2 mt-2 mb-0" style="display: none;">
+    The sources, filters, dates, trend or model settings have changed since this O−C diagram was fitted -
+    press "Fit Period Change" to bring it up to date.
+  </div>
+  <div id="oc-box" class="plotly-resizable mt-2" style="height: 650px; display: none;">
+    <div id="oc-container" class="plotly-chart"></div>
+    <div class="plot-resize-handle" role="separator" title="Drag to resize the plot"></div>
   </div>
 </div>
 
@@ -553,10 +626,52 @@ function calculatePhase(mjd, period, epoch) {
     return ((mjd - epoch) % period) / period;
 }
 
+// The period change fitted last, and whether the light curve is folded with
+// its phase rather than with the constant period. Folded with only while the
+// period and T0 are still the ones it was fitted against, as its phase is sent
+// as the O-C against them.
+let periodModel = null;
+let foldModel = null;
+
+// The O-C of the model, in cycles of the reference period, at any time - on
+// past the ends at the rate it has there
+function modelOffset(model, mjd) {
+    const t = model.curve.mjd, o = model.curve.offset;
+    const n = t.length;
+    if (mjd <= t[0])
+        return o[0] + (o[1] - o[0]) / (t[1] - t[0]) * (mjd - t[0]);
+    if (mjd >= t[n - 1])
+        return o[n - 1] + (o[n - 1] - o[n - 2]) / (t[n - 1] - t[n - 2]) * (mjd - t[n - 1]);
+
+    let lo = 0, hi = n - 1;
+    while (hi - lo > 1) {
+        const mid = (lo + hi) >> 1;
+        if (t[mid] <= mjd) lo = mid; else hi = mid;
+    }
+    return o[lo] + (o[hi] - o[lo]) * (mjd - t[lo]) / (t[hi] - t[lo]);
+}
+
+// Phase in [0, 1) the light curve is folded at
+function foldPhase(mjd, period, epoch) {
+    if (foldModel) {
+        const p = (mjd - foldModel.epoch) / foldModel.period - modelOffset(foldModel, mjd);
+        return p - Math.floor(p);
+    }
+    const phase = calculatePhase(mjd, period, epoch);
+    return phase >= 0 ? phase : phase + 1;
+}
+
+function phaseAxisTitle() {
+    if (foldModel)
+        return `Phase (period changing as a ${foldModel.model}, T₀ = ${foldModel.epoch.toFixed(4)} MJD)`;
+    return `Phase (P = ${phasePeriod.toFixed(6)} days, T₀ = ${phaseEpoch.toFixed(2)} MJD)`;
+}
+
 // Prepare data for phase-folded display (with caching)
 function preparePhaseData(series, seriesIndex, period, epoch) {
     // Create cache key from series index, period, epoch, and mode
-    const cacheKey = `${seriesIndex}-${period.toFixed(10)}-${epoch.toFixed(10)}-${dataMode}`;
+    const cacheKey = `${seriesIndex}-${period.toFixed(10)}-${epoch.toFixed(10)}-${dataMode}`
+                   + (foldModel ? `-model${foldModel.id}` : '');
 
     // Check cache first
     if (phaseDataCache[cacheKey]) {
@@ -578,10 +693,7 @@ function preparePhaseData(series, seriesIndex, period, epoch) {
 
     // Calculate phases for all points
     for (let i = 0; i < series.mjd.length; i++) {
-        const phase = calculatePhase(series.mjd[i], period, epoch);
-
-        // Normalize phase to [0, 1)
-        const normalizedPhase = phase >= 0 ? phase : phase + 1;
+        const normalizedPhase = foldPhase(series.mjd[i], period, epoch);
 
         phases.push(normalizedPhase);
         values.push(series[dataKey][i]);
@@ -635,6 +747,10 @@ function preparePhaseData(series, seriesIndex, period, epoch) {
 
 // Update plot
 function updatePlot() {
+    // Every change of the sources, their filters or the dates comes through
+    // here, each of which the O-C diagram may no longer match
+    checkPeriodChangeStale();
+
     const traces = [];
     const isPhaseFolded = phasePeriod > 0;
     // The colours of the page the plot is drawn on, light or dark
@@ -804,7 +920,7 @@ function updatePlot() {
                 font: { size: 18 }
             },
             xaxis: isPhaseFolded ? {
-                title: {text: `Phase (P = ${phasePeriod.toFixed(6)} days, T₀ = ${phaseEpoch.toFixed(2)} MJD)`},
+                title: {text: phaseAxisTitle()},
                 gridcolor: theme.gridcolor,
                 range: [-0.6, 1.6],
                 zeroline: false,
@@ -896,7 +1012,7 @@ function updatePlot() {
                 font: { size: 18 }
             },
             xaxis: isPhaseFolded ? {
-                title: {text: `Phase (P = ${phasePeriod.toFixed(6)} days, T₀ = ${phaseEpoch.toFixed(2)} MJD)`},
+                title: {text: phaseAxisTitle()},
                 gridcolor: theme.gridcolor,
                 range: [-0.6, 1.6],
                 zeroline: false,
@@ -1016,6 +1132,11 @@ function updatePhaseFolding() {
     phasePeriod = parseFloat(periodInput.value) || 0;
     phaseEpoch = parseFloat(epochInput.value) || 0;
 
+    // The model's phase is the O-C against the period and T0 it was fitted
+    // with, so any other leaves it nothing to fold with
+    if (periodModel && (phasePeriod !== periodModel.period || phaseEpoch !== periodModel.epoch))
+        dropPeriodModel();
+
     // The periodogram marks the period being folded at, and its aliases
     updatePeriodogramMarks();
 
@@ -1033,6 +1154,7 @@ function clearPhaseFolding() {
     document.getElementById('epoch-input').value = '0';
     phasePeriod = 0;
     phaseEpoch = 0;
+    dropPeriodModel();
 
     // Drops the period mark, keeping the periodogram itself
     updatePeriodogramMarks();
@@ -1401,6 +1523,7 @@ function onDetrendToggle() {
     document.getElementById('detrend-window-input').disabled = !on;
 
     if (!on && detrendedApplied) restoreDetrended();
+    checkPeriodChangeStale();
 }
 
 function restoreDetrended() {
@@ -1467,17 +1590,11 @@ function redrawAfterDetrend() {
     }
 }
 
-function fitPeriod() {
-    // Check if data is loaded
-    if (!dataLoaded) {
-        alert('Data is still loading. Please wait...');
-        return;
-    }
-
-    // Collect which series to fit and how they are filtered. The points
-    // themselves stay on the server, which loads them from the same files this
-    // viewer was built from - sending them back would push the request past
-    // Django's upload limit for large data sets such as TESS.
+// Which series to fit and how they are filtered. The points themselves stay
+// on the server, which loads them from the same files this viewer was built
+// from - sending them back would push the request past Django's upload limit
+// for large data sets such as TESS.
+function requestedSeries() {
     const visibleSeries = [];
 
     lightcurveData.forEach((series, index) => {
@@ -1491,6 +1608,18 @@ function fitPeriod() {
             max_error: (isMagnitudeMode && state.maxError !== null) ? state.maxError : null
         });
     });
+
+    return visibleSeries;
+}
+
+function fitPeriod() {
+    // Check if data is loaded
+    if (!dataLoaded) {
+        alert('Data is still loading. Please wait...');
+        return;
+    }
+
+    const visibleSeries = requestedSeries();
 
     if (visibleSeries.length === 0) {
         alert('No visible series to fit! Please enable at least one data source with valid data points.');
@@ -1605,6 +1734,7 @@ function fitPeriod() {
         }
 
         // Text, not HTML: the notes quote whatever the server wrote
+        document.getElementById('fit-result-modal-title').textContent = 'Period Fit';
         document.getElementById('fit-result-text').textContent = message;
         bootstrap.Modal.getOrCreateInstance(document.getElementById('fit-result-modal')).show();
 
@@ -1631,6 +1761,327 @@ function fitPeriod() {
         btn.disabled = false;
         btn.innerHTML = originalHtml;
     });
+}
+
+// -------------------------------------------------------------- period change
+
+// Each fit numbered, so that the folds cached for one are not taken for another
+let periodModelCount = 0;
+
+function onPeriodModelChange() {
+    const spline = document.getElementById('pc-model').value === 'spline';
+    ['pc-order-group', 'pc-order-label'].forEach(id =>
+        document.getElementById(id).style.display = spline ? 'none' : '');
+    ['pc-knots-group', 'pc-knots-label'].forEach(id =>
+        document.getElementById(id).style.display = spline ? '' : 'none');
+}
+
+function redrawFolded() {
+    if (plotInitialized) {
+        plotInitialized = false;
+        updatePlot();
+        plotInitialized = true;
+    }
+}
+
+function onModelFoldToggle() {
+    foldModel = (document.getElementById('pc-fold').checked && periodModel) ? periodModel : null;
+    redrawFolded();
+}
+
+// The model no longer fits the ephemeris folded at: back to the constant
+// period. The O-C diagram goes with it, as it was measured against that
+// ephemeris and another makes it a different diagram rather than an old one.
+function dropPeriodModel() {
+    const check = document.getElementById('pc-fold');
+    check.checked = false;
+    check.disabled = true;
+    foldModel = null;
+    periodModel = null;
+
+    const box = document.getElementById('oc-box');
+    if (box.style.display !== 'none') {
+        Plotly.purge('oc-container');
+        box.style.display = 'none';
+    }
+    document.getElementById('oc-stale').style.display = 'none';
+}
+
+// What a period change fit is made from, short of the ephemeris it starts at:
+// the series and their filters, the dates, the trend and the model
+function periodChangeSelection() {
+    const model = document.getElementById('pc-model').value;
+    const dates = dateRange();
+    return {
+        series: requestedSeries(),
+        mode: isMagnitudeMode ? 'magnitude' : 'flux',
+        model: model,
+        order: model === 'spline' ? null : parseInt(document.getElementById('pc-order').value),
+        knot_days: model === 'spline' ? parseFloat(document.getElementById('pc-knots').value) : null,
+        oc_window: parseFloat(document.getElementById('pc-window').value),
+        detrend_window: detrendWindow(),
+        mjd_min: dates.min,
+        mjd_max: dates.max
+    };
+}
+
+// The diagram stays, as it is still right for what it was fitted from - one
+// often hides a source to compare - but is shown not to match the controls
+// any more. Putting them back as they were clears the mark.
+function checkPeriodChangeStale() {
+    if (!periodModel)
+        return;
+
+    const stale = JSON.stringify(periodChangeSelection()) !== periodModel.selection;
+    document.getElementById('oc-stale').style.display = stale ? 'block' : 'none';
+    document.getElementById('oc-box').style.opacity = stale ? 0.5 : 1;
+}
+
+function fitPeriodChange() {
+    if (!dataLoaded) {
+        alert('Data is still loading. Please wait...');
+        return;
+    }
+
+    const visibleSeries = requestedSeries();
+    if (visibleSeries.length === 0) {
+        alert('No visible series to fit! Please enable at least one data source with valid data points.');
+        return;
+    }
+
+    const period = parseFloat(document.getElementById('period-input').value);
+    if (!(period > 0)) {
+        alert('No period set! The fit starts from the period being folded at - use "Fit Period" first.');
+        return;
+    }
+
+    const dates = dateRange();
+    if (dates.min !== null && dates.max !== null && dates.max <= dates.min) {
+        alert('Invalid date range! The start must be before the end.');
+        return;
+    }
+
+    const epoch = parseFloat(document.getElementById('epoch-input').value);
+    const selection = periodChangeSelection();
+
+    const btn = document.getElementById('fit-pc-btn');
+    const originalHtml = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fa fa-spinner fa-spin"></i> Fitting...';
+
+    fetch(`/targets/{{ target_id }}/fit_period_change/`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': getCookie('csrftoken')
+        },
+        body: JSON.stringify(Object.assign({
+            period: period,
+            epoch: isFinite(epoch) ? epoch : null
+        }, selection))
+    })
+    .then(response => {
+        if (!response.ok) {
+            return response.json().then(err => {
+                let errorMsg = err.error || 'Server error';
+                if (err.details)
+                    errorMsg += '\n\n' + err.details;
+                throw new Error(errorMsg);
+            });
+        }
+        return response.json();
+    })
+    .then(data => {
+        // T0 moved to the maximum of light. Taken back from the input as it
+        // shows it, so that the ephemeris folded at is the model's to the bit
+        const epochInput = document.getElementById('epoch-input');
+        epochInput.value = data.epoch.toFixed(6);
+        data.epoch = parseFloat(epochInput.value);
+        data.id = ++periodModelCount;
+        data.selection = JSON.stringify(selection);
+
+        periodModel = data;
+        phasePeriod = data.period;
+        phaseEpoch = data.epoch;
+
+        const check = document.getElementById('pc-fold');
+        check.disabled = false;
+        check.checked = true;
+        foldModel = data;
+
+        const perYear = 365.25;
+        let message = `Period change fit: ${data.model}, with ${data.harmonics} harmonics\n\n`
+            + `Reference ephemeris: P = ${data.period.toFixed(6)} d, `
+            + `T₀ = ${data.epoch.toFixed(4)} MJD (a maximum of light)\n`
+            + `At MJD ${data.tref.toFixed(1)}, the middle of the data:\n`
+            + `  P = ${data.period_tref.toFixed(6)} ± ${data.period_tref_err.toExponential(1)} d\n`
+            + `  dP/dt = ${data.pdot.toExponential(3)} ± ${data.pdot_err.toExponential(1)} d/d`
+            + ` = ${(data.pdot * perYear).toExponential(3)} d/yr\n\n`
+            + `χ² = ${data.chi2.toFixed(1)}, reduced ${data.reduced_chi2.toFixed(2)} `
+            + `- the errors above are scaled by it\n`
+            + `Fitted ${data.n_points} points from ${data.n_series} series over ${data.time_span.toFixed(1)} days`
+            + (data.detrend_window ? `, each with its trend slower than ${data.detrend_window} d` : '')
+            + `.\n\nBy model (lower BIC is better):\n`;
+
+        data.stages.forEach(stage => {
+            message += `  ${stage.model}: χ² ${stage.chi2.toFixed(1)}, BIC ${stage.bic.toFixed(1)}\n`;
+        });
+
+        message += `\nO−C measured in ${data.oc.mjd.length} windows of ${data.oc_window} d, `
+                 + `the period on its own in ${data.local.mjd.length} of them.`;
+
+        if (data.warnings && data.warnings.length > 0) {
+            message += '\n\n⚠️  Warnings:\n';
+            data.warnings.forEach(warning => {
+                message += '  • ' + warning + '\n';
+            });
+        }
+
+        document.getElementById('fit-result-modal-title').textContent = 'Period Change Fit';
+        document.getElementById('fit-result-text').textContent = message;
+        bootstrap.Modal.getOrCreateInstance(document.getElementById('fit-result-modal')).show();
+
+        // As "Fit Period" does, the plot shows what was fitted
+        if (data.detrend_window) {
+            applyDetrended(data.detrended);
+        } else if (detrendedApplied) {
+            restoreDetrended();
+        }
+
+        plotOC(data);
+        updatePhaseFolding();
+    })
+    .catch(error => {
+        console.error('Error fitting period change:', error);
+        alert(`Period change fit failed:\n\n${error.message}\n\nSee console for details.`);
+    })
+    .finally(() => {
+        btn.disabled = false;
+        btn.innerHTML = originalHtml;
+    });
+}
+
+// The O-C diagram above, and the period it implies below, on one time axis
+function plotOC(data) {
+    document.getElementById('oc-box').style.display = 'block';
+    checkPeriodChangeStale();
+
+    const theme = plotlyTheme();
+    const oc = data.oc, curve = data.curve, local = data.local;
+    const modelOC = curve.offset.map(o => o * data.period);
+    const ocUpper = modelOC.map((o, i) => o + curve.offset_err[i] * data.period);
+    const ocLower = modelOC.map((o, i) => o - curve.offset_err[i] * data.period);
+    const upper = curve.period.map((p, i) => p + curve.period_err[i]);
+    const lower = curve.period.map((p, i) => p - curve.period_err[i]);
+
+    // What the model leaves of each O-C point, which the trend of the O-C
+    // itself would hide - days of it against errors of hundredths. Not the
+    // residuals of a fit to the points, as the model was fitted to the light
+    // curve, so they need not average to zero exactly.
+    const residual = oc.mjd.map((t, i) => oc.oc[i] - modelOffset(data, t) * data.period);
+    const resUpper = curve.offset_err.map(e => e * data.period);
+    const resLower = resUpper.map(e => -e);
+
+    // The bands answer to the one legend entry
+    const band = {mode: 'lines', type: 'scatter', legendgroup: 'band', hoverinfo: 'skip'};
+
+    const traces = [Object.assign({}, band, {
+        x: curve.mjd, y: ocUpper, line: {width: 0}, showlegend: false
+    }), Object.assign({}, band, {
+        x: curve.mjd, y: ocLower, line: {width: 0},
+        fill: 'tonexty', fillcolor: 'rgba(214, 39, 40, 0.2)', name: 'Model ± 1σ'
+    }), {
+        x: curve.mjd, y: modelOC, mode: 'lines', type: 'scatter',
+        name: 'Model', line: {color: '#d62728', width: 1.5},
+        hovertemplate: 'MJD %{x:.1f}<br>O−C %{y:.4f} d<extra>model</extra>'
+    }, {
+        x: oc.mjd, y: oc.oc, mode: 'markers', type: 'scatter', name: 'O−C',
+        error_y: {type: 'data', array: oc.oc_err, visible: true, thickness: 1},
+        marker: {color: '#1f77b4', size: 6},
+        customdata: oc.mjd.map((_, i) => [oc.mjd_min[i], oc.mjd_max[i], oc.n[i], oc.amplitude[i], oc.oc_err[i]]),
+        hovertemplate: 'MJD %{customdata[0]:.1f} – %{customdata[1]:.1f}, %{customdata[2]} points'
+                     + '<br>O−C %{y:.4f} ± %{customdata[4]:.4f} d'
+                     + '<br>amplitude %{customdata[3]:.2f} × the template<extra></extra>'
+    }, Object.assign({}, band, {
+        x: curve.mjd, y: resUpper, yaxis: 'y3', line: {width: 0}, showlegend: false
+    }), Object.assign({}, band, {
+        x: curve.mjd, y: resLower, yaxis: 'y3', line: {width: 0}, showlegend: false,
+        fill: 'tonexty', fillcolor: 'rgba(214, 39, 40, 0.2)'
+    }), {
+        x: [curve.mjd[0], curve.mjd[curve.mjd.length - 1]], y: [0, 0],
+        mode: 'lines', type: 'scatter', yaxis: 'y3', showlegend: false,
+        line: {color: '#d62728', width: 1.5}, hoverinfo: 'skip'
+    }, {
+        // A quarter of a cycle either side, past which the count of cycles at
+        // a window is in doubt - off the plot unless some point gets near
+        x: [curve.mjd[0], curve.mjd[curve.mjd.length - 1], null,
+            curve.mjd[0], curve.mjd[curve.mjd.length - 1]],
+        y: [data.period / 4, data.period / 4, null, -data.period / 4, -data.period / 4],
+        mode: 'lines', type: 'scatter', yaxis: 'y3', name: '± ¼ cycle',
+        line: {color: theme.font.color, width: 1, dash: 'dot'}, hoverinfo: 'skip'
+    }, {
+        x: oc.mjd, y: residual, mode: 'markers', type: 'scatter', yaxis: 'y3',
+        name: 'O−C − model', showlegend: false,
+        error_y: {type: 'data', array: oc.oc_err, visible: true, thickness: 1},
+        marker: {color: '#1f77b4', size: 6},
+        customdata: oc.mjd.map((_, i) => [oc.oc_err[i], residual[i] / data.period]),
+        hovertemplate: 'MJD %{x:.1f}<br>O−C − model %{y:.4f} ± %{customdata[0]:.4f} d'
+                     + '<br>= %{customdata[1]:.3f} cycles<extra></extra>'
+    }, Object.assign({}, band, {
+        x: curve.mjd, y: upper, yaxis: 'y2', line: {width: 0}, showlegend: false
+    }), Object.assign({}, band, {
+        x: curve.mjd, y: lower, yaxis: 'y2', line: {width: 0}, showlegend: false,
+        fill: 'tonexty', fillcolor: 'rgba(214, 39, 40, 0.2)'
+    }), {
+        x: curve.mjd, y: curve.period, mode: 'lines', type: 'scatter', yaxis: 'y2',
+        name: 'Model period', line: {color: '#d62728', width: 1.5}, showlegend: false,
+        hovertemplate: 'MJD %{x:.1f}<br>P %{y:.6f} d<extra>model</extra>'
+    }, {
+        x: local.mjd, y: local.period, mode: 'markers', type: 'scatter', yaxis: 'y2',
+        name: 'Period in a window',
+        error_y: {type: 'data', array: local.period_err, visible: true, thickness: 1},
+        marker: {color: '#2ca02c', size: 6, symbol: 'square'},
+        customdata: local.period_err,
+        hovertemplate: 'MJD %{x:.1f}<br>P %{y:.5f} ± %{customdata:.5f} d<extra>window</extra>'
+    }, {
+        x: [curve.mjd[0], curve.mjd[curve.mjd.length - 1]], y: [data.period, data.period],
+        mode: 'lines', type: 'scatter', yaxis: 'y2', name: 'Reference period',
+        line: {color: theme.font.color, width: 1, dash: 'dash'}, hoverinfo: 'skip'
+    }];
+
+    // The period range of the model and of the windows that measured theirs
+    // well, so that one window a few nights fell in does not squash the rest
+    const span = Math.max(...curve.period) - Math.min(...curve.period);
+    const good = local.period.filter((p, i) => local.period_err[i] < Math.max(span, 1e-4 * data.period));
+    const all = curve.period.concat(good, [data.period]);
+    const lo = Math.min(...all), hi = Math.max(...all);
+    const pad = 0.1 * (hi - lo) || 1e-4 * data.period;
+
+    const axis = {showline: true, linecolor: theme.linecolor, gridcolor: theme.gridcolor,
+                  zeroline: false, automargin: true};
+
+    // The residuals and their errors decide the range, not the band, which
+    // widens without end across a gap with no data
+    const reach = Math.max(1e-4 * data.period,
+                           ...residual.map((r, i) => Math.abs(r) + oc.oc_err[i]));
+
+    Plotly.newPlot('oc-container', traces, {
+        title: {text: `O−C against P = ${data.period.toFixed(6)} d, T₀ = ${data.epoch.toFixed(4)} MJD`
+                    + ` - ${data.model}`, font: {size: 12}},
+        xaxis: Object.assign({}, axis, {title: {text: 'MJD'}, anchor: 'y2'}),
+        yaxis: Object.assign({}, axis, {title: {text: 'O − C, days'}, domain: [0.56, 1]}),
+        yaxis3: Object.assign({}, axis, {title: {text: 'Residual, days'}, domain: [0.31, 0.5],
+                                         range: [-1.15 * reach, 1.15 * reach]}),
+        yaxis2: Object.assign({}, axis, {title: {text: 'Period, days'}, domain: [0, 0.25],
+                                         range: [lo - pad, hi + pad]}),
+        hovermode: 'closest',
+        autosize: true,
+        margin: {t: 30, r: 30},
+        font: {size: 10, color: theme.font.color},
+        paper_bgcolor: theme.paper_bgcolor,
+        plot_bgcolor: theme.plot_bgcolor,
+        showlegend: true
+    }, {responsive: true, displaylogo: false});
 }
 
 // Toggle series visibility
@@ -1953,6 +2404,11 @@ function switchMode(newMode) {
     // Reset plot state
     plotInitialized = false;
 
+    // A period change was fitted to the other mode's light curve, which is
+    // about to be replaced along with what any detrending made of it
+    dropPeriodModel();
+    detrendedApplied = false;
+
     // Reload data for new mode
     loadLightcurveData();
 }
@@ -2105,6 +2561,7 @@ document.addEventListener('DOMContentLoaded', function() {
     // Both plots may be dragged taller or shorter by their bottom edge
     plotlyResizable('plotly-container');
     plotlyResizable('periodogram-container');
+    plotlyResizable('oc-container');
 });
 </script>
 
