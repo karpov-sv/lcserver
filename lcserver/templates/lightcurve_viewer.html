@@ -1452,9 +1452,12 @@ function plotPeriodogram(data) {
     traces.push(markTrace('Sampling', 'red', 'dot', data.aliases || [], top));
 
     const best = data.peaks && data.peaks.length ? data.peaks[0] : null;
-    let title = 'Lomb-Scargle periodogram of ' + data.n_points + ' points';
+    // Named, as the periodogram is kept on a switch of the display mode - so
+    // that its periods can be tried on the other - which it was not made from
+    let title = 'Lomb-Scargle periodogram of ' + data.n_points
+              + (isMagnitudeMode ? ' magnitudes' : ' {{ flux_sources }} flux points');
     if (data.n_series > 1)
-        title += ' from ' + data.n_series + ' series, each centred on its own median';
+        title += ' from ' + data.n_series + ' series';
     if (best)
         title += ' - best P = ' + best.period + ' d'
                + (best.fap !== null && best.fap !== undefined
