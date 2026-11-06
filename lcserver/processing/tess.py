@@ -21,6 +21,7 @@ from .utils import (break_at_gaps, cleanup_paths, cached_lightkurve_search,
                     mission_quality_mask, log_quality, quality_field,
                     quality_level,
                     QUALITY_STANDARD, QUALITY_RELAXED, QUALITY_PUBLISHED)
+from .tess_pixel import target_tess_pixel
 
 
 # The reductions TESS light curves come from, in the order they are preferred
@@ -115,7 +116,8 @@ def select_detrended_flux(lc, log):
                         ('QLP', 'QLP'),
                         ('SPOC', 'SPOC'),
                         ('TEQUILA', 'TEQUILA (faint variables, sectors 1-26)'),
-                        ('TARS', 'TARS (rotation, flux only)')],
+                        ('TARS', 'TARS (rotation, flux only)'),
+                        ('PIXEL', 'Pixel-level, from full-frame images (faint or blended stars, not bright isolated ones)')],
             'initial': 'auto',
             'required': False,
         },
@@ -200,6 +202,12 @@ def target_tess(config, basepath=None, verbose=True, show=False):
     authors = TESS_AUTHORS if author == 'auto' else [author]
 
     ra, dec = config.get('target_ra'), config.get('target_dec')
+
+    # Measured here in the full-frame images rather than taken from a
+    # pipeline - for stars no pipeline gives a light curve of their own
+    if author == 'PIXEL':
+        target_tess_pixel(config, basepath, log, show=show, refresh=refresh_cache)
+        return
 
     log(f"Requesting TESS data for {config['target_name']} within {tess_sr:.1f} arcsec"
         + ("" if author == 'auto' else f", from {author} only"))

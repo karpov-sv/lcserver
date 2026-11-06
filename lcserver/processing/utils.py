@@ -1303,7 +1303,7 @@ def log_conversion(verbose, source, formula, params=None, npoints=None, note=Non
 
 
 def cached_lightkurve_search(cache_name, basepath, log, description,
-                             refresh=False, **kwargs):
+                             refresh=False, kind='lightcurve', **kwargs):
     """A MAST product search, kept on disk like every other source's query.
 
     lightkurve caches its searches too, but in the process and nowhere else,
@@ -1326,8 +1326,11 @@ def cached_lightkurve_search(cache_name, basepath, log, description,
         Human-readable name of what is being searched for, for the log
     refresh : bool, optional
         Drop what is cached and ask MAST again
+    kind : str, optional
+        'lightcurve' for `lightkurve.search_lightcurve`, 'tesscut' for
+        `lightkurve.search_tesscut` - the full-frame image cutouts
     kwargs : dict
-        Passed on to `lightkurve.search_lightcurve`
+        Passed on to the search function
 
     Returns
     -------
@@ -1350,7 +1353,8 @@ def cached_lightkurve_search(cache_name, basepath, log, description,
 
     # Undecorated, so that the in-process memo is neither consulted nor
     # filled: the file below is the only cache, and it can be dropped
-    search = getattr(lk.search_lightcurve, '__wrapped__', lk.search_lightcurve)
+    function = lk.search_tesscut if kind == 'tesscut' else lk.search_lightcurve
+    search = getattr(function, '__wrapped__', function)
     res = search(**kwargs)
 
     table = res.table.copy()

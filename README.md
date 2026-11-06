@@ -48,7 +48,7 @@ model atmosphere grids as are worth asking.
 | PGIR | Palomar Gattini-IR, J, sky visible from Palomar, 2018–2022, J < 15.5 |
 | WISE | W1–W4 in 2010, W1 and W2 through the NEOWISE years |
 | Kepler | flux, quarters and K2 campaigns, 2009–2018 |
-| TESS | flux, per sector |
+| TESS | flux, per sector; the pipelines' light curves, or measured in the full-frame images for faint or blended stars |
 | DASCH | Harvard plate archive, historical |
 | APPLAUSE | European plate archive, Dec > −30° |
 
