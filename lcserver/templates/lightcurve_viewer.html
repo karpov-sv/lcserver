@@ -263,6 +263,13 @@
         <i class="fa fa-arrow-down"></i> ÷2
       </button>
     </div>
+    <div class="col-auto ms-2">
+      <div class="form-check">
+        <input class="form-check-input" type="checkbox" id="binned-check" checked onchange="redrawFolded()"
+               title="Draw the median of every source in bins of phase over the folded light curve - its shape at the period folded at, whatever found it">
+        <label class="form-check-label small" for="binned-check">Binned median</label>
+      </div>
+    </div>
   </div>
 
   <div class="row g-2 align-items-center mt-2">
@@ -805,6 +812,69 @@ function phaseAxisTitle() {
     return `Phase (P = ${phasePeriod.toFixed(6)} days, T₀ = ${phaseEpoch.toFixed(2)} MJD)`;
 }
 
+// Bins of phase the median of a folded series is drawn in: about five points
+// each, within these limits
+const BINNED_MIN = 10;
+const BINNED_MAX = 50;
+
+// The median of a folded series in bins of phase, as a line over the points,
+// repeated across the wrapped range the plot shows. Of the points the plot
+// shows - filtered and within the dates - and offset as they are. None for a
+// series with too few points to say anything.
+function binnedMedian(series, phaseData, state, dates) {
+    const n0 = series.mjd.length;
+    const filtered = isMagnitudeMode && state.maxError !== null;
+
+    const phases = [], values = [];
+    // The first n0 of the folded points are the originals, in [0, 1)
+    for (let i = 0; i < n0; i++) {
+        if (filtered && !withinMaxError(phaseData.errs[i], state.maxError)) continue;
+        if (!inDateRange(phaseData.mjds[i], dates)) continue;
+        if (phaseData.values[i] === null || !isFinite(phaseData.values[i])) continue;
+        phases.push(phaseData.phases[i]);
+        values.push(phaseData.values[i]);
+    }
+
+    if (phases.length < 2 * BINNED_MIN)
+        return null;
+
+    const nbins = Math.max(BINNED_MIN, Math.min(BINNED_MAX, Math.round(phases.length / 5)));
+    const bins = Array.from({length: nbins}, () => []);
+    phases.forEach((p, i) => bins[Math.min(nbins - 1, Math.floor(p * nbins))].push(values[i]));
+
+    // An empty bin breaks the line, rather than have it drawn straight across
+    // phases the series never covered - an eclipse its nights all missed
+    const centres = [], medians = [];
+    bins.forEach((b, k) => {
+        centres.push((k + 0.5) / nbins);
+        if (!b.length) {
+            medians.push(null);
+            return;
+        }
+        b.sort((x, y) => x - y);
+        const m = b.length % 2 ? b[(b.length - 1) / 2] : 0.5 * (b[b.length / 2 - 1] + b[b.length / 2]);
+        medians.push(m + state.offset);
+    });
+
+    const x = [], y = [];
+    [-1, 0, 1].forEach(shift => centres.forEach((c, k) => {
+        const p = c + shift;
+        if (p >= -0.6 && p <= 1.6) {
+            x.push(p);
+            y.push(medians[k]);
+        }
+    }));
+
+    return {
+        x: x, y: y, mode: 'lines', type: 'scatter',
+        name: series.label + ' (binned median)',
+        legendgroup: series.label, showlegend: false, meta: 'binned',
+        line: {color: state.color, width: 3},
+        hovertemplate: '<b>' + series.label + '</b><br>binned median %{y:.3f}'
+                     + '<br>phase %{x:.3f}<extra></extra>'
+    };
+}
+
 // Prepare data for phase-folded display (with caching)
 function preparePhaseData(series, seriesIndex, period, epoch) {
     // Create cache key from series index, period, epoch, and mode
@@ -904,6 +974,10 @@ function updatePlot() {
     // TESS light curves pay for them once.
     const useMJDMode = !isPhaseFolded && timeAxisMode === 'mjd';
 
+    // The binned median of each folded series, drawn after all of them
+    const binned = [];
+    const showBinned = isPhaseFolded && document.getElementById('binned-check').checked;
+
     lightcurveData.forEach((series, index) => {
         const state = seriesState[index];
         if (!state.visible) return;
@@ -940,6 +1014,12 @@ function updatePlot() {
             }
 
             filteredCount = xData.length;
+
+            if (showBinned) {
+                const curve = binnedMedian(series, phaseData, state, dates);
+                if (curve)
+                    binned.push(curve);
+            }
 
             hoverTemplate =
                 '<b>%{fullData.name}</b><br>' +
@@ -1027,6 +1107,8 @@ function updatePlot() {
             mode: 'markers',
             type: useWebGL ? 'scattergl' : 'scatter',
             name: series.label,
+            // Shared with its binned median, which the legend then hides with it
+            legendgroup: series.label,
             marker: {
                 color: state.color,
                 size: state.markerSize,
@@ -1034,6 +1116,8 @@ function updatePlot() {
             hovertemplate: hoverTemplate,
         });
     });
+
+    binned.forEach(curve => traces.push(curve));
 
     const config = {
         responsive: true,
@@ -1584,6 +1668,7 @@ function showPeaks(peaks) {
                           ? ', FAP ' + peak.fap.toExponential(1) : ', FAP not available'))
                   // From fitting the trend and the harmonics together, which
                   // is what the peaks are ranked by when it is there
+                  + (peak.period_err ? '\nperiod ± ' + peak.period_err.toExponential(1) + ' d' : '')
                   + (peak.fit_power !== null && peak.fit_power !== undefined
                      ? '\nfit with ' + harmonicsFitted + ' harmonics explains '
                        + (100 * peak.fit_power).toFixed(1) + '% of the variance about the trend'
@@ -1896,7 +1981,8 @@ function fitPeriod() {
         // Show results
         let message = `Period fit successful!\n\n` +
             `Searched with ${methodName(data)}\n` +
-            `Best period: ${data.period.toFixed(6)} days\n` +
+            `Best period: ${data.period.toFixed(6)}`
+                + (data.period_err ? ` ± ${data.period_err.toExponential(1)}` : '') + ' days\n' +
             `Epoch (T₀): ${data.epoch.toFixed(2)} MJD\n` +
             `${data.method === 'bls' ? 'Signal detection efficiency' : 'Power'}: ${data.power.toFixed(4)}\n`;
         if (data.method === 'bls' && data.peaks.length && data.peaks[0].depth !== undefined)
@@ -2662,11 +2748,11 @@ function downloadPeriodogram() {
         `Periods searched: ${data.period_min} to ${data.period_max} d, decimated to the highest power in each bin`,
         data.method === 'bls'
             ? 'Highest peaks (period d, signal detection efficiency, depth, duration d):'
-            : 'Highest peaks (period d, power, false alarm probability, chi2 of the refit):'
+            : 'Highest peaks (period d, its error, power, false alarm probability, chi2 of the refit):'
     ];
     (data.peaks || []).forEach(peak => comments.push(data.method === 'bls'
         ? `  ${peak.period}, ${peak.power}, ${peak.depth}, ${peak.duration}`
-        : `  ${peak.period}, ${peak.power}, ${peak.fap ?? ''}, ${peak.chi2 ?? ''}`));
+        : `  ${peak.period}, ${peak.period_err ?? ''}, ${peak.power}, ${peak.fap ?? ''}, ${peak.chi2 ?? ''}`));
 
     const pg = data.periodogram;
     downloadCSV(`${filePrefix()}_periodogram.csv`, comments, ['period', 'power'],
@@ -2888,7 +2974,8 @@ function showStatistics() {
     note.innerHTML = '';
 
     const layout = plotDiv._fullLayout || plotDiv.layout;
-    const traces = plotInitialized && plotDiv.data ? plotDiv.data : [];
+    const traces = (plotInitialized && plotDiv.data ? plotDiv.data : [])
+        .filter(trace => trace.meta !== 'binned');
 
     if (!traces.length || !layout || !layout.xaxis || !layout.xaxis.range) {
         rangeText.textContent = '';

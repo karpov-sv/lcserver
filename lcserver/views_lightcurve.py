@@ -637,6 +637,13 @@ def refine_peaks(series, peaks, window_days, span, nharm=PERIOD_HARMONICS):
     period, its chi-squared and the fraction of the variance about the trend
     the harmonics explain. And the reduced chi-squared of the best, to scale
     the differences between them by.
+
+    Each period carries its uncertainty too, from the curvature of the
+    chi-squared at the minimum, scaled by the reduced chi-squared when above
+    one and by `red_noise_factor` on a tenth of its cycle - the errors of most
+    surveys understate the scatter, and night to night variability no
+    harmonics follow does not average down. None where the minimum is not
+    one the samples bracket.
     """
     groups = {}
     for t, y, dy, group in series:
@@ -663,6 +670,21 @@ def refine_peaks(series, peaks, window_days, span, nharm=PERIOD_HARMONICS):
             total -= float(np.linalg.lstsq(gram, proj, rcond=None)[0] @ proj)
         return total
 
+    def red_noise(frequency):
+        """How much worse than white the residuals at `frequency` are."""
+        times, resid = [], []
+        for members in fitted:
+            gram, proj = 0, 0
+            for fit in members:
+                g, p = fit.normal(frequency)
+                gram, proj = gram + g, proj + p
+            alpha = np.linalg.lstsq(gram, proj, rcond=None)[0]
+            for fit in members:
+                times.append(fit.mjds)
+                resid.append(fit.residuals(frequency * fit.mjds, alpha)[:len(fit.mjds)])
+        return red_noise_factor(np.concatenate(times), np.concatenate(resid),
+                                RED_NOISE_BIN_CYCLES / frequency)
+
     refined = []
     for peak in peaks:
         f0 = peak['frequency']
@@ -672,8 +694,9 @@ def refine_peaks(series, peaks, window_days, span, nharm=PERIOD_HARMONICS):
         i = int(np.argmin(values))
 
         # The minimum between the samples, from the parabola through the three
-        # around it
+        # around it, whose curvature is what the frequency is known to
         f, c = grid[i], values[i]
+        sigma = None
         if 0 < i < len(grid) - 1:
             a, b, d = values[i - 1], values[i], values[i + 1]
             denom = a - 2 * b + d
@@ -683,6 +706,7 @@ def refine_peaks(series, peaks, window_days, span, nharm=PERIOD_HARMONICS):
                 c = min(chi2(f), b)
                 if c == b:
                     f = grid[i]
+                sigma = (grid[1] - grid[0]) * np.sqrt(2.0 / denom) * red_noise(f)
 
         refined.append(dict(peak,
                             # Where the periodogram had it, before the fit
@@ -691,11 +715,22 @@ def refine_peaks(series, peaks, window_days, span, nharm=PERIOD_HARMONICS):
                             frequency=float(f),
                             chi2=round(c, 2),
                             fit_power=round(1.0 - c / chi2_trend, 4)
-                            if chi2_trend > 0 else None))
+                            if chi2_trend > 0 else None,
+                            # Unscaled by the reduced chi-squared until all
+                            # are in, the best's being what scales them
+                            frequency_err=sigma))
 
     refined.sort(key=lambda _: _['chi2'])
+    reduced = refined[0]['chi2'] / dof if refined else None
 
-    return refined, (refined[0]['chi2'] / dof if refined else None)
+    for peak in refined:
+        if peak['frequency_err'] is not None:
+            peak['frequency_err'] *= np.sqrt(max(reduced, 1.0))
+            peak['period_err'] = float(peak['frequency_err'] / peak['frequency'] ** 2)
+        else:
+            peak['period_err'] = None
+
+    return refined, reduced
 
 
 def alias_kind(f1, f2, span):
@@ -2034,6 +2069,7 @@ def _fit_period(request, id):
         # Build result
         result = {
             'period': float(best_period),
+            'period_err': best.get('period_err'),
             'epoch': float(epoch),
             'power': float(best_power),
             'frequency': float(best_freq),
