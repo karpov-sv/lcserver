@@ -1115,7 +1115,8 @@ def connect_phases(model, t, phase, error, frequency):
     windows come in: a constant frequency to begin with, then one changing as
     the target `model` does - a polynomial up to its order, a spline once the
     windows span enough of its knots, and a straight change of frequency
-    before that.
+    before that - but a changing one only where the prediction reaches no
+    further than the windows it rests on.
 
     This is how the period of a star is followed across the seasons, and the
     years when nobody looked: a model of the whole light curve started from a
@@ -1132,22 +1133,32 @@ def connect_phases(model, t, phase, error, frequency):
     lo = hi = seed
     counted = np.array(phase, dtype=float)
 
-    def predictor(lo, hi):
+    def predictor(lo, hi, x):
         tt, pp, ee = t[lo:hi + 1], counted[lo:hi + 1], error[lo:hi + 1]
         if hi == lo:
-            return lambda x: pp[0] + frequency * (x - tt[0])
+            return pp[0] + frequency * (x - tt[0])
+
+        # A change of the period is only extrapolated as far as the windows it
+        # was fitted on reach: four windows over a season say little of the
+        # curvature of the phase, and carried across the year to the next
+        # season what little they say is out by a cycle. Further than that, a
+        # constant period fitted to them, which carries much further
+        span = tt[-1] - tt[0]
+        reach = max(tt[0] - x, x - tt[-1])
+        if reach > span:
+            return _track(PhaseModel(model.tmin, model.tmax, order=0), tt, pp, ee)(x)
 
         if model.knot_days:
             local = PhaseModel(tt[0], tt[-1], knot_days=model.knot_days)
-            if tt[-1] - tt[0] >= 3 * model.knot_days and len(tt) >= local.ncoef + 3:
-                return _track(local, tt, pp, ee)
+            if span >= 3 * model.knot_days and len(tt) >= local.ncoef + 3:
+                return _track(local, tt, pp, ee)(x)
             cap = PERIOD_CHANGE_SPLINE_START
         else:
             cap = model.order
 
         local = PhaseModel(model.tmin, model.tmax,
                             order=min(cap, max(0, (len(tt) - 2) // 2)))
-        return _track(local, tt, pp, ee)
+        return _track(local, tt, pp, ee)(x)
 
     while hi - lo + 1 < n:
         # The nearer of the two windows either side of those counted
@@ -1155,7 +1166,7 @@ def connect_phases(model, t, phase, error, frequency):
         gap_hi = t[hi + 1] - t[hi] if hi < n - 1 else np.inf
         j = lo - 1 if gap_lo < gap_hi else hi + 1
 
-        predicted = predictor(lo, hi)(t[j])
+        predicted = predictor(lo, hi, t[j])
         counted[j] = phase[j] + np.round(predicted - phase[j])
         lo, hi = min(lo, j), max(hi, j)
 
