@@ -12,8 +12,9 @@ import warnings
 import numpy as np
 from astropy.table import Table
 from astropy.time import Time
-from astropy.timeseries import LombScargle
+from astropy.timeseries import LombScargle, BoxLeastSquares
 from scipy.signal import find_peaks
+from scipy.ndimage import median_filter
 from scipy.interpolate import BSpline
 
 from . import models
@@ -398,6 +399,9 @@ DETREND_PENALTY = 0.1
 # The highest peaks are fitted again, the trend and this many harmonics of the
 # period together, rather than one after the other
 PERIOD_HARMONICS = 3
+
+# Most harmonics the periodogram itself may be computed with
+PERIOD_MAX_NTERMS = 4
 
 # Trial frequencies across each peak in that fit, spanning one peak width
 PERIOD_REFINE_SAMPLES = 21
@@ -854,24 +858,142 @@ def _prewhiten(requested, window_days, frequencies, nharm=PERIOD_HARMONICS):
     return out, removed
 
 
-def find_period(mjds, values, errors, pmin, pmax):
-    """Lomb-Scargle periodogram of a light curve and its highest peaks.
+# Search methods beyond the plain periodogram, which costs far less per trial
+# frequency: their grids are capped lower
+PERIOD_MAX_FREQUENCIES_SLOW = 100000
+
+# Box least squares: the period range is searched in chunks spanning this
+# factor in period, each with its own durations - a duration has to be shorter
+# than every period it is tried at - from the first to the second fraction of
+# the shortest period in the chunk, in so many steps
+BLS_CHUNK_FACTOR = 3.0
+BLS_DURATION_FRACTIONS = (0.01, 0.25)
+BLS_DURATIONS = 6
+
+# Trial frequencies across the width of the narrowest box's peak - far
+# narrower than a sinusoid's, which the periodogram's grid would step over
+BLS_SAMPLES_PER_PEAK = 2
+
+# The running median the box spectrum is measured against spans this fraction
+# of each chunk, and never fewer trial periods than so many
+BLS_SDE_WINDOWS = 50
+BLS_SDE_MIN_WINDOW = 51
+
+
+def _bls_power(mjds, values, errors, pmin, pmax, span):
+    """Box least squares over the period range, a chunk at a time.
+
+    Scored by the signal detection efficiency: the signal to noise of the best
+    box at each period, less its running median over the neighbouring periods
+    of the chunk, in units of the scatter about that. The raw signal to noise
+    drifts - longer boxes take in more of any variation, so it has a level of
+    its own in every chunk and slopes within it - and a light curve varying by
+    a magnitude gives any box a large one; what stands out of its
+    surroundings is what matters.
+    Returns the frequencies, ascending, the power, the depth and the duration
+    at each, and whether the grid had to be made coarser than the narrowest
+    box asks for.
+    """
+    bounds = [pmin]
+    while bounds[-1] < pmax:
+        bounds.append(min(bounds[-1] * BLS_CHUNK_FACTOR, pmax))
+
+    chunks = []
+    for pa, pb in zip(bounds[:-1], bounds[1:]):
+        durations = np.geomspace(BLS_DURATION_FRACTIONS[0] * pa, BLS_DURATION_FRACTIONS[1] * pa,
+                                 BLS_DURATIONS)
+        df = durations[0] / pb / (BLS_SAMPLES_PER_PEAK * span)
+        chunks.append((pa, pb, durations, (1.0 / pa - 1.0 / pb) / df))
+
+    total = sum(c[3] for c in chunks)
+    shrink = min(1.0, PERIOD_MAX_FREQUENCIES_SLOW / total)
+
+    model = BoxLeastSquares(mjds, values, errors)
+    freq, power, depth, duration = [], [], [], []
+    for pa, pb, durations, n in chunks:
+        f = np.linspace(1.0 / pb, 1.0 / pa, max(int(n * shrink), 10))
+        result = model.power(1.0 / f, durations, objective='snr')
+        snr = np.nan_to_num(np.asarray(result.power, dtype=float))
+        size = max(BLS_SDE_MIN_WINDOW, len(snr) // BLS_SDE_WINDOWS) | 1
+        excess = snr - median_filter(snr, size=size, mode='nearest')
+        scatter = 1.4826 * np.median(np.abs(excess - np.median(excess))) or 1.0
+        freq.append(f)
+        power.append(excess / scatter)
+        depth.append(np.asarray(result.depth, dtype=float))
+        duration.append(np.asarray(result.duration, dtype=float))
+
+    freq, power, depth, duration = (np.concatenate(_) for _ in (freq, power, depth, duration))
+    order = np.argsort(freq)
+
+    return freq[order], power[order], depth[order], duration[order], bool(shrink < 1.0)
+
+
+def _decimate(x, y, nbins):
+    """The largest y of every one of nbins bins, with its x - so that a narrow
+    peak survives instead of falling between the samples."""
+    edges = np.linspace(0, len(y), min(nbins, len(y)) + 1).astype(int)
+    xs, ys = [], []
+    for a, b in zip(edges[:-1], edges[1:]):
+        if b > a:
+            j = a + int(np.argmax(y[a:b]))
+            xs.append(x[j])
+            ys.append(y[j])
+    return np.array(xs), np.array(ys)
+
+
+def spectral_window(mjds, width, nfreq):
+    """The periodogram of the sampling alone, at frequency offsets from zero to
+    `width`.
+
+    A signal at any frequency is seen also wherever this has a peak, shifted
+    by it - the aliases of the day, the month and the year, and whatever else
+    the dates imprint. Centred on the period folded at, it says which peaks of
+    the periodogram are that period over again. Decimated for display, the
+    highest value in each bin.
+    """
+    offsets = np.linspace(width / nfreq, width, nfreq)
+    window = LombScargle(mjds, np.ones_like(mjds), fit_mean=False,
+                         center_data=False).power(offsets)
+    x, y = _decimate(offsets, window, PERIOD_PLOT_POINTS)
+    return {'offsets': [round(float(_), 7) for _ in x],
+            'power': [round(float(_), 4) for _ in y]}
+
+
+def find_period(mjds, values, errors, pmin, pmax, method='ls', nterms=1, magnitudes=True):
+    """Periodogram of a light curve and its highest peaks.
+
+    `method` is 'ls', the Lomb-Scargle periodogram with `nterms` harmonics -
+    one is the sinusoid of the classic periodogram; more follow a light curve
+    of another shape, a pulsator's sawtooth or a contact binary's double wave
+    - or 'bls', box least squares, for eclipses and transits: a dip of some
+    duration once a cycle, which the periodogram, fitting sinusoids, may not
+    see at all. Its power is the signal detection efficiency - see _bls_power.
 
     Single-band, on purpose: the bands are expected to be centred on their own
     medians by the caller and pooled, which keeps the analytic false alarm
-    probability available. LombScargleMultiband does not implement it.
+    probability available - for the one-term periodogram, the only one it
+    exists for. LombScargleMultiband does not implement it.
     """
-    ls = LombScargle(mjds, values, errors)
-
     span = np.max(mjds) - np.min(mjds)
     fmin, fmax = 1.0/pmax, 1.0/pmin
 
     nfreq = int(np.ceil(PERIOD_SAMPLES_PER_PEAK * span * (fmax - fmin)))
-    truncated = nfreq > PERIOD_MAX_FREQUENCIES
-    nfreq = int(np.clip(nfreq, 100, PERIOD_MAX_FREQUENCIES))
+    window = spectral_window(mjds, fmax - fmin, int(np.clip(nfreq, 100, PERIOD_MAX_FREQUENCIES)))
 
-    freq = np.linspace(fmin, fmax, nfreq)
-    power = ls.power(freq)
+    depth = duration = None
+    if method == 'bls':
+        # A dip of the flux is a rise of the magnitude, and the box is a dip
+        freq, power, depth, duration, truncated = _bls_power(
+            mjds, -values if magnitudes else values, errors, pmin, pmax, span)
+        nfreq = len(freq)
+        ls = None
+    else:
+        cap = PERIOD_MAX_FREQUENCIES if nterms == 1 else PERIOD_MAX_FREQUENCIES_SLOW
+        truncated = nfreq > cap
+        nfreq = int(np.clip(nfreq, 100, cap))
+        freq = np.linspace(fmin, fmax, nfreq)
+        ls = LombScargle(mjds, values, errors, nterms=nterms)
+        power = ls.power(freq)
 
     # Highest local maxima, so that the neighbouring samples of one and the same
     # peak are not reported as separate detections
@@ -882,44 +1004,42 @@ def find_period(mjds, values, errors, pmin, pmax):
 
     peaks = []
     for i in idx:
+        fap = None
         # The analytic false alarm probability is not always computable, and
         # degenerates for a handful of points, so report it only when it is sane
-        try:
-            with warnings.catch_warnings():
-                warnings.simplefilter('ignore')
-                fap = float(ls.false_alarm_probability(
-                    power[i], method='baluev',
-                    minimum_frequency=fmin, maximum_frequency=fmax))
-            if not np.isfinite(fap):
+        if ls is not None and nterms == 1:
+            try:
+                with warnings.catch_warnings():
+                    warnings.simplefilter('ignore')
+                    fap = float(ls.false_alarm_probability(
+                        power[i], method='baluev',
+                        minimum_frequency=fmin, maximum_frequency=fmax))
+                if not np.isfinite(fap):
+                    fap = None
+            except Exception:
                 fap = None
-        except Exception:
-            fap = None
 
-        peaks.append({
+        peak = {
             'period': round(float(1.0/freq[i]), 6),
             'power': round(float(power[i]), 4),
             'frequency': float(freq[i]),
             'fap': fap,
-        })
+        }
+        if depth is not None:
+            peak['depth'] = round(float(depth[i]), 5)
+            peak['duration'] = round(float(duration[i]), 5)
+        peaks.append(peak)
 
-    # Decimate for display by keeping the largest value of every bin, so that a
-    # narrow peak survives instead of falling between the samples
-    nbins = min(PERIOD_PLOT_POINTS, nfreq)
-    edges = np.linspace(0, nfreq, nbins + 1).astype(int)
-    pp, pw = [], []
-    for a, b in zip(edges[:-1], edges[1:]):
-        if b > a:
-            j = a + int(np.argmax(power[a:b]))
-            # Rounded, as the full precision only inflates the response
-            pp.append(round(float(1.0/freq[j]), 6))
-            pw.append(round(float(power[j]), 4))
+    x, y = _decimate(freq, power, PERIOD_PLOT_POINTS)
 
     return {
-        'periods': pp,
-        'power': pw,
+        # Rounded, as the full precision only inflates the response
+        'periods': [round(float(1.0/_), 6) for _ in x],
+        'power': [round(float(_), 4) for _ in y],
         'peaks': peaks,
         'nfreq': nfreq,
         'truncated': truncated,
+        'window': window,
         'aliases': [_ for _ in PERIOD_ALIASES if pmin <= _ <= pmax],
     }
 
@@ -1667,6 +1787,20 @@ def _fit_period(request, id):
         period_min = data.get('period_min', 0.1)  # Default: 0.1 days
         period_max = data.get('period_max', 100)  # Default: 100 days
 
+        # How the period is searched for - see find_period
+        method = data.get('method', 'ls')
+        try:
+            nterms = int(data.get('nterms') or 1)
+        except (TypeError, ValueError):
+            nterms = 0
+        if method not in ('ls', 'bls') or not 1 <= nterms <= PERIOD_MAX_NTERMS:
+            return JsonResponse({'error': 'Invalid search method',
+                                 'details': f'The method is ls, with 1 to {PERIOD_MAX_NTERMS} harmonics, or bls'},
+                                status=400)
+        # The refit of the highest peaks follows a shape at least as detailed
+        # as the search did
+        nharm = max(PERIOD_HARMONICS, nterms)
+
         try:
             detrend_window, mjd_min, mjd_max = _fit_options(data)
             requested = _requested_series(target, data.get('series', []), mode,
@@ -1786,7 +1920,8 @@ def _fit_period(request, id):
         print(f'Data: {n_points} points, span {time_span:.2f} days, {len(times)} series')
 
         try:
-            pg = find_period(t_all, y_all, dy_all, period_min, period_max)
+            pg = find_period(t_all, y_all, dy_all, period_min, period_max,
+                             method=method, nterms=nterms, magnitudes=(mode != 'flux'))
         except Exception as e:
             return JsonResponse({
                 'error': 'Periodogram computation failed',
@@ -1805,11 +1940,16 @@ def _fit_period(request, id):
 
         # Ranked again by fitting the trend and the harmonics together, which
         # can tell apart peaks the periodogram gives the same power. Not worth
-        # failing the fit over: the periodogram's own order is still an answer
+        # failing the fit over: the periodogram's own order is still an answer.
+        # Not for a box either - harmonics describe an eclipse badly, and would
+        # rank a box's periods by how sinusoidal the light curve is at them
         highest = pg['peaks'][0]
         try:
-            peaks, scale = refine_peaks(loaded, pg['peaks'], detrend_window,
-                                        time_span)
+            if method == 'bls':
+                peaks, scale = pg['peaks'], None
+            else:
+                peaks, scale = refine_peaks(loaded, pg['peaks'], detrend_window,
+                                            time_span, nharm=nharm)
         except Exception:
             import traceback
             traceback.print_exc()
@@ -1828,7 +1968,7 @@ def _fit_period(request, id):
             if best.get('periodogram_period') != highest['period']:
                 notes.append(
                     f'The highest periodogram peak is at {highest["period"]:.6f} days, '
-                    f'but fitting the trend and {PERIOD_HARMONICS} harmonics of the period '
+                    f'but fitting the trend and {nharm} harmonics of the period '
                     f'together prefers {best_period:.6f} days.')
 
             # Peaks the data cannot tell apart. Scaled by the reduced chi-squared,
@@ -1869,8 +2009,10 @@ def _fit_period(request, id):
             notes.append(f'Best period ({best_period:.2f} days) is close to data span ({time_span:.2f} days). Period may be poorly constrained.')
 
         # Check if power is suspiciously low (weak or no periodicity)
-        # Typical significant peaks have power > 0.1, but this is data-dependent
-        if best_power < 0.05:
+        # Typical significant peaks have power > 0.1, but this is data-dependent.
+        # The power of a box is a detection efficiency, on another scale
+        # altogether
+        if method == 'ls' and best_power < 0.05:
             notes.append(f'Low periodogram power ({best_power:.4f}). Signal may be very weak or non-periodic.')
 
         if fap is not None and fap > 0.01:  # 1% FAP threshold
@@ -1878,6 +2020,12 @@ def _fit_period(request, id):
 
         if pg['truncated']:
             notes.append(f'Frequency grid truncated to {pg["nfreq"]} samples. Narrow peaks may be missed - narrow the search range to resolve them.')
+
+        # Two eclipses alike make the light curve repeat at half the orbit
+        if method == 'bls':
+            notes.append('An eclipsing binary with two eclipses of similar depth is found at half '
+                         'its orbital period - fold at twice the period (×2) to see whether the '
+                         'eclipses alternate in depth.')
 
         # Estimate epoch (time of maximum) using phase folding
         # Use median time as initial guess
@@ -1899,7 +2047,12 @@ def _fit_period(request, id):
             # Decimated periodogram for display, plus its highest peaks
             'periodogram': {'periods': pg['periods'], 'power': pg['power']},
             'peaks': peaks,
-            'harmonics': PERIOD_HARMONICS,
+            'method': method,
+            'nterms': nterms,
+            # The periodogram of the sampling, to be centred on the period
+            # folded at - where it peaks, that period is seen again
+            'window': pg['window'],
+            'harmonics': nharm if method != 'bls' else None,
             'aliases': pg['aliases'],
             'nfreq': pg['nfreq'],
             'truncated': pg['truncated'],

@@ -286,6 +286,19 @@
     <div class="col-auto">
       <small class="text-muted">days</small>
     </div>
+    <div class="col-auto ms-2">
+      <label for="period-method" class="col-form-label col-form-label-sm">Method:</label>
+    </div>
+    <div class="col-auto">
+      <select class="form-select form-select-sm" id="period-method"
+              title="How the period is searched for. Lomb-Scargle fits a sinusoid, and with more harmonics a light curve of another shape - a pulsator's sawtooth, a contact binary's double wave. Box least squares looks for a dip once a cycle - an eclipse or a transit - which a periodogram of sinusoids may not see at all.">
+        <option value="ls1" selected>Lomb-Scargle</option>
+        <option value="ls2">Lomb-Scargle, 2 harmonics</option>
+        <option value="ls3">Lomb-Scargle, 3 harmonics</option>
+        <option value="ls4">Lomb-Scargle, 4 harmonics</option>
+        <option value="bls">Box least squares (eclipses)</option>
+      </select>
+    </div>
 
     <div class="col-auto ms-auto">
       <div class="form-check">
@@ -1494,6 +1507,44 @@ function foldedMarks(data) {
 // Where the two of them sit among the traces of plotPeriodogram()
 const MARK_PERIOD_TRACE = 1;
 const MARK_ALIASES_TRACE = 2;
+const MARK_WINDOW_TRACE = 4;
+
+// The periodogram of the sampling, as offsets in frequency from zero, sent
+// with the last periodogram
+let periodogramWindow = null;
+
+// How a search was made, for titles and logs
+function methodName(data) {
+    if (data.method === 'bls')
+        return 'box least squares';
+    return data.nterms > 1 ? `Lomb-Scargle with ${data.nterms} harmonics` : 'Lomb-Scargle';
+}
+
+// The spectral window centred on the folded period, at every period of the
+// periodogram: wherever it rises, the folded period is seen again - its
+// aliases, as the dates make them, not only those of the day. Scaled to the
+// height of the periodogram, and empty when nothing is folded at.
+function windowLine(data, top) {
+    const p = parseFloat(document.getElementById('period-input').value);
+    const w = periodogramWindow;
+    if (!w || !w.offsets.length || !(isFinite(p) && p > 0))
+        return {x: [], y: []};
+
+    const x = w.offsets, y = w.power;
+    const at = function(d) {
+        if (d <= x[0]) return y[0];
+        if (d >= x[x.length - 1]) return y[y.length - 1];
+        let lo = 0, hi = x.length - 1;
+        while (hi - lo > 1) {
+            const mid = (lo + hi) >> 1;
+            if (x[mid] <= d) lo = mid; else hi = mid;
+        }
+        return y[lo] + (y[hi] - y[lo]) * (d - x[lo]) / (x[hi] - x[lo]);
+    };
+
+    return {x: data.periods,
+            y: data.periods.map(q => top * at(Math.abs(1 / q - 1 / p)))};
+}
 
 // The marks follow the folding period, which may be edited at any time.
 // Restyled rather than replotted, so that a mark switched off through the
@@ -1506,10 +1557,11 @@ function updatePeriodogramMarks() {
     const marks = foldedMarks(periodogramData);
     const period = markLine(marks.period, top);
     const aliases = markLine(marks.aliases, top);
+    const window = windowLine(periodogramData, top);
 
     Plotly.restyle('periodogram-container',
-                   {x: [period.x, aliases.x], y: [period.y, aliases.y]},
-                   [MARK_PERIOD_TRACE, MARK_ALIASES_TRACE]);
+                   {x: [period.x, aliases.x, window.x], y: [period.y, aliases.y, window.y]},
+                   [MARK_PERIOD_TRACE, MARK_ALIASES_TRACE, MARK_WINDOW_TRACE]);
 }
 
 // Buttons for the highest peaks, as a shortcut to clicking them on the plot
@@ -1524,9 +1576,12 @@ function showPeaks(peaks) {
         const btn = document.createElement('button');
         btn.className = 'btn btn-sm ' + (i === 0 ? 'btn-primary' : 'btn-outline-secondary');
         btn.textContent = peak.period.toFixed(6) + ' d';
-        btn.title = 'periodogram power ' + peak.power.toFixed(4)
-                  + (peak.fap !== null && peak.fap !== undefined
-                     ? ', FAP ' + peak.fap.toExponential(1) : ', FAP not available')
+        btn.title = (peak.depth !== undefined
+                     ? 'signal detection efficiency ' + peak.power.toFixed(2) + ', depth ' + peak.depth.toFixed(4)
+                       + ', duration ' + peak.duration.toFixed(4) + ' d'
+                     : 'periodogram power ' + peak.power.toFixed(4)
+                       + (peak.fap !== null && peak.fap !== undefined
+                          ? ', FAP ' + peak.fap.toExponential(1) : ', FAP not available'))
                   // From fitting the trend and the harmonics together, which
                   // is what the peaks are ranked by when it is there
                   + (peak.fit_power !== null && peak.fit_power !== undefined
@@ -1556,6 +1611,7 @@ function plotPeriodogram(data) {
     }
 
     periodogramData = pg;
+    periodogramWindow = data.window || null;
 
     document.getElementById('periodogram-box').style.display = 'block';
 
@@ -1576,11 +1632,20 @@ function plotPeriodogram(data) {
     // The sampling of ground-based observations imprints these on every
     // periodogram, and a peak sitting on one of them is most likely not real
     traces.push(markTrace('Sampling', 'red', 'dot', data.aliases || [], top));
+    // Kept at MARK_WINDOW_TRACE
+    const window = windowLine(pg, top);
+    traces.push({
+        x: window.x, y: window.y, mode: 'lines', type: 'scatter',
+        name: 'Spectral window at the folded period',
+        line: {width: 1, color: 'rgba(127, 127, 127, 0.6)'}, hoverinfo: 'skip'
+    });
 
     const best = data.peaks && data.peaks.length ? data.peaks[0] : null;
     // Named, as the periodogram is kept on a switch of the display mode - so
     // that its periods can be tried on the other - which it was not made from
-    let title = 'Lomb-Scargle periodogram of ' + data.n_points
+    let title = (data.method === 'bls' ? 'Box least squares'
+                 : 'Lomb-Scargle periodogram' + (data.nterms > 1 ? ` with ${data.nterms} harmonics` : ''))
+              + ' of ' + data.n_points
               + (isMagnitudeMode ? ' magnitudes' : ' {{ flux_sources }} flux points');
     if (data.n_series > 1)
         title += ' from ' + data.n_series + ' series';
@@ -1597,7 +1662,7 @@ function plotPeriodogram(data) {
         title: {text: title, font: {size: 12}},
         xaxis: {title: {text: 'Period, days'}, type: 'log', automargin: true,
                 showline: true, linecolor: theme.linecolor, zeroline: false},
-        yaxis: {title: {text: 'Power'}, automargin: true, showline: true,
+        yaxis: {title: {text: data.method === 'bls' ? 'Signal detection efficiency' : 'Power'}, automargin: true, showline: true,
                 linecolor: theme.linecolor, zeroline: false, rangemode: 'tozero'},
         hovermode: 'closest',
         autosize: true,
@@ -1771,6 +1836,9 @@ function fitPeriod() {
     }
 
     const trendWindow = detrendWindow();
+    const methodChoice = document.getElementById('period-method').value;
+    const method = methodChoice === 'bls' ? 'bls' : 'ls';
+    const nterms = method === 'ls' ? parseInt(methodChoice.slice(2)) : 1;
 
     // Disable button and show loading state
     const btn = document.getElementById('fit-period-btn');
@@ -1792,6 +1860,8 @@ function fitPeriod() {
             period_max: periodMax,
             detrend_window: trendWindow,
             prewhiten: removedFrequencies.slice(),
+            method: method,
+            nterms: nterms,
             mjd_min: dates.min,
             mjd_max: dates.max
         })
@@ -1825,9 +1895,13 @@ function fitPeriod() {
 
         // Show results
         let message = `Period fit successful!\n\n` +
+            `Searched with ${methodName(data)}\n` +
             `Best period: ${data.period.toFixed(6)} days\n` +
             `Epoch (T₀): ${data.epoch.toFixed(2)} MJD\n` +
-            `Power: ${data.power.toFixed(4)}\n`;
+            `${data.method === 'bls' ? 'Signal detection efficiency' : 'Power'}: ${data.power.toFixed(4)}\n`;
+        if (data.method === 'bls' && data.peaks.length && data.peaks[0].depth !== undefined)
+            message += `Eclipse depth ${data.peaks[0].depth.toFixed(4)} ${isMagnitudeMode ? 'mag' : '(flux)'}, `
+                     + `duration ${data.peaks[0].duration.toFixed(4)} d\n`;
 
         if (data.fap !== undefined && data.fap !== null) {
             const fapStr = data.fap < 0.0001 ? data.fap.toExponential(2) : data.fap.toFixed(4);
@@ -1876,7 +1950,7 @@ function fitPeriod() {
         showRemoved(data.prewhitened || []);
 
         data.settings = {series: visibleSeries, detrend_window: trendWindow,
-                         prewhiten: removedFrequencies.slice(),
+                         prewhiten: removedFrequencies.slice(), method: method, nterms: nterms,
                          mjd_min: dates.min, mjd_max: dates.max};
         lastPeriodFit = data;
         showLog('period-log', message);
@@ -2583,13 +2657,16 @@ function downloadPeriodogram() {
     if (!data || !data.periodogram) return;
 
     const comments = [
-        `${TARGET_NAME} - Lomb-Scargle periodogram of ${data.n_points} points from ${data.n_series} series`,
+        `${TARGET_NAME} - ${methodName(data)} periodogram of ${data.n_points} points from ${data.n_series} series`,
         ...settingsComments(data.settings),
         `Periods searched: ${data.period_min} to ${data.period_max} d, decimated to the highest power in each bin`,
-        'Highest peaks (period d, power, false alarm probability, chi2 of the refit):'
+        data.method === 'bls'
+            ? 'Highest peaks (period d, signal detection efficiency, depth, duration d):'
+            : 'Highest peaks (period d, power, false alarm probability, chi2 of the refit):'
     ];
-    (data.peaks || []).forEach(peak => comments.push(
-        `  ${peak.period}, ${peak.power}, ${peak.fap ?? ''}, ${peak.chi2 ?? ''}`));
+    (data.peaks || []).forEach(peak => comments.push(data.method === 'bls'
+        ? `  ${peak.period}, ${peak.power}, ${peak.depth}, ${peak.duration}`
+        : `  ${peak.period}, ${peak.power}, ${peak.fap ?? ''}, ${peak.chi2 ?? ''}`));
 
     const pg = data.periodogram;
     downloadCSV(`${filePrefix()}_periodogram.csv`, comments, ['period', 'power'],
