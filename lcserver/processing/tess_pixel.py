@@ -253,7 +253,7 @@ def refine_width(signal, dflux, X, Y, x0, y0, noise, log):
     return fit.x[3]
 
 
-def pixel_lightcurve(tpf, ra, dec, tic, level, log):
+def pixel_lightcurve(tpf, ra, dec, tic, level, log, diagnostics=None):
     """Measure the target's flux change in every frame of one sector's cutout.
 
     Parameters
@@ -268,6 +268,9 @@ def pixel_lightcurve(tpf, ra, dec, tic, level, log):
         How hard to filter on the quality flags, for the reference image
     log : callable
         Logging function
+    diagnostics : dict, optional
+        Filled with what `plot_pixel_diagnostics` draws: the median image,
+        where the stars and the fitted pixels are, and how the pixels answered
 
     Returns
     -------
@@ -367,6 +370,7 @@ def pixel_lightcurve(tpf, ra, dec, tic, level, log):
 
     # The neighbours with amplitudes of their own
     near = []
+    unresolved = []
     for s in sorted([s for s in stars if np.hypot(s[0] - x0, s[1] - y0) < NEIGHBOUR_RADIUS],
                     key=lambda s: -s[2]):
         r = np.hypot(s[0] - x0, s[1] - y0)
@@ -375,6 +379,7 @@ def pixel_lightcurve(tpf, ra, dec, tic, level, log):
         if r < NEIGHBOUR_UNRESOLVED:
             log(f"    TIC {s[3]} (Tmag {s[4]:.2f}) is {r*21:.0f} arcsec from the target, "
                 f"too close to tell apart: its variability is counted as the target's")
+            unresolved.append(s)
             continue
         if len(near) < NEIGHBOUR_MAX:
             near.append(s)
@@ -495,6 +500,44 @@ def pixel_lightcurve(tpf, ra, dec, tic, level, log):
     table.meta['NEIGHBOURS'] = ','.join(names[1:])
 
     table.meta['SCATTER'] = float(scatter)
+
+    if diagnostics is not None:
+        # How much each pixel of the cutout varies, whatever the model makes
+        # of it: the spread of its frames, 5th to 95th percentile, once the
+        # scattered light - the median of the frame - is taken out
+        frames = cube[keep] - np.median(cube[keep].reshape(np.sum(keep), -1), axis=1)[:, None, None]
+        low, high = np.percentile(frames, [5, 95], axis=0)
+
+        # What share of what varies at each fitted pixel the target's own term
+        # accounts for, once the neighbours, the shift and the background are
+        # taken out: the rest is the target, the focus term and what the model
+        # misses. Low where the light varies means the variation went into
+        # the focus term or was not described at all
+        others = [i for i in range(A.shape[1]) if i not in (0, ishift + 2)]
+        rest = D[keep].T - A[:, others] @ sol[others][:, keep]
+        target_term = A[:, :1] @ (dflux[keep] - np.median(dflux[keep]))[None, :]
+        own = np.full(ny*nx, np.nan)
+        own[region] = np.var(target_term, axis=1)/np.maximum(np.var(rest, axis=1), 1e-12)
+
+        # How well the frame model describes each fitted pixel, in units of
+        # its own frame-to-frame noise
+        misfit = np.full(ny*nx, np.nan)
+        misfit[region] = np.sqrt(np.mean(resid[:, keep]**2, axis=1))
+
+        diagnostics.update({
+            'ref': ref,
+            'live': live,
+            'x0': x0, 'y0': y0,
+            'region': region.reshape(ny, nx),
+            'stars': stars,
+            'near': near,
+            'unresolved': unresolved,
+            'sigma': sigma,
+            'variability': (high - low),
+            'explained': np.clip(own, 0, 1).reshape(ny, nx),
+            'misfit': misfit.reshape(ny, nx),
+            'keep': keep,
+        })
     log(f"    {len(table)} frames; point-to-point scatter {scatter:.1f} e/s"
         + (f" ({100*scatter/target_flux:.1f}% of the target)" if target_flux > 0 else "")
         + f", full range {np.ptp(np.percentile(dflux[keep], [1, 99])):.0f} e/s")
@@ -502,11 +545,112 @@ def pixel_lightcurve(tpf, ra, dec, tic, level, log):
     return table
 
 
+def plot_pixel_diagnostics(fig, table, diag, title):
+    """What the frame model was fitted to, and how it answered, on one figure.
+
+    Four images of the cutout - the median image with the stars and the
+    fitted pixels marked, how much each pixel varies, what share of that the
+    target's own term accounts for, and how far the model misses each fitted
+    pixel - over the light curve and the nuisance terms fitted beside it,
+    frame by frame.
+
+    Each tells on one way the fit fails. Variability centred away from the
+    target is a neighbour's; variability on the target that its own term
+    does not account for went into the other terms, and shows below as a
+    nuisance term following the star; misfits well above 1 are pixels the
+    model does not describe.
+    """
+    from matplotlib.patches import Circle
+
+    ny, nx = diag['ref'].shape
+    x0, y0 = diag['x0'], diag['y0']
+    region = diag['region']
+    keep = np.asarray(diag['keep'], dtype=bool)
+    fwhm = 2*np.sqrt(2*np.log(2))*diag['sigma']
+
+    def mark(ax, color='white'):
+        """The fitted pixels, the stars and the target on an image."""
+        ax.contour(region.astype(float), levels=[0.5], colors=[color], linewidths=0.8,
+                   linestyles='dotted', origin='lower')
+        for sx, sy, _, _, tmag in diag['stars']:
+            ax.plot(sx, sy, '.', color=color, ms=np.clip(9 - 0.8*(tmag - 8), 1, 9), alpha=0.6)
+        for sx, sy, _, _, tmag in diag['near']:
+            ax.add_patch(Circle((sx, sy), 0.6, fill=False, color='orange', lw=1.2))
+            ax.text(sx + 0.7, sy + 0.7, f"{tmag:.1f}", color='orange', fontsize=7)
+        for sx, sy, _, _, tmag in diag['unresolved']:
+            ax.plot(sx, sy, 'x', color='magenta', ms=7, mew=1.5)
+        ax.add_patch(Circle((x0, y0), fwhm/2, fill=False, color='red', lw=1, ls='--'))
+        ax.plot(x0, y0, '+', color='red', ms=12, mew=1.5)
+        ax.set_xlim(-0.5, nx - 0.5)
+        ax.set_ylim(-0.5, ny - 0.5)
+
+    outer = fig.add_gridspec(2, 1, height_ratios=[2.4, 4.4], hspace=0.2,
+                             top=0.95, bottom=0.06, left=0.06, right=0.97)
+    images = outer[0].subgridspec(1, 4, wspace=0.35)
+    series = outer[1].subgridspec(4, 1, hspace=0.08)
+    live = diag['live']
+
+    ax = fig.add_subplot(images[0])
+    plots.imshow(np.where(live, diag['ref'], np.nan), ax=ax, stretch='log', qq=[1, 99.9],
+                 cmap='gray', origin='lower', mask=~live)
+    mark(ax, color='cyan')
+    ax.set_title('Median image, e/s', fontsize=9)
+
+    ax = fig.add_subplot(images[1])
+    plots.imshow(np.where(live, diag['variability'], np.nan), ax=ax, stretch='log',
+                 qq=[1, 99.9], cmap='magma', origin='lower', mask=~live)
+    mark(ax, color='cyan')
+    ax.set_title('Variability, 5-95% range, e/s', fontsize=9)
+
+    ax = fig.add_subplot(images[2])
+    plots.imshow(diag['explained'], ax=ax, cmap='viridis', vmin=0, vmax=1, origin='lower')
+    mark(ax, color='white')
+    ax.set_title(f"Target's share of it: max {np.nanmax(diag['explained']):.2f}", fontsize=9)
+
+    ax = fig.add_subplot(images[3])
+    plots.imshow(diag['misfit'], ax=ax, cmap='viridis', vmin=0,
+                 vmax=max(2, np.nanpercentile(diag['misfit'], 95)), origin='lower')
+    mark(ax, color='white')
+    ax.set_title(f"Misfit, x noise: median {np.nanmedian(diag['misfit']):.2f}", fontsize=9)
+
+    time = np.asarray(table['btjd'], dtype=float)
+    change = np.asarray(table['flux_change'], dtype=float)
+    rows = [('flux_change', 'Target, e/s'), (('shift_x', 'shift_y'), 'Shift'),
+            ('focus', 'Focus'), ('background', 'Background, e/s')]
+
+    first = None
+    for i, (columns, label) in enumerate(rows):
+        ax = fig.add_subplot(series[i], sharex=first)
+        first = first or ax
+        for column in np.atleast_1d(columns):
+            values = np.asarray(table[column], dtype=float)
+            text = column
+            if column != 'flux_change' and np.sum(keep) > 2:
+                text += f", r = {np.corrcoef(values[keep], change[keep])[0, 1]:+.2f}"
+            values = np.where(keep, values, np.nan)
+            ax.plot(*break_at_gaps(time, values), lw=0.8, label=text)
+        ax.set_ylabel(label, fontsize=8)
+        ax.tick_params(labelsize=7)
+        ax.grid(alpha=0.2)
+        if i < len(rows) - 1:
+            ax.tick_params(labelbottom=False)
+        if columns != 'flux_change':
+            ax.legend(fontsize=7, loc='upper right', frameon=False)
+    ax.set_xlabel('Time - 2457000, BTJD days', fontsize=8)
+
+    fig.suptitle(title, fontsize=10, y=0.99)
+    fig.text(0.5, outer[1].get_position(fig).y1 + 0.012,
+             "red +: target, dashed: its FWHM;  dotted: the pixels fitted;  orange: neighbours "
+             "fitted alongside, Tmag;  magenta x: too close to tell apart;  dots: other TIC stars",
+             ha='center', fontsize=7.5, color='gray')
+
+
 def target_tess_pixel(config, basepath, log, show=False, refresh=False):
     """Pixel-level light curves of the target in every sector with full-frame images.
 
     Writes tess_lc_<sector>_PIXEL_<cadence>.vot / .txt / .png, the same way
-    the pipelines' light curves are written, so the viewer reads them alike.
+    the pipelines' light curves are written, so the viewer reads them alike,
+    and beside them _pixels.png, the picture of how the fit went.
     """
     ra, dec = config['target_ra'], config['target_dec']
     level = quality_level(config, 'tess')
@@ -544,7 +688,8 @@ def target_tess_pixel(config, basepath, log, show=False, refresh=False):
             log("    Error: no cutout returned")
             continue
 
-        table = pixel_lightcurve(tpf, ra, dec, tic, level, log)
+        diag = {}
+        table = pixel_lightcurve(tpf, ra, dec, tic, level, log, diagnostics=diag)
         if table is None:
             continue
 
@@ -556,6 +701,14 @@ def target_tess_pixel(config, basepath, log, show=False, refresh=False):
 
         keep = mission_quality_mask(table['quality'], 'TESS', level)
         log_quality(log, table['quality'], ~keep, 'TESS')
+
+        # How the fit went, at the full cadence it was made at
+        diag['keep'] = keep
+        pixname = f"tess_lc_{sector}_PIXEL_{cadence:.0f}_pixels.png"
+        with plots.figure_saver(os.path.join(basepath, pixname), figsize=(12, 9), show=show,
+                                 tight_layout=False) as fig:
+            plot_pixel_diagnostics(fig, table, diag,
+                                   f"{config['target_name']} - TESS Sector {sector} - pixel-level fit")
 
         table, keep, cadence = bin_sector(table, keep, cadence, bin_width(config, 'tess'), log)
         lcname = f"tess_lc_{sector}_PIXEL_{cadence:.0f}.png"
