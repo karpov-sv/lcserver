@@ -112,7 +112,6 @@ ENV/
 *~
 
 # Project specific
-tests/
 targets/
 
 db.sqlite3
