@@ -90,12 +90,31 @@ belong to something else.
 ## Period analysis
 
 The light curve viewer folds any selection of series at a period, and searches
-for one. The Lomb-Scargle periodogram is of the series pooled, each about its
-own median; its highest peaks are then fitted again — each series with its own
-trend, each survey and filter with its own harmonics — and ranked by that fit,
-which is what tells apart the aliases a periodogram gives the same power. A
-slow trend can be fitted alongside, so that a short period can be looked for
-underneath it, and the search limited to a range of dates.
+for one, the series pooled, each about its own median. The search is the
+Lomb-Scargle periodogram, with up to four harmonics for a light curve that is
+no sinusoid — a pulsator's sawtooth, a contact binary's double wave — or box
+least squares, for the eclipse or transit a periodogram of sinusoids may not
+see at all, scored by its signal detection efficiency. The highest peaks of a
+periodogram are fitted again — each series with its own trend, each survey and
+filter with its own harmonics — and ranked by that fit, which is what tells
+apart the aliases a periodogram gives the same power, and what gives the
+period its uncertainty. A slow trend can be fitted alongside, so that a short
+period can be looked for underneath it, and the search limited to a range of
+dates.
+
+The periodogram of the sampling alone is drawn under the periodogram, centred
+on the period folded at: wherever it rises, that period is seen again, through
+the day, the month or the year. The folded light curve carries the median of
+each series in bins of phase, which shows its shape at any period, whatever
+found it.
+
+A period found can be removed and the search run again on what is left —
+prewhitening, for a star with more than one. Every removed period is fitted
+again together with the others each time, so that one found early does not
+keep the leakage of one found later, and the light curve shown is then the
+residuals. And the periodogram can be taken in a window sliding along the
+light curve, drawn as power against period and time, for how a period — or
+which of several — comes and goes.
 
 A period that changes is fitted from there: the phase as the integral of a
 frequency that is a polynomial in time, or a spline with a knot every so many
@@ -109,9 +128,11 @@ the period each window finds on its own — the one check on the count of
 cycles that does not depend on it. The light curve can then be folded with the
 model's phase.
 
-The errors allow for noise that does not average down as white noise would,
-which over the thousands of points of a TESS sector is most of it, and the
-summary says when the O−C wanders beyond them — as on a spotted star it will.
+The errors throughout allow for noise that does not average down as white
+noise would, which over the thousands of points of a TESS sector is most of
+it, and the summary says when the O−C wanders beyond them — as on a spotted
+star it will. What each fit said stays on the page, and the light curve, the
+periodogram, the O−C and the model can be downloaded as CSV.
 
 ## Fitting a photosphere
 
@@ -381,11 +402,25 @@ Anything destructive takes `--dry-run` first.
 `--check` also catches Django template comments written across more than one
 line, which render the rest of the comment into the page.
 
+## Tests
+
+```sh
+python manage.py test lcserver.tests
+```
+
+The period analysis is tested on synthetic light curves, sampled a few points
+a night as the ground samples a star: the true period against its daily alias,
+the uncertainty of a period against the scatter it should describe, an
+eclipsing binary at half its period and at its period, close frequencies
+fitted together, red noise, a drifting period followed across seasonal gaps,
+and O−C. No database is needed, and they take a few seconds.
+
 ## Layout
 
 ```
 lcserver/
 ├── processing/     one module per survey, each registering itself
+│   ├── periods.py  the period search, prewhitening and the period change fit
 │   ├── sedfit.py   the photosphere fit - grids, priors, sampling, figures
 │   └── gridstats.py  what a grid says as colours and magnitudes, for the page
 ├── ingest/         turning somebody else's data into ours, once and by hand
@@ -404,7 +439,7 @@ lcserver/
 ├── surveys.py      the registry - metadata, bands, form fields, layout
 ├── celery_tasks.py task generation, and the canvas a full run is built into
 ├── views.py        pages, file browser
-├── views_lightcurve.py  the viewer, the period search and the period change fit
+├── views_lightcurve.py  the viewer, and the requests of its period tools
 ├── views_spectrum.py    the spectral viewer, and the photosphere fit behind it
 ├── views_cutouts.py     cutouts of any position, outside the target loop
 ├── views_passbands.py   the conversions, and the passbands they run between
@@ -412,7 +447,8 @@ lcserver/
 ├── views_references.py  the papers about the target, and their catalogues
 ├── views_about.py       where the data comes from, from the registry
 ├── views_celery.py      the queue
-└── templates/
+├── templates/
+└── tests/          the period analysis, on synthetic light curves
 data/grids/         one model grid per file, the register the fitter reads
 targets/{id}/       per-target logs, plots, VOTables, and cache/
 targets/{id}/sedfit/{timestamp}/   one photosphere fit, as asked and as answered

@@ -295,8 +295,10 @@ once is `worker_concurrency` (default 4), not the size of the group.
 #### Processing (`lcserver/processing/`)
 
 A package with a module per source - `ztf.py`, `asas.py`, `dasch.py` and some
-thirty others - plus `utils.py` for what they share and `sedfit.py` for the SED
-fitting. `processing/__init__.py` re-exports each `target_xxx()`, so
+thirty others - plus `utils.py` for what they share, `sedfit.py` for the SED
+fitting and `periods.py` for the light curve viewer's period tools (search,
+prewhitening, period change and O-C, time-resolved periodogram), which
+`views_lightcurve.py` only turns requests into calls of. `processing/__init__.py` re-exports each `target_xxx()`, so
 `processing.target_ztf` works regardless of which module it lives in. Each
 `target_xxx()` function:
 - Queries external APIs/services (SIMBAD, Vizier, ZTF archive, TESS, etc.)
@@ -458,6 +460,9 @@ out of the chain altogether - it runs only from its own button (ATLAS, whose
 requests wait on a shared queue).
 
 ## Testing
+
+The period analysis has unit tests on synthetic light curves, which need no
+database: `python manage.py test lcserver.tests`.
 
 ### Management Commands for Testing
 
