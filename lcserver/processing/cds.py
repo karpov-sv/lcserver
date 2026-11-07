@@ -8,8 +8,8 @@ said.
 
 A mirror is not always the whole of the original. IDIA's VizieR lacks some of
 the largest catalogues - Pan-STARRS, Gaia DR2 and EDR3, ATLAS-RefCat2 - and
-says so only in a QUERY_STATUS of ERROR inside an otherwise ordinary empty
-table, which astroquery reads as no rows. That is caught here and taken as the
+says so only in an INFO of an error inside an otherwise ordinary empty table,
+which astroquery reads as no rows. That is caught here and taken as the
 server failing, so that a catalogue a mirror does not hold is never mistaken
 for one with nothing at the position and cached as such.
 
@@ -159,13 +159,40 @@ def ask(servers, call, what, log=None, key=None):
     raise SourceError(f"no {what} server answered - " + '; '.join(errors))
 
 
-def _refusal(content):
-    """Why a VizieR or TAP reply says it failed, or None if it does not."""
-    m = re.search(rb'name="QUERY_STATUS"\s+value="ERROR"\s*>(.*?)</INFO>',
-                  content, re.S)
+def _info(content, name, value=None):
+    """The INFO elements of a VOTable with a given name, and value if given,
+    whatever the order of their attributes and whether or not they are closed
+    on themselves - as (value, text) pairs."""
+    out = []
 
-    if m:
-        return ' '.join(m.group(1).decode(errors='replace').split())[:300] or 'ERROR'
+    for m in re.finditer(rb'<INFO\b([^>]*?)(/>|>(.*?)</INFO>)', content, re.S):
+        attrs = dict(re.findall(rb'(\w+)="([^"]*)"', m.group(1)))
+
+        if attrs.get(b'name') == name and (value is None or attrs.get(b'value') == value):
+            out.append((attrs.get(b'value', b'').decode(errors='replace'),
+                        (m.group(3) or b'').decode(errors='replace')))
+
+    return out
+
+
+def _refusal(content):
+    """Why a VizieR or TAP reply says it failed, or None if it does not.
+
+    Either way of saying it counts: a QUERY_STATUS of ERROR, or INFOs named
+    Error without one - which is how a mirror answers for a catalogue it does
+    not know, and how CfA has been seen to answer for ones it lacks the data
+    of. Unless the reply is also an OVERFLOW: a result cut at the row limit
+    holds the rows asked for, and IDIA reports the cut as an error as well.
+    """
+    if _info(content, b'QUERY_STATUS', b'OVERFLOW'):
+        return None
+
+    status = _info(content, b'QUERY_STATUS', b'ERROR')
+    errors = [value for value, _ in _info(content, b'Error')]
+
+    if status or errors:
+        text = ' '.join(dict.fromkeys(errors + [text for _, text in status]))
+        return ' '.join(text.split())[:300] or 'ERROR'
 
 
 # VizieR
