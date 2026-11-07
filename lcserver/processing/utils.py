@@ -267,6 +267,95 @@ def log_quality(log, quality, dropped, mission='TESS'):
         + (f" on the mission flags: {named}" if named else " on the mission flags"))
 
 
+# How fast what a pipeline's correction removed may change before it is taken
+# for the star's own variability: its typical change between medians over
+# consecutive steps of this many days - see check_detrending
+DETREND_CHECK_STEP = 0.25
+DETREND_CHECK_LIMIT = 0.02
+
+
+def unmask(lc):
+    """Spell the gaps in the flux as NaN rather than as a mask.
+
+    lightkurve hands a column back masked where the file stored it masked,
+    and normalize() scales by np.nanmedian, which does not honour a mask -
+    it reads what the mask hides and answers nan, or the median of the wrong
+    points. The flux a pipeline is read with arrives as plain NaN, so put
+    the one moved in beside it on the same footing.
+    """
+    for name in ('flux', 'flux_err'):
+        column = lc[name]
+        unit = getattr(column, 'unit', None)
+        values = np.ma.filled(np.ma.asarray(column), np.nan)
+        lc[name] = values * unit if unit is not None else values
+
+    return lc
+
+
+def select_raw_flux(lc, log):
+    """Put a pipeline's raw aperture photometry, ``sap_flux``, in the ``flux`` column.
+
+    For the light curves of the Kepler and TESS mission pipelines, which
+    lightkurve reads as their corrected pdcsap_flux. The correction is made
+    for transits, and takes away with the systematics much of what varies
+    over a day or more; the raw flux keeps that, with the scattered light and
+    the drifts beside it. A pipeline that publishes no sap_flux keeps its own.
+    """
+    origin = lc.meta.get('FLUX_ORIGIN')
+
+    if origin == 'sap_flux':
+        log(f"    Reading the raw {origin}, as asked")
+        return lc
+    if 'sap_flux' in lc.colnames:
+        log(f"    Reading the raw sap_flux, not the corrected {origin}, as asked")
+        return unmask(lc.select_flux('sap_flux'))
+
+    log(f"    Warning: {lc.meta.get('AUTHOR')} gives no raw flux - keeping its {origin}")
+    return lc
+
+
+def check_detrending(table, keep, log, time='btjd'):
+    """Warn where the pipeline's correction took away the star's own variability.
+
+    What a correction removes is the raw flux less the corrected one, both
+    normalized. Scattered light and pointing drifts change slowly, so where
+    what was removed changes fast - its medians over consecutive
+    `DETREND_CHECK_STEP` differing by more than `DETREND_CHECK_LIMIT` - it is
+    most likely the star, and the raw flux is the one to ask for. The limit
+    sits well above what the correction of scattered light and drifts
+    usually changes by, and above the residue K2's six-hour thruster cycle
+    leaves in it, and well below a pulsation a spline has flattened.
+
+    ``table`` is the light curve as written, with ``flux`` the corrected and
+    ``sap_flux`` the raw one, and ``time`` the name of its time column in days.
+    """
+    if table.meta.get('FLUX_ORIGIN') == 'sap_flux' or 'sap_flux' not in table.colnames:
+        return
+
+    time = np.asarray(table[time], dtype=float)
+    raw = np.ma.filled(np.ma.asarray(table['sap_flux'], dtype=float), np.nan)
+    corrected = np.ma.filled(np.ma.asarray(table['flux'], dtype=float), np.nan)
+    good = keep & np.isfinite(time) & np.isfinite(raw) & np.isfinite(corrected)
+    if good.sum() < 10:
+        return
+
+    time = time[good]
+    removed = raw[good]/np.median(raw[good]) - corrected[good]/np.median(corrected[good])
+
+    bins = np.floor((time - time.min())/DETREND_CHECK_STEP).astype(int)
+    occupied = np.unique(bins)
+    medians = np.array([np.median(removed[bins == _]) for _ in occupied])
+    steps = np.diff(medians)[np.diff(occupied) == 1]
+    if len(steps) < 5:
+        return
+
+    change = 1.4826*np.median(np.abs(steps - np.median(steps)))
+    if change > DETREND_CHECK_LIMIT:
+        log(f"    Warning: the {table.meta.get('FLUX_ORIGIN')} correction removed a variation "
+            f"changing by {100*change:.1f}% every {24*DETREND_CHECK_STEP:.0f} hours - faster than "
+            f"scattered light does, so likely the star's own. Choosing the raw aperture photometry as Flux keeps it")
+
+
 # How faint a measurement's error bar is drawn beneath its own point
 ERRORBAR_ALPHA = 0.2
 

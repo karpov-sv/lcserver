@@ -28,7 +28,7 @@ from ..surveys import survey_source, get_output_files
 from .utils import (break_at_gaps, cleanup_paths, cached_lightkurve_search,
                     drop_mast_downloads, mast_download_dir,
                     mission_quality_mask, log_quality, quality_field,
-                    quality_level,
+                    quality_level, select_raw_flux, check_detrending,
                     log_bands, log_conversion,
                     QUALITY_STANDARD, QUALITY_RELAXED, QUALITY_PUBLISHED)
 
@@ -118,7 +118,7 @@ def _segments(res):
 
 
 def _acquire_phase(config, basepath, log, show, phase, coord, sr, cadence,
-                   wanted_author, refresh_cache):
+                   wanted_author, refresh_cache, raw_flux=False):
     """Fetch one phase of the mission, a file per observing segment.
 
     Returns the number of segments written and of points in them.
@@ -207,6 +207,9 @@ def _acquire_phase(config, basepath, log, show, phase, coord, sr, cadence,
             if not lc:
                 continue
 
+            if raw_flux:
+                lc = select_raw_flux(lc, log)
+
             exp = float(np.asarray(row.table['exptime'])[0])
 
             # The segment carries a letter for the phase it belongs to, as the
@@ -221,6 +224,7 @@ def _acquire_phase(config, basepath, log, show, phase, coord, sr, cadence,
                 # bkjd, not btjd - lightkurve would hand over either
                 time = lc.time.bkjd
                 flux = lc.normalize().flux
+                keep = np.ones(len(lc), dtype=bool)
                 # Not every pipeline reports one - K2SFF publishes eight
                 # columns and no quality among them
                 if 'quality' in lc.colnames:
@@ -248,6 +252,8 @@ def _acquire_phase(config, basepath, log, show, phase, coord, sr, cadence,
             lc1['mjd'] = lc1['time'].mjd
             lc1['bkjd'] = lc1['time'].bkjd
             lc1.remove_column('time')
+
+            check_detrending(lc1, keep & np.isfinite(flux), log, time='bkjd')
 
             mjd = np.asarray(lc1['mjd'], dtype=float)
             tmin = Time(np.nanmin(mjd), format='mjd')
@@ -300,6 +306,18 @@ def _acquire_phase(config, basepath, log, show, phase, coord, sr, cadence,
                         ('EVEREST', 'EVEREST - drift corrected'),
                         ('K2VARCAT', 'K2VARCAT')],
             'initial': 'auto',
+            'required': False,
+        },
+        # Only the mission's own products have the raw flux beside the
+        # corrected one; the others keep theirs, and say so. K2's raw flux
+        # carries the six-hour thruster cycle, which only a star varying by
+        # much more can afford.
+        'kepler_flux': {
+            'type': 'choice',
+            'label': 'Flux',
+            'choices': [('corrected', 'Corrected by the pipeline (PDCSAP)'),
+                        ('raw', 'Raw aperture photometry (SAP)')],
+            'initial': 'corrected',
             'required': False,
         },
         'kepler_cadence': {
@@ -391,7 +409,8 @@ def target_kepler(config, basepath=None, verbose=True, show=False):
 
     for phase in KEPLER_PHASES:
         n, points = _acquire_phase(config, basepath, log, show, phase, coord,
-                                   sr, cadence, wanted_author, refresh_cache)
+                                   sr, cadence, wanted_author, refresh_cache,
+                                   raw_flux=config.get('kepler_flux') == 'raw')
 
         nwritten += n
         npoints += points

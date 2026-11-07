@@ -47,8 +47,8 @@ model atmosphere grids as are worth asking.
 | SkyMapper | DR4 detections, uvgriz, southern sky, 2014–2021 |
 | PGIR | Palomar Gattini-IR, J, sky visible from Palomar, 2018–2022, J < 15.5 |
 | WISE | W1–W4 in 2010, W1 and W2 through the NEOWISE years |
-| Kepler | flux, quarters and K2 campaigns, 2009–2018 |
-| TESS | flux, per sector; the pipelines' light curves, or measured in the full-frame images for faint or blended stars; optionally averaged to 10 min - 2 h |
+| Kepler | flux, quarters and K2 campaigns, 2009–2018; the corrected flux, or the raw aperture photometry for variability the correction would flatten |
+| TESS | flux, per sector; the pipelines' light curves - corrected, or their raw aperture photometry for variability the correction would flatten - or measured in the full-frame images for faint or blended stars; optionally averaged to 10 min - 2 h |
 | DASCH | Harvard plate archive, historical |
 | APPLAUSE | European plate archive, Dec > −30° |
 

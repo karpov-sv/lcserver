@@ -20,6 +20,7 @@ from .utils import (break_at_gaps, cleanup_paths, cached_lightkurve_search,
                     drop_mast_downloads, mast_download_dir,
                     mission_quality_mask, log_quality, quality_field,
                     quality_level, BINNING_CHOICES, bin_width, bin_sector,
+                    unmask, select_raw_flux, check_detrending,
                     QUALITY_STANDARD, QUALITY_RELAXED, QUALITY_PUBLISHED)
 from .tess_pixel import target_tess_pixel
 
@@ -53,39 +54,37 @@ TESS_OWN_READERS = {'TEQUILA': download_tequila_lightcurve,
 QLP_DETRENDED_COLUMNS = ['det_flux', 'kspsap_flux']
 
 
-def unmask(lc):
-    """Spell the gaps in the flux as NaN rather than as a mask.
-
-    lightkurve hands a column back masked where the file stored it masked,
-    and normalize() scales by np.nanmedian, which does not honour a mask -
-    it reads what the mask hides and answers nan, or the median of the wrong
-    points. The flux a pipeline is read with arrives as plain NaN, so put
-    the one moved in beside it on the same footing.
-    """
-    for name in ('flux', 'flux_err'):
-        column = lc[name]
-        unit = getattr(column, 'unit', None)
-        values = np.ma.filled(np.ma.asarray(column), np.nan)
-        lc[name] = values * unit if unit is not None else values
-
-    return lc
-
-
-def select_detrended_flux(lc, log):
-    """Put the pipeline's corrected flux in the ``flux`` column.
+def select_detrended_flux(lc, log, raw=False):
+    """Put the pipeline's corrected flux in the ``flux`` column, or its raw one.
 
     lightkurve reads pdcsap_flux for the SPOC pipelines, which is the
     corrected one, but sap_flux for QLP, which is not - a QLP light curve so
     read is the raw aperture photometry, with the scattered light ramps still
     in it, and carries the detrended column's uncertainties beside it. Move it
     onto what QLP detrended. Every original column stays in the table.
+
+    The corrections are made for transits, and take away what varies over a
+    day or more along with the scattered light - QLP's spline nearly all of
+    it, flattening the amplitude and the shape of a variable of such periods.
+    With ``raw`` the aperture photometry is kept instead, for
+    stars bright enough and varying enough for the ramps not to matter. QLP's
+    is already in place, and its detrended uncertainties are on the same
+    normalized scale; SPOC's comes with its own.
     """
+    origin = lc.meta.get('FLUX_ORIGIN')
+
+    if raw:
+        if lc.meta.get('AUTHOR') == 'QLP':
+            log(f"    Reading the raw {origin}, as asked")
+            return lc
+        return select_raw_flux(lc, log)
+
     if lc.meta.get('AUTHOR') != 'QLP':
         return lc
 
     for column in QLP_DETRENDED_COLUMNS:
         if column in lc.colnames:
-            log(f"    Reading QLP {column}, not the raw {lc.meta.get('FLUX_ORIGIN')}")
+            log(f"    Reading QLP {column}, not the raw {origin}")
             return unmask(lc.select_flux(column))
 
     log("    Warning: QLP lightcurve has no detrended flux column")
@@ -119,6 +118,14 @@ def select_detrended_flux(lc, log):
                         ('TARS', 'TARS (rotation, flux only)'),
                         ('PIXEL', 'Pixel-level (faint or blended stars)')],
             'initial': 'auto',
+            'required': False,
+        },
+        'tess_flux': {
+            'type': 'choice',
+            'label': 'Flux',
+            'choices': [('corrected', 'Corrected by the pipeline (PDCSAP, QLP detrended)'),
+                        ('raw', 'Raw aperture photometry (SAP)')],
+            'initial': 'corrected',
             'required': False,
         },
         'tess_quality': quality_field({
@@ -207,6 +214,7 @@ def target_tess(config, basepath=None, verbose=True, show=False):
     # rather than quietly falling back to another.
     author = str(config.get('tess_author', 'auto'))
     authors = TESS_AUTHORS if author == 'auto' else [author]
+    raw_flux = config.get('tess_flux') == 'raw'
 
     ra, dec = config.get('target_ra'), config.get('target_dec')
 
@@ -291,7 +299,7 @@ def target_tess(config, basepath=None, verbose=True, show=False):
                     if not lc:
                         continue
 
-                    lc = select_detrended_flux(lc, log)
+                    lc = select_detrended_flux(lc, log, raw=raw_flux)
 
                     # What the pipeline made of the sector itself, where it
                     # says so - TARS looks for rotation and publishes the
@@ -319,6 +327,8 @@ def target_tess(config, basepath=None, verbose=True, show=False):
                         # the SPOC pipelines have already emptied the flux
                         # of every cadence they flagged
                         log_quality(log, lc1['quality'], np.isfinite(flux) & ~keep, 'TESS')
+
+                    check_detrending(lc1, keep, log)
 
                     cadence = row.exptime[0].value
                     lc1, keep, cadence = bin_sector(lc1, keep & np.isfinite(flux), cadence,
