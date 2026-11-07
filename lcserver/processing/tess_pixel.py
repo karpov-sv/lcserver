@@ -42,6 +42,14 @@ What it is not for, and where it stops, from the targets it was tried on:
   up to 1.5%; with the learned maps 0.12% is left, against 0.08% in QLP's own
   aperture photometry - close, but the pipelines remain the better choice
   there, and the log says so.
+- A bright star alone in its pixels that varies by much: its change is kept
+  out of the learned focus response, which would otherwise take nearly all
+  of it, and the light curve is put on the star's own light in an aperture
+  rather than on the Gaussian's core and the catalogue magnitude - which
+  brings its amplitude to within the pipelines' own spread of each other.
+  The Gaussian still misses the image's shape by a few percent of the
+  change, which shows as a misfit well above the noise; the pipelines'
+  light curves, raw if their correction flattens it, remain the better.
 - Near a very bright neighbour the learned maps matter most: a star of Tmag
   10.5 a minute of arc from a faint target left ramps of ~20 e/s over each
   orbit with the Gaussian derivatives, and ~1 e/s with the maps.
@@ -67,6 +75,8 @@ import numpy as np
 
 from astropy.coordinates import SkyCoord
 from astropy.table import Table
+from astropy.io.votable import from_table, writeto
+from astropy.io.votable.tree import Param
 from astropy import units as u
 
 from stdpipe import plots
@@ -75,6 +85,25 @@ from .utils import (break_at_gaps, cached_lightkurve_search, cached_votable_quer
                     mast_download_dir, mission_quality_mask, log_quality,
                     quality_level, bin_width, bin_sector)
 
+
+# When a star's own change is kept out of the maps of the pointing and focus
+# response: when it holds at least this share of the catalogue light on the
+# fitted pixels, so that it all but makes the focus term, and the shift of
+# the pointing explains less than this share of its change - which a star
+# that does not vary, yet follows the pointing, fails
+FOCUS_DOMINANT_SHARE = 0.5
+POINTING_MAX_R2 = 0.5
+
+# Such a target is also measured by its own light rather than the Gaussian's
+# and the catalogue's: the Gaussian holds only the core of TESS's image, some
+# three quarters of it, and the catalogue magnitude of a star that varies by
+# much is one moment of it. An aperture of this radius, in pixels, holds all
+# but a percent or two of the image; the background is the median of the
+# pixels beyond the second radius. The share of the change the profile misses
+# has to be measured to this relative precision, or nothing is rescaled.
+APERTURE_RADIUS = 5.0
+APERTURE_BACKGROUND_RADIUS = 6.0
+APERTURE_MAX_ERROR = 0.05
 
 # The cutout, in TESS pixels of 21 arcsec, and how much of it is fitted around
 # the target. The cutout reaches past the fitted part so that the stars just
@@ -124,6 +153,9 @@ BRIGHT_TMAG = 13.5
 # A target's own light below this many times the frame-to-frame scatter is
 # not something a normalized light curve can show
 MIN_FLUX_TO_SCATTER = 3.0
+
+# What of the fit is written beside the light curve, where it applies
+FIT_META = ('TARGET_FLUX', 'PSF_SIGMA', 'NEIGHBOURS', 'SCATTER', 'APERTURE_SCALE')
 
 # The TESS zero point: 15000 e/s for a star of T = 10 (TESS Instrument
 # Handbook), so a magnitude T gives 10**(-0.4*(T - TESS_ZP)) e/s
@@ -447,8 +479,37 @@ def pixel_lightcurve(tpf, ra, dec, tic, level, log, diagnostics=None):
     # The maps carry the real profile of every star at once, so the frames
     # refitted with them leave it out; a target varying on its own does not
     # move with the pointing, and its variability stays where it was.
+    #
+    # That holds while a star's own change stays out of the drivers, which
+    # fails for a star that all but makes the focus term itself - bright and
+    # alone in its pixels. Where such a star varies by much, the difference
+    # between its true image and the Gaussian, scaled by its change, goes
+    # into the focus amplitude; the focus map then learns the star's image,
+    # and the refit hands it nearly the whole variation. Such a star's own
+    # first amplitude is then a driver too, which keeps its change out of
+    # the maps - unless that change follows the pointing, when it is the
+    # pointing's error rather than the star, and is what the maps are for.
     ishift = 1 + len(near)
-    drivers = np.column_stack([sol[ishift], sol[ishift + 1], sol[ishift + 2], np.ones(len(sol[0]))])
+    pointing = np.column_stack([sol[ishift], sol[ishift + 1], np.ones(len(sol[0]))])
+    light = [target_flux*np.sum(A[:, 0])] + [s_[2]*np.sum(A[:, 1 + i]) for i, s_ in enumerate(near)]
+    total = sum(flux*np.sum(gaussian(X, Y, sx_, sy_, sigma)[0])
+                for sx_, sy_, flux, _, _ in stars + [(x0, y0, target_flux, None, None)])
+    own = []
+    dominant = False
+    for i, name in enumerate(['target'] + [f"TIC {s_[3]}" for s_ in near]):
+        if total <= 0 or light[i]/total < FOCUS_DOMINANT_SHARE:
+            continue
+        amplitude = sol[i][keep]
+        fit, *_ = np.linalg.lstsq(pointing[keep], amplitude, rcond=None)
+        r2 = 1 - np.var(amplitude - pointing[keep] @ fit)/max(np.var(amplitude), 1e-30)
+        if r2 < POINTING_MAX_R2:
+            own.append(sol[i])
+            dominant = dominant or i == 0
+            log(f"    The {name} is {100*light[i]/total:.0f}% of the light fitted, and its change "
+                f"does not follow the pointing: it is kept out of the focus term")
+
+    drivers = np.column_stack([sol[ishift], sol[ishift + 1], sol[ishift + 2]] + own
+                              + [np.ones(len(sol[0]))])
     maps, *_ = np.linalg.lstsq(drivers[keep], D[keep], rcond=None)
     A = A.copy()
     A[:, ishift:ishift + 3] = maps[:3].T
@@ -469,6 +530,41 @@ def pixel_lightcurve(tpf, ra, dec, tic, level, log, diagnostics=None):
     # About the median of the frames the flags allow, so that the flux below
     # is centred on what the magnitude says
     dflux = dflux - np.median(dflux[keep])
+
+    # A target that makes its pixels by itself is measured in an aperture
+    # too: its change there against the profile's gives the share of its
+    # light the profile misses, and the aperture on the median image its own
+    # mean flux, less what the catalogue puts there of the other stars
+    aperture_scale = None
+    if dominant:
+        rr = np.hypot(xx - x0, yy - y0)
+        inside = (rr <= APERTURE_RADIUS) & live
+        outside = (rr > APERTURE_BACKGROUND_RADIUS) & live
+        if inside.sum() and outside.sum() >= 10:
+            sky = np.median(cube[:, outside], axis=1)
+            aperture = np.sum(cube[:, inside], axis=1) - inside.sum()*sky
+            design_ = np.column_stack([dflux[keep], np.ones(np.sum(keep))])
+            fit, res, *_ = np.linalg.lstsq(design_, aperture[keep], rcond=None)
+            spread = np.std(aperture[keep] - design_ @ fit)
+            halo_err = spread/np.sqrt(np.sum((dflux[keep] - dflux[keep].mean())**2))
+            halo = fit[0]
+
+            others = sum(flux*np.sum(gaussian(xx, yy, sx_, sy_, sigma)[0][inside])
+                         for sx_, sy_, flux, _, _ in stars)
+            mean = np.median(aperture[keep]) - others
+
+            if halo > 0 and halo_err < APERTURE_MAX_ERROR*halo and mean > 0:
+                log(f"    In an aperture of {APERTURE_RADIUS:.0f} pixels its change is {halo:.2f} "
+                    f"+- {halo_err:.2f} times the profile's, and its mean {mean:.0f} e/s against "
+                    f"the {target_flux:.0f} its magnitude implies - the light curve is put on those")
+                dflux = halo*dflux
+                dflux_err = halo*dflux_err
+                target_flux = mean
+                aperture_scale = halo
+            else:
+                log(f"    The aperture does not measure its change well enough "
+                    f"({halo:.2f} +- {halo_err:.2f} times the profile's) - "
+                    f"kept on the profile and the magnitude")
 
     nshift = len(names)
     background = sol[nshift + 3]
@@ -500,6 +596,8 @@ def pixel_lightcurve(tpf, ra, dec, tic, level, log, diagnostics=None):
     table.meta['NEIGHBOURS'] = ','.join(names[1:])
 
     table.meta['SCATTER'] = float(scatter)
+    if aperture_scale is not None:
+        table.meta['APERTURE_SCALE'] = float(aperture_scale)
 
     if diagnostics is not None:
         # How much each pixel of the cutout varies, whatever the model makes
@@ -645,6 +743,31 @@ def plot_pixel_diagnostics(fig, table, diag, title):
              ha='center', fontsize=7.5, color='gray')
 
 
+def write_lightcurve(table, filename):
+    """Write a light curve with the numbers of its fit, which neither writer keeps of itself.
+
+    A VOTable gets them as PARAMs of its table, the text file as comment
+    lines after the header, ``# NAME = value``.
+    """
+    meta = {key: table.meta[key] for key in FIT_META if key in table.meta}
+
+    if filename.endswith('.vot'):
+        votable = from_table(table)
+        element = votable.get_first_table()
+        for key, value in meta.items():
+            if isinstance(value, str):
+                element.params.append(Param(votable, name=key, datatype='char',
+                                            arraysize='*', value=value))
+            else:
+                element.params.append(Param(votable, name=key, datatype='double',
+                                            value=float(value)))
+        writeto(votable, filename)
+    else:
+        out = Table(table, copy=False)
+        out.meta['comments'] = [f"{key} = {value}" for key, value in meta.items()]
+        out.write(filename, format='ascii.commented_header', overwrite=True)
+
+
 def target_tess_pixel(config, basepath, log, show=False, refresh=False):
     """Pixel-level light curves of the target in every sector with full-frame images.
 
@@ -741,7 +864,7 @@ def target_tess_pixel(config, basepath, log, show=False, refresh=False):
 
         votname = os.path.splitext(lcname)[0] + '.vot'
         txtname = os.path.splitext(lcname)[0] + '.txt'
-        table.write(os.path.join(basepath, txtname), format='ascii.commented_header', overwrite=True)
+        write_lightcurve(table, os.path.join(basepath, txtname))
         log(f"    Sector lightcurve written to file:{txtname}")
 
         # The viewer divides every TESS light curve by its median. Put on a
@@ -749,7 +872,7 @@ def target_tess_pixel(config, basepath, log, show=False, refresh=False):
         # of percent out of the noise, so such a light curve stays out of it;
         # what it can still show is said instead
         if normalized:
-            table.write(os.path.join(basepath, votname), format='votable', overwrite=True)
+            write_lightcurve(table, os.path.join(basepath, votname))
             log(f"    Sector lightcurve written to file:{votname}")
         else:
             floor = 5*scatter/np.sqrt(max(3600/cadence, 1))
