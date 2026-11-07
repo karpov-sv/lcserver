@@ -542,24 +542,33 @@ def targets(request, id=None):
                     messages.success(request, f"Started cleanup for target {target.id}")
 
                 elif action == 'target_everything':
-                    # Which kinds to acquire, from the two boxes beside the
-                    # colours. They are ordinary fields of the info form, so
-                    # the run remembers what it was last asked for.
+                    # Which kinds to acquire, and whether to run the info
+                    # step first, from the boxes beside the colours. They are
+                    # ordinary fields of the info form, so the run remembers
+                    # what it was last asked for.
                     kinds = [_ for _ in surveys.KIND_LABELS
                              if form.cleaned_data.get(f'kind_{_}')]
+                    info = bool(form.cleaned_data.get('kind_info'))
 
-                    if not kinds:
-                        messages.error(request, "Nothing to run - neither"
+                    if not kinds and not info:
+                        messages.error(request, "Nothing to run - neither info,"
                                        " photometry nor spectroscopy is ticked")
                         return HttpResponseRedirect(request.path_info)
 
+                    # The sources query by the coordinates the info step
+                    # resolves, so leaving it out needs it to have run before
+                    if not info and ('target_ra' not in target.config
+                                     or 'target_dec' not in target.config):
+                        messages.error(request, "Info has to be run first - it"
+                                       " resolves the coordinates the sources query by")
+                        return HttpResponseRedirect(request.path_info)
+
                     # Use run_target_steps for proper chain management
-                    steps = surveys.get_survey_ids_for_everything(kinds)
+                    steps = surveys.get_survey_ids_for_everything(kinds, info=info)
                     celery_tasks.run_target_steps(target, steps)
-                    messages.success(
-                        request, f"Started acquiring"
-                        f" {' and '.join(surveys.KIND_LABELS[_].lower() for _ in kinds)}"
-                        f" for target {target.id}")
+                    what = (['info'] if info else []) + [surveys.KIND_LABELS[_].lower() for _ in kinds]
+                    what = ', '.join(what[:-1]) + ' and ' + what[-1] if len(what) > 1 else what[0]
+                    messages.success(request, f"Started acquiring {what} for target {target.id}")
 
                 # Check if it's a survey source action
                 elif action and action.startswith('target_'):

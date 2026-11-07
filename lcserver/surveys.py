@@ -60,8 +60,9 @@ KIND_LABELS = {
 KINDS_DEFAULT = (KIND_PHOTOMETRY, KIND_SPECTROSCOPY)
 
 # What the About page calls the steps that are not one kind or the other. Not
-# in KIND_LABELS, which is what the run checkboxes are built from and must
-# stay two: the info step is not something a run can be asked to leave out.
+# in KIND_LABELS, which is what the kind checkboxes are built from and must
+# stay two: the info step has a checkbox of its own, as leaving it out of a
+# run is not leaving out a kind of data but reusing what it found before.
 KIND_ALWAYS_LABEL = 'Identification and reference data'
 
 
@@ -567,14 +568,15 @@ def register_lightcurve_source(
     }
 
 
-def get_survey_ids_for_everything(kinds=None):
+def get_survey_ids_for_everything(kinds=None, info=True):
     """Get list of survey IDs for 'everything' batch operation.
 
     ``kinds`` is which of KIND_PHOTOMETRY and KIND_SPECTROSCOPY the run is to
     acquire, and defaults to both. The steps marked KIND_ALWAYS are in it
     whatever is asked for - the info step resolves the coordinates every source
-    queries by, so a run without it would have nothing to query with. Asking
-    for neither kind leaves that alone, and there is nothing to run.
+    queries by - unless ``info`` is False, for a run on what an earlier info
+    step resolved. Asking for neither kind leaves the info step alone, if it
+    is asked for, and otherwise there is nothing to run.
 
     Sources declared manual are never in it, whatever the kind: they are run
     one at a time, by someone who asked for that source in particular.
@@ -588,7 +590,7 @@ def get_survey_ids_for_everything(kinds=None):
                 and entry['kind'] in kinds | {KIND_ALWAYS})
 
     if not kinds:
-        return []
+        return ['info'] if info else []
 
     # Exclude 'info' and 'combined' initially, add them at start/end
     # Also exclude sources without processing functions (lightcurve-only sources)
@@ -598,7 +600,7 @@ def get_survey_ids_for_everything(kinds=None):
     ]
     surveys = sorted(surveys, key=lambda k: SURVEY_SOURCES[k]['order'])
 
-    return (['info'] + surveys
+    return ((['info'] if info else []) + surveys
             + (['combined'] if wanted('combined') else []))
 
 

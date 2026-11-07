@@ -111,12 +111,22 @@ def create_survey_form(source_id, survey_config):
             title = forms.CharField(max_length=150, required=False, label="Optional title or comment")
             g_minus_r = forms.FloatField(required=False, label="(g - r) color")
             B_minus_V = forms.FloatField(required=False, label="(B - V) color")
-            # What 'Run everything' acquires. Both on is what it has always
+            # What 'Run everything' acquires. All on is what it has always
             # done; turning one off leaves a whole class of sources out of the
             # run. Named for the kinds in surveys.py rather than built from
             # them - there are two of them, and there is no sense in which a
             # third would appear without this form wanting a say in where it
-            # goes.
+            # goes. The info step is not a kind but a step of its own, which
+            # may be left out to run the sources again on the coordinates and
+            # colours an earlier run of it resolved - when it is slow, or its
+            # services are down.
+            kind_info = forms.BooleanField(
+                required=False, initial=True, label='Info',
+                widget=forms.CheckboxInput(attrs={
+                    'title': "Include the info step in 'Run everything' - unticked, "
+                             "the sources run on what an earlier run of it resolved",
+                }),
+            )
             kind_photometry = forms.BooleanField(
                 required=False, initial=True, label='Photometry',
                 widget=forms.CheckboxInput(attrs={
@@ -149,7 +159,8 @@ def create_survey_form(source_id, survey_config):
                     Row(
                         Column('g_minus_r', css_class="col-auto"),
                         Column('B_minus_V', css_class="col-auto"),
-                        Column('kind_photometry', css_class="col-auto ms-3 mb-1"),
+                        Column('kind_info', css_class="col-auto ms-3 mb-1"),
+                        Column('kind_photometry', css_class="col-auto mb-1"),
                         Column('kind_spectroscopy', css_class="col-auto mb-1"),
                         Column('refresh_cache', css_class="col-auto ms-auto me-1 mb-1"),
                         css_class='align-items-end g-2'
