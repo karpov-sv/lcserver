@@ -133,6 +133,12 @@
     margin-bottom: .5rem;
 }
 
+/* For a page that has no info colour anywhere else */
+.help-popover-secondary {
+    --bs-popover-border-color: var(--bs-secondary);
+    --bs-popover-header-bg: var(--bs-secondary);
+}
+
 .navbar .navbar-brand {
     /* text-shadow: 2px 2px 4px #000000, 2px 2px 6px #ffffff; */
     background-color: #565656;
