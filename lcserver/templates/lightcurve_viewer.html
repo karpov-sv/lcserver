@@ -147,6 +147,18 @@
         </button>
       </div>
     </div>
+
+    <div class="ms-auto align-self-start">
+      <!-- In a heading, to stand as the other panels' help does -->
+      <h5 class="mb-0">
+        <span class="span-help-popover help-secondary" title="Display">
+          <p><b>Magnitudes</b> - the photometry of every source as published, or as converted to a common band where the source is listed with one: the ground surveys, the plate archives, Gaia and the rest. Each series is a survey in one filter.</p>
+          <p><b>Flux</b> - the space photometry that comes as flux rather than magnitudes, TESS and Kepler among them, each observing segment - a sector, a quarter, a campaign - normalized to its own median. Their absolute level is lost that way, but not the shape of the variation, which is what a segment of a few weeks is good for.</p>
+          <p><b>Time axis</b> labels the light curve with calendar dates, in UT, or with Modified Julian Dates - the days the period tools below take their dates and T₀ in.</p>
+          <p>Switching the mode reloads the data; everything below - filters, folding, the period tools - works on whichever is shown.</p>
+        </span>
+      </h5>
+    </div>
   </div>
 </div>
 
@@ -181,10 +193,17 @@
 
 <!-- Control Panel -->
 <div class="control-panel" id="control-panel" style="display: none;">
-  <h5 class="mb-3 panel-toggle" data-bs-toggle="collapse" data-bs-target="#source-controls"
+  <h5 class="mb-3">
+    <span class="panel-toggle" data-bs-toggle="collapse" data-bs-target="#source-controls"
       role="button" aria-expanded="true" aria-controls="source-controls"
-      title="Click to fold the list of sources away">
-    <i class="fa fa-caret-down"></i> Data Sources
+      title="Click to show or hide">
+      <i class="fa fa-caret-down"></i> Data Sources
+    </span>
+    <span class="span-help-popover help-secondary float-end" title="Data sources">
+      <p>One line per series - a survey in one filter, or an observing segment of a space mission - with its colour, its number of points, and a switch to show or hide it. What is hidden is left out of the statistics, the alignment, the period search and the downloads too.</p>
+      <p><b>Offset</b> is added to the series as drawn, to bring surveys measured on different zero points together - by hand, or with <b>Align offsets</b>, which matches them where they overlap in time. <b>Max Err</b>, in magnitudes only, drops the points whose uncertainty is larger, and those with none. <b>Size</b> is that of the markers.</p>
+      <p><b>Only g</b> shows only the series on the common g scale that the combined light curve is built from; <b>Statistics</b> gives the mean, median and scatter of each series over the points in view; <b>Download</b> writes the points shown as CSV.</p>
+    </span>
   </h5>
 
   <div class="collapse show" id="source-controls">
@@ -232,11 +251,14 @@
   <h5 class="mb-0">
     <span class="panel-toggle collapsed" data-bs-toggle="collapse" data-bs-target="#colour-section"
       role="button" aria-expanded="false" aria-controls="colour-section"
-      title="The colour of the star from two sources measured at the same time, against time - or phase, when the light curve is folded - and, if asked, in a diagram against a magnitude or another colour. Click to show or hide.">
+      title="Click to show or hide">
       <i class="fa fa-caret-down"></i> Colour
     </span>
     <span class="span-help-popover help-secondary float-end" title="Colour">
-      <p>The medians of the sources in every time bin they all have points in, as measured - without the offsets of the display - and as filtered by their maximum errors. The colour follows the light curve above as it is zoomed, and is folded when it is. In the diagram the slope is of the vertical axis against the colour: along it the star moved, and whether that is the reddening of dust or a change of its temperature is in its value.</p>
+      <p>The colour of the star as the difference of two sources measured at the same time - their medians in every time bin both have points in, <b>Time bin</b> days long. The bin has to be shorter than the time the star changes on, or its change reads as colour. The magnitudes are taken as measured, without the offsets of the display, and as filtered by the maximum errors.</p>
+      <p>The colour is drawn against time under the light curve, and follows it as it is zoomed with <b>Same range</b>; when the light curve is folded, it is folded too, with the binned median if that is shown above.</p>
+      <p><b>Diagram</b> adds the colour against a magnitude - or, with a second colour chosen, against that colour. <b>Connect in time</b> joins its points in the order they were taken, to follow how the star moved through it; <b>Fit line</b> draws the straight line through them, whose slope is in the title. Along that line the star moved, and whether it is the reddening of dust or a change of temperature is in the value of the slope.</p>
+      <p>Only magnitudes have a colour, so the panel is hidden in flux mode.</p>
     </span>
   </h5>
 
@@ -310,7 +332,11 @@
   <h5 class="mb-3">
     Phase Folding
     <span class="span-help-popover help-secondary float-end" title="Phase folding">
-      <p>Set period to enable phase folding. Phase range: -0.6 to 1.6 with wrapped data. Use "Fit Period" to automatically find the best period using visible data sources, error filters and dates, then click any peak of the periodogram below to fold at it.</p>
+      <p>A period and T₀ fold the light curve, drawn from phase -0.6 to 1.6 so that a cycle is seen whole either side; 0 turns folding off. <b>×2</b> and <b>÷2</b> try the period's double and half - an eclipsing binary found at half its period, or a double wave at twice. <b>Binned median</b> draws each series' median in bins of phase, its shape at the period folded at.</p>
+      <p><b>Fit Period</b> searches the visible sources, as filtered by their maximum errors and limited to the <b>Dates</b>, over the <b>search range</b>, each series about its own median. Lomb-Scargle fits a sinusoid, and with more harmonics a light curve of another shape - a pulsator's sawtooth, a contact binary's double wave; box least squares looks for a dip once a cycle, an eclipse or a transit. <b>Remove trend</b> fits each series a smooth curve with a knot every <i>window</i> days alongside, so that a short period can be found underneath a long variation; the window must be several times the period sought.</p>
+      <p>The highest peaks are fitted again - each series with its own trend, each survey and filter with its own harmonics - and ranked by that fit, which is what tells apart the aliases the periodogram gives the same power. Their buttons fold at them; hovering one gives its power, uncertainty and how much of the variation it explains. The uncertainties allow for noise that does not average down as white noise would.</p>
+      <p>Under the periodogram, the period folded at is marked, with its daily aliases, and the periodogram of the sampling alone centred on it: wherever that rises, the same signal is seen again through the sampling. Click anywhere on the periodogram to fold there.</p>
+      <p><b>Remove folded period</b> takes the signal of the period folded at off the light curve and searches again - prewhitening, for a star with more than one period. Every removed period is fitted again with the others each time, and the light curve is shown as the residuals until they are cleared. What the last search said is kept below the periodogram, to copy or download.</p>
     </span>
   </h5>
 
@@ -498,11 +524,13 @@
     <h6 class="mb-0">
       <span class="panel-toggle collapsed" data-bs-toggle="collapse" data-bs-target="#dyn-section"
         role="button" aria-expanded="false" aria-controls="dyn-section"
-        title="Lomb-Scargle periodograms in a window sliding along the light curve, for how a period - or which of several - comes and goes with time. Click to show or hide.">
+        title="Click to show or hide">
         <i class="fa fa-caret-down"></i> Time-Resolved Periodogram
       </span>
       <span class="span-help-popover help-secondary float-end" title="Time-resolved periodogram">
-        <p>Over the period search range, of the same points "Fit Period" searches - the visible sources, error filters, dates and trend, with any removed periods taken off. Click it to fold at a period.</p>
+        <p>Lomb-Scargle periodograms taken in a window sliding along the light curve, drawn as power against period and time - for how a period, or which of several, comes and goes, or drifts.</p>
+        <p>The points are those <b>Fit Period</b> searches - the visible sources, error filters, dates and trend, with any removed periods taken off - over the same search range. The power of each is the share of the variance in its window that a sinusoid at that period explains, so windows with more or fewer points compare alike; hovering gives how many each has.</p>
+        <p><b>Window</b> is the days of data in each periodogram, a tenth of the span by default: periods are resolved no finer than about P²/window, and searched only up to half the window. The windows follow one another <b>every</b> so many days, a quarter of the window by default. Click the map to fold at a period.</p>
       </span>
     </h6>
 
@@ -547,11 +575,14 @@
     <h6 class="mb-0">
       <span class="panel-toggle collapsed" data-bs-toggle="collapse" data-bs-target="#pc-section"
         role="button" aria-expanded="false" aria-controls="pc-section"
-        title="Fit a period that changes with time, starting from the one folded at, and measure the O-C of the data against it. Click to show or hide.">
+        title="Click to show or hide">
         <i class="fa fa-caret-down"></i> Period Change
       </span>
       <span class="span-help-popover help-secondary float-end" title="Period change">
-        <p>"Fit Period Change" starts from the period being folded at, uses it with T₀ as the reference ephemeris of the O−C diagram, and moves T₀ to the nearest maximum of light. It uses the same visible sources, error filters, dates and trend as "Fit Period".</p>
+        <p>A period that changes with time, fitted to the light curve itself: the phase is the integral of a frequency that is a <b>polynomial</b> in time of the given order - 0 for a constant period, 1 for one changing at a constant rate - or a <b>spline</b> with a knot every so many days, for a period that wanders.</p>
+        <p><b>Fit Period Change</b> starts from the period being folded at, and uses it with T₀ as the reference ephemeris of the O−C diagram, moving T₀ to the nearest maximum of light. It uses the same visible sources, error filters, dates and trend as <b>Fit Period</b>. Counting the cycles across seasonal gaps is what such a fit depends on, so it is started in several ways - from the phases of windows that follow the seasons, and from the periods found within each - and the one that fits best is kept.</p>
+        <p>The O−C is measured in windows of <b>O−C window</b> days, each fitted with the folded light curve's shape, shifted and scaled; it is drawn with the model and its band, the residuals from it, and the period of the model with time beside the period each window finds on its own - the one check of the cycle count that does not depend on it. The errors allow for noise that does not average down as white noise would, and the summary says when the O−C wanders beyond them, as on a spotted star it will.</p>
+        <p><b>Fold with model</b> folds the light curve with the model's phase rather than a constant period.</p>
       </span>
     </h6>
 
