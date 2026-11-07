@@ -165,6 +165,26 @@ class PeriodSearchTest(SimpleTestCase):
         self.assertLess(between, 0.5 * near_day)
 
 
+class ShapeTest(SimpleTestCase):
+
+    def test_fourier_parameters_of_a_known_shape(self):
+        """A sinusoid with its first harmonic at 0.35 and a phase of 0.8 reads
+        as R21 0.35 and phi21 0.8, in either band, whatever its time origin."""
+        rng = np.random.default_rng(12)
+        period = 0.731
+        series = two_bands(rng, lambda t: pulsator(t, period, phase=0.37), nights=200)
+
+        coeffs = p.group_coefficients(series, 0, 1.0 / period)
+        for group, c in coeffs.items():
+            shape = p.fourier_parameters(c, p.PERIOD_HARMONICS)
+            self.assertAlmostEqual(shape['R21'], 0.35, delta=0.03)
+            self.assertAlmostEqual(shape['phi21'], 0.8, delta=0.08)
+
+        g = p.fourier_parameters(coeffs[('synthetic', 'g', 'native')], p.PERIOD_HARMONICS)
+        r = p.fourier_parameters(coeffs[('synthetic', 'r', 'native')], p.PERIOD_HARMONICS)
+        self.assertAlmostEqual(r['amplitude'] / g['amplitude'], 0.7, delta=0.05)
+
+
 class PrewhiteningTest(SimpleTestCase):
 
     def test_two_close_frequencies_together(self):

@@ -394,6 +394,47 @@ def refine_peaks(series, peaks, window_days, span, nharm=PERIOD_HARMONICS):
     return refined, reduced
 
 
+def group_coefficients(series, window_days, frequency, nharm=PERIOD_HARMONICS):
+    """The harmonics of every group at one frequency, fitted as `refine_peaks`
+    fits them - every series its trend, the harmonics shared within a group.
+    {group: coefficients}, sine and cosine pairs, for groups with points
+    enough."""
+    groups = {}
+    for t, y, dy, group in series:
+        groups.setdefault(group, []).append(SeriesFit(t, y, dy, window_days, nharm))
+
+    out = {}
+    for group, members in groups.items():
+        if sum(len(_.mjds) - _.ntrend for _ in members) <= 2 * nharm + 2:
+            continue
+        gram, proj = 0, 0
+        for fit in members:
+            g, pr = fit.normal(frequency)
+            gram, proj = gram + g, proj + pr
+        out[group] = np.linalg.lstsq(gram, proj, rcond=None)[0]
+    return out
+
+
+def fourier_parameters(coeffs, nharm):
+    """The shape of a light curve from its harmonics, as variable stars are
+    classified by it: the amplitude of the first, and of the second and third
+    against it, R21 and R31, and their phases against it, phi21 and phi31, in
+    radians in [0, 2 pi) - of the sine series a1 sin(x + phi1) + a2 sin(2x +
+    phi2) + ..., with phi_k1 = phi_k - k phi1. And the full amplitude, peak to
+    peak. In the units of the light curve: in magnitudes the series runs the
+    other way from flux, which turns the phases by pi.
+    """
+    a = np.hypot(coeffs[0::2], coeffs[1::2])
+    phi = np.arctan2(coeffs[1::2], coeffs[0::2])
+    phase = np.arange(400) / 400.0
+    out = {'amplitude': float(np.ptp(harmonics(phase, 1.0, nharm) @ coeffs)), 'A1': float(a[0])}
+    for k in (2, 3):
+        if k <= nharm and a[0] > 0:
+            out[f'R{k}1'] = float(a[k - 1] / a[0])
+            out[f'phi{k}1'] = float((phi[k - 1] - k * phi[0]) % (2 * np.pi))
+    return out
+
+
 def alias_kind(f1, f2, span):
     """What makes two frequencies aliases of each other, or None.
 

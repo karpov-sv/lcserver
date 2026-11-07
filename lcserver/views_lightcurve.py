@@ -33,7 +33,9 @@ from .processing.periods import (
     find_period,
     fit_frequencies,
     fit_phase_model,
+    fourier_parameters,
     frequency_columns,
+    group_coefficients,
     harmonics,
     local_periods,
     measure_oc,
@@ -777,6 +779,17 @@ def _fit_period(request, id):
         best_freq = best['frequency']
         fap = best['fap']
 
+        # The shape of the light curve at the best period, band by band - not
+        # of a box, which harmonics describe badly
+        shape = {}
+        if method != 'bls':
+            try:
+                shape = {_group_name(g): {k: round(v, 5) for k, v in fourier_parameters(c, nharm).items()}
+                         for g, c in group_coefficients(loaded, detrend_window, best_freq, nharm).items()}
+            except Exception:
+                import traceback
+                traceback.print_exc()
+
         if scale is not None:
             if best.get('periodogram_period') != highest['period']:
                 notes.append(
@@ -848,6 +861,8 @@ def _fit_period(request, id):
         result = {
             'period': float(best_period),
             'period_err': best.get('period_err'),
+            # Amplitude and Fourier parameters per survey and filter
+            'shape': shape,
             'epoch': float(epoch),
             'power': float(best_power),
             'frequency': float(best_freq),

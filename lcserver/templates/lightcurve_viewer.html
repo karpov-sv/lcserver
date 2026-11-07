@@ -209,6 +209,10 @@
             title="Mean, median and scatter of every displayed source, over the points currently in view">
       <i class="fa fa-calculator"></i> Statistics
     </button>
+    <button class="btn btn-sm btn-outline-primary pull-right me-2" onclick="showAlign()"
+            title="Set the offsets of the displayed sources so that they agree where they overlap in time - with a reference, directly or through the others">
+      <i class="fa fa-align-center"></i> Align offsets
+    </button>
     <button class="btn btn-sm btn-outline-primary pull-right me-2" onclick="downloadLightcurve()"
             title="The points of every displayed source as CSV - as filtered, detrended if they are, and with their phase when folded">
       <i class="fa fa-download"></i> Download
@@ -222,9 +226,93 @@
   <div class="plot-resize-handle" role="separator" title="Drag to resize the plot"></div>
 </div>
 
+<!-- Colour from sources measured together, under the light curve so that the
+     two can be read side by side - in time, or folded, as the light curve is -->
+<div class="control-panel mt-3" id="colour-panel" style="display: none;">
+  <h5 class="mb-0">
+    <span class="panel-toggle collapsed" data-bs-toggle="collapse" data-bs-target="#colour-section"
+      role="button" aria-expanded="false" aria-controls="colour-section"
+      title="The colour of the star from two sources measured at the same time, against time - or phase, when the light curve is folded - and, if asked, in a diagram against a magnitude or another colour. Click to show or hide.">
+      <i class="fa fa-caret-down"></i> Colour
+    </span>
+    <span class="span-help-popover help-secondary float-end" title="Colour">
+      <p>The medians of the sources in every time bin they all have points in, as measured - without the offsets of the display - and as filtered by their maximum errors. The colour follows the light curve above as it is zoomed, and is folded when it is. In the diagram the slope is of the vertical axis against the colour: along it the star moved, and whether that is the reddening of dust or a change of its temperature is in its value.</p>
+    </span>
+  </h5>
+
+  <div class="collapse" id="colour-section">
+    <div class="row g-2 align-items-center mt-2">
+      <div class="col-auto">
+        <select class="form-select form-select-sm" id="colour-a" onchange="replotColour()"></select>
+      </div>
+      <div class="col-auto"><span>−</span></div>
+      <div class="col-auto">
+        <select class="form-select form-select-sm" id="colour-b" onchange="replotColour()"></select>
+      </div>
+      <div class="col-auto">
+        <label for="colour-bin" class="col-form-label col-form-label-sm">Time bin:</label>
+      </div>
+      <div class="col-auto">
+        <input type="number" class="form-control form-control-sm" id="colour-bin" style="width: 80px;"
+               step="0.01" min="0.001" value="0.1" onchange="replotColour()"
+               title="Days within which the sources are taken as measured together. Shorter than the timescale the star varies on, or its variation reads as colour.">
+      </div>
+      <div class="col-auto"><small class="text-muted">d</small></div>
+      <div class="col-auto">
+        <button class="btn btn-sm btn-primary" onclick="plotColour()" id="colour-btn">
+          <i class="fa fa-adjust"></i> Plot
+        </button>
+      </div>
+      <div class="col-auto ms-3">
+        <div class="form-check">
+          <input class="form-check-input" type="checkbox" id="colour-tie" checked onchange="syncColourRange()"
+                 title="Show the colour over the same range of time - or phase - as the light curve above, zoomed as it is; unticked, over the range of its own points">
+          <label class="form-check-label small" for="colour-tie">Same range</label>
+        </div>
+      </div>
+      <div class="col-auto ms-2">
+        <div class="form-check">
+          <input class="form-check-input" type="checkbox" id="colour-diagram" onchange="onColourDiagramToggle()"
+                 title="Beside the colour, a diagram of it against a magnitude - or against another colour">
+          <label class="form-check-label small" for="colour-diagram">Diagram</label>
+        </div>
+      </div>
+      <div class="col-auto" id="colour-y-group" style="display: none;">
+        <div class="d-flex align-items-center gap-2">
+          <small class="text-muted">against</small>
+          <select class="form-select form-select-sm" id="colour-c" onchange="replotColour()"></select>
+          <span>−</span>
+          <select class="form-select form-select-sm" id="colour-d" onchange="replotColour()"
+                  title="Empty for the magnitude of the first alone - a colour-magnitude diagram; another source for a two-colour diagram"></select>
+          <div class="form-check ms-2 mb-0 text-nowrap">
+            <input class="form-check-input" type="checkbox" id="colour-connect" onchange="replotColour()"
+                   title="Join the points of the diagram in the order of time, with a faint line, to follow how the star moved through it">
+            <label class="form-check-label small" for="colour-connect">Connect in time</label>
+          </div>
+          <div class="form-check ms-2 mb-0 text-nowrap">
+            <input class="form-check-input" type="checkbox" id="colour-fit" onchange="replotColour()"
+                   title="The straight line fitted to the diagram, and its slope in the title">
+            <label class="form-check-label small" for="colour-fit">Fit line</label>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="colour-box" class="plotly-resizable mt-2" style="height: 320px; display: none;">
+      <div id="colour-container" class="plotly-chart"></div>
+      <div class="plot-resize-handle" role="separator" title="Drag to resize the plot"></div>
+    </div>
+  </div>
+</div>
+
 <!-- Phase Folding Panel -->
 <div class="control-panel mt-3" id="phase-panel" style="display: none;">
-  <h5 class="mb-3">Phase Folding</h5>
+  <h5 class="mb-3">
+    Phase Folding
+    <span class="span-help-popover help-secondary float-end" title="Phase folding">
+      <p>Set period to enable phase folding. Phase range: -0.6 to 1.6 with wrapped data. Use "Fit Period" to automatically find the best period using visible data sources, error filters and dates, then click any peak of the periodogram below to fold at it.</p>
+    </span>
+  </h5>
 
   <div class="row g-2 align-items-center">
     <div class="col-auto">
@@ -361,14 +449,6 @@
     </div>
   </div>
 
-  <div class="mt-2">
-    <small class="text-muted">
-      Set period to enable phase folding. Phase range: -0.6 to 1.6 with wrapped data.
-      Use "Fit Period" to automatically find the best period using visible data sources, error filters and dates,
-      then click any peak of the periodogram below to fold at it.
-    </small>
-  </div>
-
   <!-- Periodogram, shown once a fit has been run -->
   <div id="periodogram-box" class="plotly-resizable mt-2" style="height: 300px; display: none;">
     <div id="periodogram-container" class="plotly-chart"></div>
@@ -415,10 +495,15 @@
 
   <!-- The periodogram in a window sliding along the light curve -->
   <div class="border-top mt-3 pt-3">
-    <h6 class="mb-0 panel-toggle collapsed" data-bs-toggle="collapse" data-bs-target="#dyn-section"
+    <h6 class="mb-0">
+      <span class="panel-toggle collapsed" data-bs-toggle="collapse" data-bs-target="#dyn-section"
         role="button" aria-expanded="false" aria-controls="dyn-section"
         title="Lomb-Scargle periodograms in a window sliding along the light curve, for how a period - or which of several - comes and goes with time. Click to show or hide.">
-      <i class="fa fa-caret-down"></i> Time-Resolved Periodogram
+        <i class="fa fa-caret-down"></i> Time-Resolved Periodogram
+      </span>
+      <span class="span-help-popover help-secondary float-end" title="Time-resolved periodogram">
+        <p>Over the period search range, of the same points "Fit Period" searches - the visible sources, error filters, dates and trend, with any removed periods taken off. Click it to fold at a period.</p>
+      </span>
     </h6>
 
     <div class="collapse" id="dyn-section">
@@ -449,13 +534,6 @@
       </div>
     </div>
 
-    <div class="mt-2">
-      <small class="text-muted">
-        Over the period search range, of the same points "Fit Period" searches - the visible sources, error filters,
-        dates and trend, with any removed periods taken off. Click it to fold at a period.
-      </small>
-    </div>
-
     <div id="dyn-box" class="plotly-resizable mt-2" style="height: 450px; display: none;">
       <div id="dyn-container" class="plotly-chart"></div>
       <div class="plot-resize-handle" role="separator" title="Drag to resize the plot"></div>
@@ -466,10 +544,15 @@
   <!-- A period that changes with time, and the O-C of the data against the
        period folded at - a task of its own, once a period has been found -->
   <div class="border-top mt-3 pt-3">
-    <h6 class="mb-0 panel-toggle collapsed" data-bs-toggle="collapse" data-bs-target="#pc-section"
+    <h6 class="mb-0">
+      <span class="panel-toggle collapsed" data-bs-toggle="collapse" data-bs-target="#pc-section"
         role="button" aria-expanded="false" aria-controls="pc-section"
         title="Fit a period that changes with time, starting from the one folded at, and measure the O-C of the data against it. Click to show or hide.">
-      <i class="fa fa-caret-down"></i> Period Change
+        <i class="fa fa-caret-down"></i> Period Change
+      </span>
+      <span class="span-help-popover help-secondary float-end" title="Period change">
+        <p>"Fit Period Change" starts from the period being folded at, uses it with T₀ as the reference ephemeris of the O−C diagram, and moves T₀ to the nearest maximum of light. It uses the same visible sources, error filters, dates and trend as "Fit Period".</p>
+      </span>
     </h6>
 
     <div class="collapse" id="pc-section">
@@ -519,13 +602,6 @@
           <label class="form-check-label small" for="pc-fold">Fold with model</label>
         </div>
       </div>
-    </div>
-
-    <div class="mt-2">
-      <small class="text-muted">
-        "Fit Period Change" starts from the period being folded at, uses it with T₀ as the reference ephemeris of the O−C diagram,
-        and moves T₀ to the nearest maximum of light. It uses the same visible sources, error filters, dates and trend as "Fit Period".
-      </small>
     </div>
 
   <!-- O-C diagram and the period with time, shown once a period change fit has been run -->
@@ -578,6 +654,72 @@
       </div>
       <div class="modal-body">
         <div id="fit-result-text" class="small" style="white-space: pre-wrap;"></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Offsets that make the displayed sources agree where they overlap -->
+<div class="modal fade" id="align-modal" tabindex="-1" aria-labelledby="align-modal-title" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="align-modal-title">Align Offsets</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <div class="row g-2 align-items-center mb-2">
+          <div class="col-auto">
+            <label for="align-reference" class="col-form-label col-form-label-sm">Reference:</label>
+          </div>
+          <div class="col-auto">
+            <select class="form-select form-select-sm" id="align-reference"></select>
+          </div>
+          <div class="col-auto">
+            <label for="align-bin" class="col-form-label col-form-label-sm">Time bin:</label>
+          </div>
+          <div class="col-auto">
+            <input type="number" class="form-control form-control-sm" id="align-bin" style="width: 80px;"
+                   step="0.1" min="0.001" value="1"
+                   title="Days within which measurements of two sources are taken as simultaneous. Shorter than the timescale the star varies on, or its variation reads as an offset.">
+          </div>
+          <div class="col-auto"><small class="text-muted">d</small></div>
+          <div class="col-auto">
+            <button class="btn btn-sm btn-primary" onclick="alignOffsets()">
+              <i class="fa fa-align-center"></i> Align
+            </button>
+          </div>
+          <div class="col-auto">
+            <button class="btn btn-sm btn-outline-secondary" onclick="resetAlignedOffsets()" id="align-reset"
+                    title="Put back the offsets the sources had before the first Align" disabled>
+              <i class="fa fa-undo"></i> Reset
+            </button>
+          </div>
+        </div>
+        <p class="text-muted small mb-2">
+          Each displayed source is reduced to its median in every time bin, every two are compared over the bins they
+          share, and the offsets come out of one least-squares fit to all those comparisons - so a source that never
+          overlaps the reference is tied to it through the others, which may be more than the one it overlaps most. The reference keeps its own offset. Only what is
+          drawn changes: the period fits centre every source on its own median regardless.
+        </p>
+        <div class="table-responsive">
+          <table class="table table-sm align-middle mb-0">
+            <thead>
+              <tr>
+                <th>Source</th>
+                <th class="text-end">Offset</th>
+                <th class="text-end">±</th>
+                <th class="text-end">Shared bins</th>
+                <th>Overlaps most with</th>
+              </tr>
+            </thead>
+            <tbody id="align-body"></tbody>
+          </table>
+        </div>
+        <p class="text-muted small mt-2 mb-0" id="align-note"></p>
       </div>
       <div class="modal-footer">
         <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Close</button>
@@ -1223,6 +1365,9 @@ function updatePlot() {
         };
         Plotly.newPlot('plotly-container', traces, layout, config);
         plotInitialized = true;
+        // A new plot has no listeners. After every drawing of it - zoomed,
+        // a source shown or hidden - its range is the one it has settled on
+        document.getElementById('plotly-container').on('plotly_afterplot', syncColourRange);
     } else {
         // Get current axis ranges to preserve zoom
         const plotDiv = document.getElementById('plotly-container');
@@ -1362,6 +1507,8 @@ function updatePhaseFolding() {
     // The periodogram marks the period being folded at, and its aliases
     updatePeriodogramMarks();
     updateDynamicMarks();
+    if (colourPlotted)
+        plotColour(true);
 
     // Force reinitialize plot when switching modes
     if (plotInitialized) {
@@ -1388,6 +1535,8 @@ function clearPhaseFolding() {
         updatePlot();
         plotInitialized = true;
     }
+    if (colourPlotted)
+        plotColour(true);
 }
 
 // ----------------------------------------------------------------- date range
@@ -1437,6 +1586,9 @@ function onDateRangeChange() {
         updatePlot();
         plotInitialized = true;
     }
+    // The dates limit the folded colour, as they do the fold
+    if (colourPlotted)
+        plotColour(true);
 }
 
 // The time range the plot is zoomed to, as the date range
@@ -2012,6 +2164,18 @@ function fitPeriod() {
                      + ` amplitudes. Hover over the peak buttons for the fits.`;
         }
 
+        // The shape at the best period, band by band
+        const shape = Object.entries(data.shape || {});
+        if (shape.length) {
+            const unit = isMagnitudeMode ? 'mag' : '(flux)';
+            message += `\n\nShape at the best period (${data.harmonics} harmonics; phases in radians`
+                     + (isMagnitudeMode ? ', of the magnitude' : '') + '):\n'
+                     + shape.map(([name, f]) => `  ${name}: amplitude ${f.amplitude.toPrecision(3)} ${unit}`
+                         + (f.R21 !== undefined ? `, R21 ${f.R21.toFixed(3)}, φ21 ${f.phi21.toFixed(3)}` : '')
+                         + (f.R31 !== undefined ? `, R31 ${f.R31.toFixed(3)}, φ31 ${f.phi31.toFixed(3)}` : ''))
+                       .join('\n');
+        }
+
         if (data.detrend_window) {
             message += `\n\nVariation slower than ${data.detrend_window} d was removed first`
                      + ` - the plot now shows what was searched. Untick "Remove trend"`
@@ -2094,6 +2258,8 @@ function redrawFolded() {
         updatePlot();
         plotInitialized = true;
     }
+    if (colourPlotted)
+        plotColour(true);
 }
 
 function onModelFoldToggle() {
@@ -2797,6 +2963,497 @@ function downloadModel() {
                                      c.offset[i] * data.period, c.offset_err[i] * data.period]));
 }
 
+// ------------------------------------------------------------ aligning offsets
+
+// Fewest shared bins two sources are compared over
+const ALIGN_MIN_SHARED = 3;
+
+// The offsets before the first Align, for Reset to put back - kept until
+// they are, so that aligning again and again still returns to them
+let offsetsBeforeAlign = null;
+
+function resetAlignedOffsets() {
+    if (!offsetsBeforeAlign) return;
+    offsetsBeforeAlign.forEach((offset, i) => {
+        seriesState[i].offset = offset;
+        document.getElementById(`offset-${i}`).value = offset;
+    });
+    offsetsBeforeAlign = null;
+    document.getElementById('align-reset').disabled = true;
+    document.getElementById('align-body').innerHTML = '';
+    document.getElementById('align-note').textContent = 'The offsets are back as they were.';
+    updatePlot();
+}
+
+function median(values) {
+    const v = values.slice().sort((a, b) => a - b);
+    const n = v.length;
+    return n % 2 ? v[(n - 1) / 2] : 0.5 * (v[n / 2 - 1] + v[n / 2]);
+}
+
+// The median of a source in every time bin it has points in, as filtered on
+// the plot - keyed by the number of the bin
+function binnedByTime(series, state, width) {
+    const valueKey = isMagnitudeMode ? 'mag' : 'flux';
+    const errKey = isMagnitudeMode ? 'magerr' : 'flux_err';
+    const filtered = isMagnitudeMode && state.maxError !== null;
+    const bins = new Map();
+
+    for (let i = 0; i < series.mjd.length; i++) {
+        const y = series[valueKey][i];
+        if (y === null || !isFinite(y)) continue;
+        if (filtered && !withinMaxError(series[errKey][i], state.maxError)) continue;
+        const k = Math.floor(series.mjd[i] / width);
+        if (!bins.has(k)) bins.set(k, []);
+        bins.get(k).push(y);
+    }
+
+    const out = new Map();
+    bins.forEach((values, k) => out.set(k, median(values)));
+    return out;
+}
+
+function showAlign() {
+    if (!dataLoaded) return;
+
+    const select = document.getElementById('align-reference');
+    const visible = lightcurveData.map((s, i) => i).filter(i => seriesState[i].visible);
+    const previous = select.value;
+
+    // The sources on display, the one with most points first as the default
+    select.innerHTML = '';
+    visible.slice().sort((a, b) => lightcurveData[b].mjd.length - lightcurveData[a].mjd.length)
+        .forEach(i => {
+            const option = document.createElement('option');
+            option.value = i;
+            option.textContent = lightcurveData[i].label;
+            select.appendChild(option);
+        });
+    if (visible.includes(parseInt(previous)))
+        select.value = previous;
+
+    document.getElementById('align-body').innerHTML = '';
+    document.getElementById('align-note').textContent = visible.length < 2
+        ? 'Display at least two sources to align.' : '';
+
+    bootstrap.Modal.getOrCreateInstance(document.getElementById('align-modal')).show();
+}
+
+// Solves the symmetric system a x = b in place, and returns x with the inverse
+// of a, which the uncertainties come from. Small: a row per source.
+function solveSymmetric(a, b) {
+    const n = b.length;
+    const m = a.map((row, i) => row.concat(Array.from({length: n}, (_, j) => i === j ? 1 : 0), [b[i]]));
+    for (let c = 0; c < n; c++) {
+        let pivot = c;
+        for (let r = c + 1; r < n; r++)
+            if (Math.abs(m[r][c]) > Math.abs(m[pivot][c])) pivot = r;
+        [m[c], m[pivot]] = [m[pivot], m[c]];
+        const d = m[c][c];
+        if (!d) return null;
+        for (let j = c; j <= 2 * n; j++) m[c][j] /= d;
+        for (let r = 0; r < n; r++) {
+            if (r === c || !m[r][c]) continue;
+            const f = m[r][c];
+            for (let j = c; j <= 2 * n; j++) m[r][j] -= f * m[c][j];
+        }
+    }
+    return {x: m.map(row => row[2 * n]), inverse: m.map(row => row.slice(n, 2 * n))};
+}
+
+function alignOffsets() {
+    const width = parseFloat(document.getElementById('align-bin').value);
+    const reference = parseInt(document.getElementById('align-reference').value);
+    const body = document.getElementById('align-body');
+    const note = document.getElementById('align-note');
+    body.innerHTML = '';
+
+    if (!(width > 0) || !isFinite(reference)) {
+        note.textContent = 'Choose a reference and a positive time bin.';
+        return;
+    }
+
+    const visible = lightcurveData.map((s, i) => i).filter(i => seriesState[i].visible);
+    const bins = new Map(visible.map(i => [i, binnedByTime(lightcurveData[i], seriesState[i], width)]));
+
+    // Every two sources over the bins they share: the median difference, and
+    // how well it is known from the scatter of the differences
+    const pairs = [];
+    for (let x = 0; x < visible.length; x++) {
+        for (let y = x + 1; y < visible.length; y++) {
+            const a = visible[x], b = visible[y];
+            const [small, large] = bins.get(a).size < bins.get(b).size ? [a, b] : [b, a];
+            const diffs = [];
+            bins.get(small).forEach((v, k) => {
+                if (bins.get(large).has(k))
+                    diffs.push(small === a ? v - bins.get(large).get(k) : bins.get(large).get(k) - v);
+            });
+            if (diffs.length < ALIGN_MIN_SHARED) continue;
+            const d = median(diffs);
+            const mad = median(diffs.map(v => Math.abs(v - d)));
+            // Not better than the median of a handful of points could be known
+            const sigma = Math.max(1.4826 * mad, 1e-3) * 1.2533 / Math.sqrt(diffs.length);
+            pairs.push({a: a, b: b, d: d, sigma: sigma, n: diffs.length});
+        }
+    }
+
+    // Which sources the reference reaches, through sources that overlap
+    const reached = new Set([reference]);
+    let grew = true;
+    while (grew) {
+        grew = false;
+        pairs.forEach(p => {
+            if (reached.has(p.a) !== reached.has(p.b)) {
+                reached.add(p.a);
+                reached.add(p.b);
+                grew = true;
+            }
+        });
+    }
+
+    // Offsets o with (y_a + o_a) - (y_b + o_b) = 0 for every pair, the
+    // reference's held at zero, weighted by how well each difference is known
+    const unknowns = [...reached].filter(i => i !== reference);
+    const column = new Map(unknowns.map((i, k) => [i, k]));
+    const n = unknowns.length;
+    const normal = Array.from({length: n}, () => new Array(n).fill(0));
+    const rhs = new Array(n).fill(0);
+    pairs.forEach(p => {
+        if (!reached.has(p.a) || !reached.has(p.b)) return;
+        const w = 1 / (p.sigma * p.sigma);
+        // o_a - o_b = -d
+        const ka = column.get(p.a), kb = column.get(p.b);
+        if (ka !== undefined) { normal[ka][ka] += w; rhs[ka] += -p.d * w; }
+        if (kb !== undefined) { normal[kb][kb] += w; rhs[kb] += p.d * w; }
+        if (ka !== undefined && kb !== undefined) { normal[ka][kb] -= w; normal[kb][ka] -= w; }
+    });
+
+    const solution = n ? solveSymmetric(normal, rhs) : {x: [], inverse: []};
+    if (!solution) {
+        note.textContent = 'The overlaps do not fix the offsets - try a longer time bin.';
+        return;
+    }
+
+    if (!offsetsBeforeAlign) {
+        offsetsBeforeAlign = lightcurveData.map((s, i) => seriesState[i].offset);
+        document.getElementById('align-reset').disabled = false;
+    }
+
+    // Applied on top of the reference's own offset, which it keeps
+    const base = seriesState[reference].offset;
+    const rows = [];
+    lightcurveData.forEach((series, i) => {
+        if (!seriesState[i].visible) return;
+        const mine = pairs.filter(p => p.a === i || p.b === i);
+        const shared = mine.reduce((s, p) => s + p.n, 0);
+        const partner = mine.sort((x, y) => y.n - x.n)[0];
+        const through = partner ? lightcurveData[partner.a === i ? partner.b : partner.a].label : '';
+
+        if (i === reference) {
+            rows.push([series.label + ' (reference)', base, null, shared, '']);
+            return;
+        }
+        if (!reached.has(i)) {
+            rows.push([series.label, null, null, shared, 'no overlap with the reference']);
+            return;
+        }
+        const k = column.get(i);
+        const offset = base + solution.x[k];
+        seriesState[i].offset = Math.round(offset * 1e4) / 1e4;
+        document.getElementById(`offset-${i}`).value = seriesState[i].offset;
+        rows.push([series.label, seriesState[i].offset, Math.sqrt(solution.inverse[k][k]), shared, through]);
+    });
+
+    rows.forEach(([label, offset, err, shared, through]) => {
+        const tr = document.createElement('tr');
+        [label, offset === null ? '-' : offset.toFixed(4), err === null ? '' : err.toFixed(4),
+         shared, through].forEach((text, j) => {
+            const td = document.createElement('td');
+            td.textContent = text;
+            if (j > 0 && j < 4) td.className = 'text-end';
+            tr.appendChild(td);
+        });
+        body.appendChild(tr);
+    });
+
+    const lost = rows.filter(r => r[1] === null).length;
+    note.textContent = (lost ? `${lost} source${lost > 1 ? 's' : ''} never overlap${lost > 1 ? '' : 's'} the reference, `
+                               + 'directly or through the others, and keep their offsets. ' : '')
+        + (isMagnitudeMode ? 'Between filters an offset is the colour of the star, which changes as it varies - '
+                             + 'aligned, a light curve shows its variation, not its colour.'
+                           : 'In flux the offsets are added, as the Offset fields do.');
+
+    updatePlot();
+}
+
+// ------------------------------------------------------------------ colour
+
+// The sources to take a colour of; the bluer of the usual pair first when
+// there is one
+function fillColourChoices() {
+    const a = document.getElementById('colour-a'), b = document.getElementById('colour-b');
+    const c = document.getElementById('colour-c'), d = document.getElementById('colour-d');
+    [a, b, c, d].forEach(select => { select.innerHTML = ''; });
+
+    // Nothing to subtract: the diagram is against the magnitude of the first
+    const none = document.createElement('option');
+    none.value = '';
+    none.textContent = '(magnitude)';
+    d.appendChild(none);
+
+    lightcurveData.forEach((series, i) => {
+        [a, b, c, d].forEach(select => {
+            const option = document.createElement('option');
+            option.value = i;
+            option.textContent = series.label;
+            select.appendChild(option);
+        });
+    });
+
+    const find = label => lightcurveData.findIndex(s => s.label === label);
+    const pairs = [['ZTF g', 'ZTF r'], ['ATLAS c', 'ATLAS o'], ['FRAM B', 'FRAM V'], ['WISE W1', 'WISE W2']];
+    const pair = pairs.find(([x, y]) => find(x) >= 0 && find(y) >= 0);
+    a.value = pair ? find(pair[0]) : 0;
+    b.value = pair ? find(pair[1]) : Math.min(1, lightcurveData.length - 1);
+    // A colour-magnitude diagram of the second, to begin with
+    c.value = b.value;
+    d.value = '';
+}
+
+function onColourDiagramToggle() {
+    document.getElementById('colour-y-group').style.display =
+        document.getElementById('colour-diagram').checked ? '' : 'none';
+    replotColour();
+}
+
+// Drawn again for a change of its settings, once it has been drawn at all
+function replotColour() {
+    if (colourPlotted)
+        plotColour(true);
+}
+
+// Side margins for the colour that make its plot area span the same pixels
+// as the light curve's: theirs, less how far the colour's box is set in
+function alignedMargins() {
+    const main = document.getElementById('plotly-container');
+    const colour = document.getElementById('colour-container');
+    const m = main._fullLayout && main._fullLayout.margin;
+    if (!m)
+        return {l: 60, r: 20};
+    const a = main.getBoundingClientRect(), b = colour.getBoundingClientRect();
+    return {l: Math.max(0, m.l - (b.left - a.left)), r: Math.max(0, m.r - (a.right - b.right))};
+}
+
+// The colour's time - or phase - axis over the range the light curve shows,
+// autoscaled or zoomed, while tied to it: the colour's own points span less
+// than all the sources do, and left to scale itself it would not line up
+function syncColourRange() {
+    if (!colourPlotted)
+        return;
+    const main = document.getElementById('plotly-container')._fullLayout;
+    const tied = document.getElementById('colour-tie').checked;
+    Plotly.relayout('colour-container', tied && main && main.xaxis && main.xaxis.range
+                    ? {'xaxis.range': main.xaxis.range.slice(), 'xaxis.autorange': false}
+                    : {'xaxis.autorange': true});
+}
+
+// Whether the colour is on display, so that it follows the fold
+let colourPlotted = false;
+
+// Bins of phase the median of a folded colour is drawn in
+const COLOUR_PHASE_BINS = 20;
+
+// `quiet` when redrawn for a change of the fold, which has nobody to tell
+// that the two sources share too little
+function plotColour(quiet) {
+    const ia = parseInt(document.getElementById('colour-a').value);
+    const ib = parseInt(document.getElementById('colour-b').value);
+    const width = parseFloat(document.getElementById('colour-bin').value);
+
+    if (ia === ib || !(width > 0)) {
+        if (!quiet) alert('Choose two different sources and a positive time bin.');
+        return;
+    }
+
+    // Folded as the light curve is, over the same dates
+    const folded = phasePeriod > 0;
+    const dates = dateRange();
+
+    const diagram = document.getElementById('colour-diagram').checked;
+    const ic = parseInt(document.getElementById('colour-c').value);
+    const dValue = document.getElementById('colour-d').value;
+    const id = dValue === '' ? null : parseInt(dValue);
+
+    const A = binnedByTime(lightcurveData[ia], seriesState[ia], width);
+    const B = binnedByTime(lightcurveData[ib], seriesState[ib], width);
+    const C = diagram ? binnedByTime(lightcurveData[ic], seriesState[ic], width) : null;
+    const D = diagram && id !== null ? binnedByTime(lightcurveData[id], seriesState[id], width) : null;
+
+    // The colour wherever the two share a bin; the diagram where all of its
+    // sources do
+    const t = [], colour = [];
+    const dt = [], dx = [], dy = [];
+    A.forEach((va, k) => {
+        if (!B.has(k)) return;
+        const mjd = (k + 0.5) * width;
+        if (folded && !inDateRange(mjd, dates)) return;
+        const col = va - B.get(k);
+        t.push(mjd);
+        colour.push(col);
+        if (C && C.has(k) && (!D || D.has(k))) {
+            dt.push(mjd);
+            dx.push(col);
+            dy.push(D ? C.get(k) - D.get(k) : C.get(k));
+        }
+    });
+
+    if (colour.length < 3) {
+        if (!quiet) alert(`${lightcurveData[ia].label} and ${lightcurveData[ib].label} share only ${colour.length} bins of ${width} d`
+                          + (folded ? ' in the dates' : '') + ' - try a longer bin.');
+        return;
+    }
+
+    // The diagram's vertical axis against the colour, by least squares
+    const n = colour.length, nd = dx.length;
+    let slope = NaN, slopeErr = NaN, mc = 0, mm = 0;
+    if (nd > 2) {
+        mc = dx.reduce((s, v) => s + v, 0) / nd;
+        mm = dy.reduce((s, v) => s + v, 0) / nd;
+        let sxx = 0, sxy = 0;
+        dx.forEach((c, i) => { sxx += (c - mc) * (c - mc); sxy += (c - mc) * (dy[i] - mm); });
+        if (sxx > 0) {
+            slope = sxy / sxx;
+            const resid = dy.map((m, i) => m - mm - slope * (dx[i] - mc));
+            slopeErr = Math.sqrt(resid.reduce((s, r) => s + r * r, 0) / (nd - 2) / sxx);
+        }
+    }
+    const spread = colour.slice().sort((x, y) => x - y);
+    const range = [spread[Math.floor(0.05 * (n - 1))], spread[Math.ceil(0.95 * (n - 1))]];
+
+    const na = lightcurveData[ia].label, nb = lightcurveData[ib].label;
+    const name = `${na} − ${nb}`;
+    const yname = diagram ? (id === null ? lightcurveData[ic].label
+                                         : `${lightcurveData[ic].label} − ${lightcurveData[id].label}`) : '';
+    const theme = plotlyTheme();
+    const datesOf = t.map(mjdToDate);
+    const axis = {showline: true, linecolor: theme.linecolor, gridcolor: theme.gridcolor, zeroline: false, automargin: true};
+    // The colour against time or phase drawn as the light curve above is, so
+    // that the two read alike and, at full width, line up
+    const plain = {gridcolor: theme.gridcolor, zeroline: false};
+    const phaseLines = folded ? [0, 1].map(x => ({
+        type: 'line', xref: 'x', yref: 'y domain', x0: x, x1: x, y0: 0, y1: 1,
+        line: {color: 'gray', width: 1, dash: 'dash'}
+    })) : [];
+
+    // Against phase when folded - wrapped over the range the light curve
+    // shows, with its median in bins of phase - and against time otherwise
+    let left;
+    if (folded) {
+        const phases = t.map(mjd => foldPhase(mjd, phasePeriod, phaseEpoch));
+        const x = [], y = [], when = [];
+        phases.forEach((p, i) => [-1, 0, 1].forEach(shift => {
+            const q = p + shift;
+            if (q >= -0.6 && q <= 1.6) {
+                x.push(q);
+                y.push(colour[i]);
+                when.push(t[i]);
+            }
+        }));
+        left = [{
+            x: x, y: y, mode: 'markers', type: 'scatter',
+            marker: {size: 5, color: '#4c78a8'}, name: name, showlegend: false,
+            customdata: when, hovertemplate: 'phase %{x:.3f}<br>MJD %{customdata:.2f}<br>' + name + ' %{y:.3f}<extra></extra>'
+        }];
+
+        const bins = Array.from({length: document.getElementById('binned-check').checked ? COLOUR_PHASE_BINS : 0}, () => []);
+        phases.forEach((p, i) => bins.length && bins[Math.min(COLOUR_PHASE_BINS - 1, Math.floor(p * COLOUR_PHASE_BINS))].push(colour[i]));
+        const mx = [], my = [];
+        [-1, 0, 1].forEach(shift => bins.forEach((b, k) => {
+            const q = (k + 0.5) / COLOUR_PHASE_BINS + shift;
+            if (q < -0.6 || q > 1.6) return;
+            mx.push(q);
+            my.push(b.length ? median(b) : null);
+        }));
+        if (mx.length) left.push({
+            x: mx, y: my, mode: 'lines', type: 'scatter', line: {color: '#d62728', width: 2.5},
+            name: 'binned median', showlegend: false,
+            hovertemplate: 'phase %{x:.3f}<br>binned median %{y:.3f}<extra></extra>'
+        });
+    } else {
+        left = [{
+            x: timeAxisMode === 'mjd' ? t : datesOf, y: colour, mode: 'markers', type: 'scatter',
+            marker: {size: 5, color: '#4c78a8'}, name: name, showlegend: false,
+            customdata: t, hovertemplate: 'MJD %{customdata:.2f}<br>' + name + ' %{y:.3f}<extra></extra>'
+        }];
+    }
+
+    const traces = left;
+    const fitLine = diagram && document.getElementById('colour-fit').checked;
+    if (diagram && document.getElementById('colour-connect').checked && dx.length > 1) {
+        // Under the points, faint, in the order of time - the bins need not
+        // come in it
+        const order = dt.map((_, i) => i).sort((i, j) => dt[i] - dt[j]);
+        traces.push({
+            x: order.map(i => dx[i]), y: order.map(i => dy[i]), xaxis: 'x2', yaxis: 'y2',
+            mode: 'lines', type: 'scatter', line: {color: 'rgba(128, 128, 128, 0.35)', width: 0.75},
+            hoverinfo: 'skip', showlegend: false
+        });
+    }
+    if (diagram) {
+        traces.push({
+            x: dx, y: dy, xaxis: 'x2', yaxis: 'y2', mode: 'markers', type: 'scatter',
+            marker: {size: 5, color: dt, colorscale: 'Viridis', showscale: true,
+                     colorbar: {title: {text: 'MJD'}, thickness: 10, x: 1.02}},
+            showlegend: false, customdata: dt,
+            hovertemplate: name + ' %{x:.3f}<br>' + yname + ' %{y:.3f}<br>MJD %{customdata:.2f}<extra></extra>'
+        });
+        if (fitLine && isFinite(slope)) {
+            const lo = Math.min(...dx), hi = Math.max(...dx);
+            traces.push({
+                x: [lo, hi], y: [mm + slope * (lo - mc), mm + slope * (hi - mc)], xaxis: 'x2', yaxis: 'y2',
+                mode: 'lines', type: 'scatter', line: {color: '#d62728', width: 1.5}, hoverinfo: 'skip', showlegend: false
+            });
+        }
+    }
+
+    document.getElementById('colour-box').style.display = 'block';
+    Plotly.newPlot('colour-container', traces, {
+        title: {text: `${name} from ${n} bins of ${width} d: from ${range[0].toFixed(3)} to ${range[1].toFixed(3)} (5-95%)`
+                    + (diagram ? (fitLine && isFinite(slope)
+                        ? `; d(${yname}) / d(${name}) = ${slope.toFixed(2)} ± ${slopeErr.toFixed(2)} from ${nd} bins`
+                        : nd ? `; ${nd} bins in the diagram` : `; no bin with all of ${yname} too`) : ''),
+                font: {size: 12}},
+        xaxis: Object.assign({}, plain, {domain: diagram ? [0, 0.55] : [0, 1],
+            title: {text: folded ? (foldModel ? 'Phase (period change model)' : `Phase (P = ${phasePeriod.toFixed(6)} d)`)
+                                 : (timeAxisMode === 'mjd' ? 'MJD' : 'Date')},
+            range: folded ? [-0.6, 1.6] : undefined}),
+        yaxis: Object.assign({}, plain, {title: {text: name}}),
+        // Said in the diagram itself when no bin has all of its sources - ATLAS,
+        // say, never takes c and o on the same night
+        annotations: diagram && !nd ? [{
+            xref: 'x2 domain', yref: 'y2 domain', x: 0.5, y: 0.5, showarrow: false,
+            text: `No bin of ${width} d has all of<br>${na}, ${nb}<br>and ${yname}`,
+            font: {color: theme.font.color}
+        }] : [],
+        // Brighter up, and bluer up as the two-colour diagrams of UBV have it
+        xaxis2: Object.assign({}, axis, {domain: [0.65, 0.95], anchor: 'y2', title: {text: name}, visible: diagram}),
+        yaxis2: Object.assign({}, axis, {anchor: 'x2', title: {text: yname}, autorange: 'reversed', visible: diagram}),
+        shapes: phaseLines,
+        hovermode: 'closest',
+        autosize: true,
+        // At full width, margins that put its plot area under the light
+        // curve's, pixel for pixel - the box it sits in is indented by its
+        // padding - so that a moment in one is straight below it in the other
+        margin: Object.assign({t: 30, b: 50}, diagram ? {l: 60, r: 30} : alignedMargins()),
+        font: {size: 10, color: theme.font.color},
+        paper_bgcolor: theme.paper_bgcolor,
+        plot_bgcolor: theme.plot_bgcolor
+    }, {responsive: true, displaylogo: false});
+
+    colourPlotted = true;
+    syncColourRange();
+}
+
 // Toggle series visibility
 function toggleSeries(index) {
     const checkbox = document.getElementById(`toggle-${index}`);
@@ -2837,6 +3494,9 @@ function updateColor(index) {
 
 // Reset all offsets, marker sizes, colors, and max error
 function resetOffsets() {
+    offsetsBeforeAlign = null;
+    document.getElementById('align-reset').disabled = true;
+
     lightcurveData.forEach((series, index) => {
         seriesState[index].offset = 0;
         seriesState[index].markerSize = 4;
@@ -3123,6 +3783,10 @@ function switchMode(newMode) {
     dropPeriodModel();
     detrendedApplied = false;
 
+    // The colour was of the other mode's data, and there is none in flux
+    colourPlotted = false;
+    document.getElementById('colour-box').style.display = 'none';
+
     // Reload data for new mode
     loadLightcurveData();
 }
@@ -3155,6 +3819,7 @@ function loadLightcurveData() {
     document.getElementById('error-message').style.display = 'none';
     document.getElementById('control-panel').style.display = 'none';
     document.getElementById('phase-panel').style.display = 'none';
+    document.getElementById('colour-panel').style.display = 'none';
 
     // The light curve of the other mode goes as soon as the new one is asked
     // for, rather than staying in sight, and seemingly current, for as long
@@ -3214,6 +3879,10 @@ function loadLightcurveData() {
                 // Show controls, plot container, and initialize
                 document.getElementById('control-panel').style.display = 'block';
                 document.getElementById('phase-panel').style.display = 'block';
+                // A colour is a difference of magnitudes: in flux mode there is none
+                document.getElementById('colour-panel').style.display = isMagnitudeMode ? 'block' : 'none';
+                if (isMagnitudeMode)
+                    fillColourChoices();
                 document.getElementById('plotly-box').style.display = 'block';
 
                 // Restore period and epoch from URL parameters if present
@@ -3286,6 +3955,7 @@ document.addEventListener('DOMContentLoaded', function() {
     plotlyResizable('periodogram-container');
     plotlyResizable('oc-container');
     plotlyResizable('dyn-container');
+    plotlyResizable('colour-container');
 });
 </script>
 
