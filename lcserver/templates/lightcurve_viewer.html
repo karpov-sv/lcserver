@@ -652,8 +652,8 @@
       </div>
       <div class="col-auto">
         <div class="form-check">
-          <input class="form-check-input" type="checkbox" id="pc-fold" onchange="onModelFoldToggle()" disabled
-                 title="Fold with the phase of the fitted model rather than with a constant period">
+          <input class="form-check-input" type="checkbox" id="pc-fold" onchange="onModelFoldToggle()" disabled checked
+                 title="Fold with the phase of the fitted model rather than with a constant period - once a period change has been fitted">
           <label class="form-check-label small" for="pc-fold">Fold with model</label>
         </div>
       </div>
@@ -1616,9 +1616,18 @@ function dateRangeShapes(useMJD) {
     if (range.min === null && range.max === null)
         return [];
 
-    // An open end reaches past anything there is to plot
-    const lo = range.min === null ? 0 : range.min;
-    const hi = range.max === null ? 100000 : range.max;
+    // An open end reaches just past the data, and no further - the axis is
+    // scaled to take the shape in, and MJD 0 is the year 1858
+    let first = Infinity, last = -Infinity;
+    lightcurveData.forEach(series => series.mjd.forEach(t => {
+        if (t < first) first = t;
+        if (t > last) last = t;
+    }));
+    const pad = isFinite(first) ? 0.01 * (last - first) : 0;
+    const lo = range.min === null ? first - pad : range.min;
+    const hi = range.max === null ? last + pad : range.max;
+    if (!isFinite(lo) || !isFinite(hi))
+        return [];
     const x = useMJD ? (v) => v : mjdToDate;
 
     return [{
@@ -2323,6 +2332,9 @@ function redrawFolded() {
         plotColour(true);
 }
 
+// The checkbox keeps the choice made with it, model or not: a fit folds with
+// the model only when it is ticked, and with none to fold with it is only
+// disabled, still showing what the next fit will do
 function onModelFoldToggle() {
     foldModel = (document.getElementById('pc-fold').checked && periodModel) ? periodModel : null;
     redrawFolded();
@@ -2332,9 +2344,7 @@ function onModelFoldToggle() {
 // period. The O-C diagram goes with it, as it was measured against that
 // ephemeris and another makes it a different diagram rather than an old one.
 function dropPeriodModel() {
-    const check = document.getElementById('pc-fold');
-    check.checked = false;
-    check.disabled = true;
+    document.getElementById('pc-fold').disabled = true;
     foldModel = null;
     periodModel = null;
 
@@ -2452,8 +2462,7 @@ function fitPeriodChange() {
 
         const check = document.getElementById('pc-fold');
         check.disabled = false;
-        check.checked = true;
-        foldModel = data;
+        foldModel = check.checked ? data : null;
 
         const perYear = 365.25;
         const minima = data.timing === 'minima';
@@ -2581,9 +2590,12 @@ function plotOC(data) {
     // What the model leaves of each O-C point, which the trend of the O-C
     // itself would hide - days of it against errors of hundredths. Not the
     // residuals of a fit to the points when the model was fitted to the
-    // light curve, so they need not average to zero exactly then.
-    const residual = oc.mjd.map((t, i) => oc.oc[i] - modelOffset(data, t) * data.period);
-    const resUpper = curve.offset_err.map(e => e * data.period);
+    // light curve, so they need not average to zero exactly then. In cycles,
+    // as how far a point drifts from the model is a part of a cycle - and a
+    // quarter of one puts its count in doubt - whatever the period
+    const residual = oc.mjd.map((t, i) => oc.oc[i] / data.period - modelOffset(data, t));
+    const residualErr = oc.oc_err.map(e => e / data.period);
+    const resUpper = curve.offset_err.slice();
     const resLower = resUpper.map(e => -e);
 
     // The bands answer to the one legend entry
@@ -2615,9 +2627,10 @@ function plotOC(data) {
             if (residuals) {
                 Object.assign(trace, {
                     y: pick(residual), yaxis: 'y3',
-                    customdata: idx.map(i => [oc.oc_err[i], residual[i] / data.period]),
-                    hovertemplate: 'MJD %{x:.4f}<br>O−C − model %{y:.5f} ± %{customdata[0]:.5f} d'
-                                 + '<br>= %{customdata[1]:.4f} cycles<extra></extra>'
+                    error_y: {type: 'data', array: pick(residualErr), visible: true, thickness: 1},
+                    customdata: idx.map(i => [residualErr[i], residual[i] * data.period, oc.oc_err[i]]),
+                    hovertemplate: 'MJD %{x:.4f}<br>O−C − model %{y:.4f} ± %{customdata[0]:.4f} cycles'
+                                 + '<br>= %{customdata[1]:.5f} ± %{customdata[2]:.5f} d<extra></extra>'
                 });
             } else if (kind === 'window') {
                 Object.assign(trace, {
@@ -2668,7 +2681,7 @@ function plotOC(data) {
         // a window is in doubt - off the plot unless some point gets near
         x: [curve.mjd[0], curve.mjd[curve.mjd.length - 1], null,
             curve.mjd[0], curve.mjd[curve.mjd.length - 1]],
-        y: [data.period / 4, data.period / 4, null, -data.period / 4, -data.period / 4],
+        y: [0.25, 0.25, null, -0.25, -0.25],
         mode: 'lines', type: 'scatter', yaxis: 'y3', name: '± ¼ cycle',
         line: {color: theme.font.color, width: 1, dash: 'dot'}, hoverinfo: 'skip'
     }, ...pointTraces(true), Object.assign({}, band, {
@@ -2719,15 +2732,15 @@ function plotOC(data) {
     // The residuals and their errors decide the range, not the band, which
     // widens without end across a gap with no data - those of the points
     // fitted, so that a minimum left out does not squash the rest
-    const reach = Math.max(1e-4 * data.period,
-                           ...residual.map((r, i) => oc.used[i] ? Math.abs(r) + oc.oc_err[i] : 0));
+    const reach = Math.max(1e-4,
+                           ...residual.map((r, i) => oc.used[i] ? Math.abs(r) + residualErr[i] : 0));
 
     Plotly.newPlot('oc-container', traces, {
         title: {text: `O−C against P = ${data.period.toFixed(6)} d, T₀ = ${data.epoch.toFixed(4)} MJD`
                     + ` - ${data.model}`, font: {size: 12}},
         xaxis: Object.assign({}, axis, {title: {text: 'MJD'}, anchor: 'y2'}),
         yaxis: Object.assign({}, axis, {title: {text: 'O − C, days'}, domain: [0.56, 1]}),
-        yaxis3: Object.assign({}, axis, {title: {text: 'Residual, days'}, domain: [0.31, 0.5],
+        yaxis3: Object.assign({}, axis, {title: {text: 'Residual, cycles'}, domain: [0.31, 0.5],
                                          range: [-1.15 * reach, 1.15 * reach]}),
         yaxis2: Object.assign({}, axis, {title: {text: 'Period, days'}, domain: [0, 0.25],
                                          range: [lo - pad, hi + pad]}),
