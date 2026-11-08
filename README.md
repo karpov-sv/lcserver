@@ -169,6 +169,17 @@ out to the century between a plate and ZTF. A damped random walk is fitted
 to it for a timescale and an amplitude, and a timescale longer than a tenth of
 the span is reported as no more than a lower limit.
 
+The colour of the star comes from any two sources measured close enough in
+time - matched epoch by epoch, or interpolated across a gap for surveys that
+never take two bands on one night - with errors carried through, and with a
+diagram against a magnitude or a second colour. The line through the diagram
+is fitted with the errors of both axes and their correlation, and with the
+scatter about it beyond them. It is drawn against the reddening by dust and a
+blackbody heating and cooling, each put through the passbands of the sources,
+so that its slope can be read as one or the other. Folded, the colour is also
+the difference of each source's harmonic model, which needs no simultaneous
+measurements at all.
+
 ## Fitting a photosphere
 
 From the spectral viewer, the distribution the `sed` step built can be fitted
@@ -457,6 +468,7 @@ lcserver/
 ├── processing/     one module per survey, each registering itself
 │   ├── periods.py  the period search, prewhitening and the period change fit
 │   ├── variability.py  variability indices and the structure function
+│   ├── colours.py  the passbands of the light curves, and blackbody and reddening through them
 │   ├── sedfit.py   the photosphere fit - grids, priors, sampling, figures
 │   └── gridstats.py  what a grid says as colours and magnitudes, for the page
 ├── ingest/         turning somebody else's data into ours, once and by hand

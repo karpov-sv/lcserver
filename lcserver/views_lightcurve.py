@@ -57,6 +57,7 @@ from .processing.periods import (
     rotate_harmonics,
 )
 from .processing.variability import fit_drw, structure_function, variability_indices
+from .processing.colours import colour_references as colour_references_for
 
 
 def json_safe(values):
@@ -1843,6 +1844,35 @@ def variability(request, id):
         traceback.print_exc()
         return JsonResponse({
             'error': 'Unexpected error computing the variability',
+            'details': str(e),
+            'traceback': traceback.format_exc()
+        }, status=500)
+
+
+@login_required
+@require_http_methods(["POST"])
+def colour_references(request, id):
+    """A blackbody's magnitudes and the extinction per A_V in the bands of
+    the series a colour diagram is drawn from - see processing.colours."""
+    target = models.Target.objects.get(id=id)
+
+    if not target.can_view(request.user):
+        return JsonResponse({'error': 'Forbidden'}, status=403)
+
+    try:
+        data = json.loads(request.body)
+        series = [(str(s.get('source_id')), str(s.get('filter')), s.get('kind'))
+                  for s in data.get('series', [])]
+        return JsonResponse(_finite(colour_references_for(series)))
+
+    except json.JSONDecodeError as e:
+        return JsonResponse({'error': 'Invalid JSON in request body', 'details': str(e)}, status=400)
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return JsonResponse({
+            'error': 'Unexpected error computing the colour references',
             'details': str(e),
             'traceback': traceback.format_exc()
         }, status=500)

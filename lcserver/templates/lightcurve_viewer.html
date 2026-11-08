@@ -255,9 +255,10 @@
       <i class="fa fa-caret-down"></i> Colour
     </span>
     <span class="span-help-popover help-secondary float-end" title="Colour">
-      <p>The colour of the star as the difference of two sources measured at the same time - their medians in every time bin both have points in, <b>Time bin</b> days long. The bin has to be shorter than the time the star changes on, or its change reads as colour. The magnitudes are taken as measured, without the offsets of the display, and as filtered by the maximum errors.</p>
-      <p>The colour is drawn against time under the light curve, and follows it as it is zoomed with <b>Same range</b>; when the light curve is folded, it is folded too, with the binned median if that is shown above.</p>
-      <p><b>Diagram</b> adds the colour against a magnitude - or, with a second colour chosen, against that colour. <b>Connect in time</b> joins its points in the order they were taken, to follow how the star moved through it; <b>Fit line</b> draws the straight line through them, whose slope is in the title. Along that line the star moved, and whether it is the reddening of dust or a change of temperature is in the value of the slope.</p>
+      <p>The colour of the star as the difference of two sources measured at the same time. Epochs are the points of the sparsest of the sources, those <b>within</b> so many days of one another taken as one; every other source is the weighted mean of its points within as many days of an epoch, each point used once. The window has to be shorter than the time the star changes on, or its change reads as colour. Where a source has nothing within it, it may be <b>interpolated</b> between its points either side, if they are no more than so many days apart - the only way to a colour from ATLAS, which never takes c and o on the same night; those epochs are hollow. The magnitudes are taken as measured, without the offsets of the display, and as filtered by the maximum errors; the error bars are theirs.</p>
+      <p>The colour is drawn against time under the light curve, and follows it as it is zoomed with <b>Same range</b>; when the light curve is folded, it is folded too, with the binned median if that is shown above, and with the <b>harmonic model</b> - each source fitted on its own with as many harmonics of the phase as it supports, the thin line being the difference of the two. It needs no measurements taken together, so it gives a colour curve from sources that never are.</p>
+      <p><b>Diagram</b> adds the colour against a magnitude - or, with a second colour chosen, against that colour - coloured by date, or by phase when folded. <b>Connect in time</b> joins its points in the order they were taken, to follow how the star moved through it. <b>Fit line</b> draws the straight line through them, fitted with the errors of both axes and how they are correlated - a band in both the colour and the magnitude moves both at once - and with the scatter about the line beyond the errors fitted too; points more than four sigma off are left out, and crossed. Its slope and uncertainty, and that scatter, are in the title.</p>
+      <p><b>References</b> draw what the slope is to be read against: the reddening by dust (Fitzpatrick 1999, R<sub>V</sub> = 3.1) as an arrow from the median point, and a blackbody - against a magnitude, one of fixed size heating and cooling through the median point; against a colour, the blackbodies themselves - each put through the passband of each source. The slopes of both are in the title, for the temperature of a blackbody of the star's median colour. Bands without a standard curve of their own - ATLAS, taken as the top hats Tonry et al. (2018) give, DASCH plates as Johnson B - are said to be approximate; unfiltered and narrow-band sources have no references.</p>
       <p>Only magnitudes have a colour, so the panel is hidden in flux mode.</p>
     </span>
   </h5>
@@ -272,12 +273,18 @@
         <select class="form-select form-select-sm" id="colour-b" onchange="replotColour()"></select>
       </div>
       <div class="col-auto">
-        <label for="colour-bin" class="col-form-label col-form-label-sm">Time bin:</label>
+        <label for="colour-bin" class="col-form-label col-form-label-sm">Within:</label>
       </div>
       <div class="col-auto">
         <input type="number" class="form-control form-control-sm" id="colour-bin" style="width: 80px;"
                step="0.01" min="0.001" value="0.1" onchange="replotColour()"
-               title="Days within which the sources are taken as measured together. Shorter than the timescale the star varies on, or its variation reads as colour.">
+               title="Days within which the sources are taken as measured together - each point of the others matched to the nearest point of the sparsest one. Shorter than the timescale the star varies on, or its variation reads as colour.">
+      </div>
+      <div class="col-auto"><small class="text-muted">d, interpolate over</small></div>
+      <div class="col-auto">
+        <input type="number" class="form-control form-control-sm" id="colour-interp" style="width: 70px;"
+               step="0.5" min="0" placeholder="off" onchange="replotColour()"
+               title="Where a source has nothing within the window, its value interpolated between its points either side, when they are no more than this many days apart - for sources never measured on the same night, as ATLAS c and o. Interpolated colours are drawn hollow.">
       </div>
       <div class="col-auto"><small class="text-muted">d</small></div>
       <div class="col-auto">
@@ -299,6 +306,13 @@
           <label class="form-check-label small" for="colour-diagram">Diagram</label>
         </div>
       </div>
+      <div class="col-auto ms-2">
+        <div class="form-check">
+          <input class="form-check-input" type="checkbox" id="colour-model" checked onchange="replotColour()"
+                 title="When folded, the colour of the harmonic models of the two sources, each fitted on its own - which needs no measurements taken together">
+          <label class="form-check-label small" for="colour-model">Harmonic model</label>
+        </div>
+      </div>
       <div class="col-auto" id="colour-y-group" style="display: none;">
         <div class="d-flex align-items-center gap-2">
           <small class="text-muted">against</small>
@@ -316,6 +330,11 @@
                    title="The straight line fitted to the diagram, and its slope in the title">
             <label class="form-check-label small" for="colour-fit">Fit line</label>
           </div>
+          <div class="form-check ms-2 mb-0 text-nowrap">
+            <input class="form-check-input" type="checkbox" id="colour-refs" checked onchange="replotColour()"
+                   title="A blackbody heating and cooling, and the direction of reddening by dust, through the bands of the diagram">
+            <label class="form-check-label small" for="colour-refs">References</label>
+          </div>
         </div>
       </div>
     </div>
@@ -327,74 +346,14 @@
   </div>
 </div>
 
-<!-- How much the star varies and on what timescales, whether or not it has
-     a period - per survey and filter, of the points the period tools see -->
-<div class="control-panel mt-3" id="var-panel" style="display: none;">
-  <h5 class="mb-0">
-    <span class="panel-toggle collapsed" data-bs-toggle="collapse" data-bs-target="#var-section"
-      role="button" aria-expanded="false" aria-controls="var-section"
-      title="Click to show or hide">
-      <i class="fa fa-caret-down"></i> Variability
-    </span>
-    <span class="span-help-popover help-secondary float-end" title="Variability">
-      <p>Indices of the variation of every survey in one filter, and its structure function - for a star with no period as much as for one with. Of the points the period tools see: the visible sources, error filters and <b>Dates</b>, with the trend taken off if <b>Remove trend</b> is ticked and any removed periods taken off too.</p>
-      <p><b>χ²ᵣ</b> is the reduced chi-squared about the weighted mean, and <b>log p</b> the chance of one as large from the errors alone. <b>RMS</b> is the scatter with the errors taken off in quadrature - in magnitudes, or as a fraction of the mean in flux; when it is not two sigma clear of none, an upper limit. <b>η</b>, von Neumann's ratio, is about 2 for noise and near 0 for a variation slow against the sampling; Stetson's <b>J</b> is about 0 for noise and positive when points close in time vary together, <b>K</b> about 0.80 for a Gaussian and lower for a star that spends its time at the extremes - an eclipsing binary, a dipper. <b>Skew</b> is positive, in magnitudes, for dips and negative for outbursts. <b>5–95%</b> is the range of the middle 90% of points, and <b>slope</b> the linear trend per year.</p>
-      <p>The <b>structure function</b> is the scatter of the differences of pairs of points against the time between them, robustly from their interquartile range and with the noise of each pair taken off. It rises with the lag for as long as the star keeps varying more, and levels off at the timescale beyond which it varies no more; a period dips it at its multiples. Pairs are taken within each series only, each calibrated or normalized on its own.</p>
-      <p>A <b>hollow triangle</b> is a lag at which the star cannot be told to vary at all: the differences of its pairs are no larger than their errors alone would make them. What is left once the noise is taken off is then zero within its uncertainty, and the triangle stands at the most it can be - two sigma above - with the star's real variation at that lag somewhere below it. They gather at the shortest lags, where a star changes less within a night than its photometry can see.</p>
-      <p>The line, unless <b>Random walk</b> is unticked, is a damped random walk fitted to it, SF∞ √(1 − e<sup>−Δt/τ</sup>), with its timescale <b>τ</b> and amplitude <b>SF∞</b> - √2 times the rms of the walk. A τ longer than a tenth of the span is no more than a lower limit, marked ≳.</p>
-      <p><b>Pairs across sources</b> adds a structure function of all the visible sources together, at the offsets they are drawn at - out to the lags between a plate archive and a modern survey, which is as good as the offsets that bring them together.</p>
-    </span>
-  </h5>
-
-  <div class="collapse" id="var-section">
-    <div class="row g-2 align-items-center mt-1">
-      <div class="col-auto">
-        <div class="form-check">
-          <input class="form-check-input" type="checkbox" id="var-across"
-                 title="A structure function of all the visible sources together, with pairs between them, at the offsets they are drawn at">
-          <label class="form-check-label small" for="var-across">Pairs across sources</label>
-        </div>
-      </div>
-      <div class="col-auto">
-        <div class="form-check">
-          <input class="form-check-input" type="checkbox" id="var-drw" checked onchange="toggleDrwLines()"
-                 title="The damped random walk fitted to each structure function, as a line - untick to see the points alone">
-          <label class="form-check-label small" for="var-drw">Random walk</label>
-        </div>
-      </div>
-      <div class="col-auto">
-        <button class="btn btn-sm btn-primary" onclick="computeVariability()" id="var-btn">
-          <i class="fa fa-line-chart"></i> Compute
-        </button>
-      </div>
-      <div class="col-auto">
-        <small class="text-muted" id="var-summary"></small>
-      </div>
-    </div>
-
-    <div class="table-responsive mt-2" id="var-table-box" style="display: none;">
-      <table class="table table-sm small mb-0">
-        <thead><tr>
-          <th>Survey</th><th class="text-end">N</th><th class="text-end">χ²ᵣ</th><th class="text-end">log p</th>
-          <th class="text-end">RMS</th><th class="text-end">η</th><th class="text-end">J</th><th class="text-end">K</th>
-          <th class="text-end">Skew</th><th class="text-end">5–95%</th><th class="text-end">Slope /yr</th>
-          <th class="text-end">τ, d</th><th class="text-end">SF∞</th>
-        </tr></thead>
-        <tbody id="var-table"></tbody>
-      </table>
-    </div>
-
-    <div id="var-box" class="plotly-resizable mt-2" style="height: 420px; display: none;">
-      <div id="var-container" class="plotly-chart"></div>
-      <div class="plot-resize-handle" role="separator" title="Drag to resize the plot"></div>
-    </div>
-  </div>
-</div>
-
 <!-- Phase Folding Panel -->
 <div class="control-panel mt-3" id="phase-panel" style="display: none;">
-  <h5 class="mb-3">
-    Phase Folding
+  <h5 class="mb-0">
+    <span class="panel-toggle" data-bs-toggle="collapse" data-bs-target="#phase-section"
+      role="button" aria-expanded="true" aria-controls="phase-section"
+      title="Click to show or hide">
+      <i class="fa fa-caret-down"></i> Phase Folding
+    </span>
     <span class="span-help-popover help-secondary float-end" title="Phase folding">
       <p>A period and T₀ fold the light curve, drawn from phase -0.6 to 1.6 so that a cycle is seen whole either side; 0 turns folding off. <b>×2</b> and <b>÷2</b> try the period's double and half - an eclipsing binary found at half its period, or a double wave at twice. <b>Binned median</b> draws each series' median in bins of phase, its shape at the period folded at.</p>
       <p><b>Fit Period</b> searches the visible sources, as filtered by their maximum errors and limited to the <b>Dates</b>, over the <b>search range</b>, each series about its own median. Lomb-Scargle fits a sinusoid, and with more harmonics a light curve of another shape - a pulsator's sawtooth, a contact binary's double wave; box least squares looks for a dip once a cycle, an eclipse or a transit. <b>Remove trend</b> fits each series a smooth curve with a knot every <i>window</i> days alongside, so that a short period can be found underneath a long variation; the window must be several times the period sought. No knots are closer than the visits allow, and isolated points - single Gaia or Pan-STARRS epochs - share one slow trend rather than each taking its own level, and with it all of its variation. The light curve is then shown with the trend that was fitted along with the period.</p>
@@ -404,7 +363,8 @@
     </span>
   </h5>
 
-  <div class="row g-2 align-items-center">
+  <div class="collapse show" id="phase-section">
+  <div class="row g-2 align-items-center mt-2">
     <div class="col-auto">
       <label for="period-input" class="col-form-label col-form-label-sm">Period (days):</label>
     </div>
@@ -758,6 +718,71 @@
       <pre id="pc-log-text" class="small border rounded p-2 mb-0"></pre>
     </div>
   </div>
+    </div>
+  </div>
+  </div>
+</div>
+
+<!-- How much the star varies and on what timescales, whether or not it has
+     a period - per survey and filter, of the points the period tools see -->
+<div class="control-panel mt-3" id="var-panel" style="display: none;">
+  <h5 class="mb-0">
+    <span class="panel-toggle collapsed" data-bs-toggle="collapse" data-bs-target="#var-section"
+      role="button" aria-expanded="false" aria-controls="var-section"
+      title="Click to show or hide">
+      <i class="fa fa-caret-down"></i> Variability
+    </span>
+    <span class="span-help-popover help-secondary float-end" title="Variability">
+      <p>Indices of the variation of every survey in one filter, and its structure function - for a star with no period as much as for one with. Of the points the period tools see: the visible sources, error filters and <b>Dates</b>, with the trend taken off if <b>Remove trend</b> is ticked and any removed periods taken off too.</p>
+      <p><b>χ²ᵣ</b> is the reduced chi-squared about the weighted mean, and <b>log p</b> the chance of one as large from the errors alone. <b>RMS</b> is the scatter with the errors taken off in quadrature - in magnitudes, or as a fraction of the mean in flux; when it is not two sigma clear of none, an upper limit. <b>η</b>, von Neumann's ratio, is about 2 for noise and near 0 for a variation slow against the sampling; Stetson's <b>J</b> is about 0 for noise and positive when points close in time vary together, <b>K</b> about 0.80 for a Gaussian and lower for a star that spends its time at the extremes - an eclipsing binary, a dipper. <b>Skew</b> is positive, in magnitudes, for dips and negative for outbursts. <b>5–95%</b> is the range of the middle 90% of points, and <b>slope</b> the linear trend per year.</p>
+      <p>The <b>structure function</b> is the scatter of the differences of pairs of points against the time between them, robustly from their interquartile range and with the noise of each pair taken off. It rises with the lag for as long as the star keeps varying more, and levels off at the timescale beyond which it varies no more; a period dips it at its multiples. Pairs are taken within each series only, each calibrated or normalized on its own.</p>
+      <p>A <b>hollow triangle</b> is a lag at which the star cannot be told to vary at all: the differences of its pairs are no larger than their errors alone would make them. What is left once the noise is taken off is then zero within its uncertainty, and the triangle stands at the most it can be - two sigma above - with the star's real variation at that lag somewhere below it. They gather at the shortest lags, where a star changes less within a night than its photometry can see.</p>
+      <p>The line, unless <b>Random walk</b> is unticked, is a damped random walk fitted to it, SF∞ √(1 − e<sup>−Δt/τ</sup>), with its timescale <b>τ</b> and amplitude <b>SF∞</b> - √2 times the rms of the walk. A τ longer than a tenth of the span is no more than a lower limit, marked ≳.</p>
+      <p><b>Pairs across sources</b> adds a structure function of all the visible sources together, at the offsets they are drawn at - out to the lags between a plate archive and a modern survey, which is as good as the offsets that bring them together.</p>
+    </span>
+  </h5>
+
+  <div class="collapse" id="var-section">
+    <div class="row g-2 align-items-center mt-1">
+      <div class="col-auto">
+        <div class="form-check">
+          <input class="form-check-input" type="checkbox" id="var-across"
+                 title="A structure function of all the visible sources together, with pairs between them, at the offsets they are drawn at">
+          <label class="form-check-label small" for="var-across">Pairs across sources</label>
+        </div>
+      </div>
+      <div class="col-auto">
+        <div class="form-check">
+          <input class="form-check-input" type="checkbox" id="var-drw" checked onchange="toggleDrwLines()"
+                 title="The damped random walk fitted to each structure function, as a line - untick to see the points alone">
+          <label class="form-check-label small" for="var-drw">Random walk</label>
+        </div>
+      </div>
+      <div class="col-auto">
+        <button class="btn btn-sm btn-primary" onclick="computeVariability()" id="var-btn">
+          <i class="fa fa-line-chart"></i> Compute
+        </button>
+      </div>
+      <div class="col-auto">
+        <small class="text-muted" id="var-summary"></small>
+      </div>
+    </div>
+
+    <div class="table-responsive mt-2" id="var-table-box" style="display: none;">
+      <table class="table table-sm small mb-0">
+        <thead><tr>
+          <th>Survey</th><th class="text-end">N</th><th class="text-end">χ²ᵣ</th><th class="text-end">log p</th>
+          <th class="text-end">RMS</th><th class="text-end">η</th><th class="text-end">J</th><th class="text-end">K</th>
+          <th class="text-end">Skew</th><th class="text-end">5–95%</th><th class="text-end">Slope /yr</th>
+          <th class="text-end">τ, d</th><th class="text-end">SF∞</th>
+        </tr></thead>
+        <tbody id="var-table"></tbody>
+      </table>
+    </div>
+
+    <div id="var-box" class="plotly-resizable mt-2" style="height: 420px; display: none;">
+      <div id="var-container" class="plotly-chart"></div>
+      <div class="plot-resize-handle" role="separator" title="Drag to resize the plot"></div>
     </div>
   </div>
 </div>
@@ -3705,15 +3730,365 @@ let colourPlotted = false;
 // Bins of phase the median of a folded colour is drawn in
 const COLOUR_PHASE_BINS = 20;
 
+// A source's points as the plot filters them, in order of time - within the
+// dates when folded - with their errors, null where none is quoted
+function colourPoints(i, dates, folded) {
+    const series = lightcurveData[i], state = seriesState[i];
+    const filtered = state.maxError !== null;
+    const order = [];
+    for (let k = 0; k < series.mjd.length; k++) {
+        const y = series.mag[k];
+        if (y === null || !isFinite(y)) continue;
+        if (filtered && !withinMaxError(series.magerr[k], state.maxError)) continue;
+        if (folded && !inDateRange(series.mjd[k], dates)) continue;
+        order.push(k);
+    }
+    order.sort((a, b) => series.mjd[a] - series.mjd[b]);
+    return {
+        t: order.map(k => series.mjd[k]),
+        y: order.map(k => series.mag[k]),
+        e: order.map(k => series.magerr[k] === null || !(series.magerr[k] > 0) ? null : series.magerr[k])
+    };
+}
+
+// The last index of sorted `t` at or before `x`, or -1
+function lastBefore(t, x) {
+    let lo = -1, hi = t.length;
+    while (hi - lo > 1) {
+        const mid = (lo + hi) >> 1;
+        if (t[mid] <= x) lo = mid; else hi = mid;
+    }
+    return lo;
+}
+
+// Epochs at which all of `sets` are measured together. They are taken from
+// the source with fewest points - its points within `window` days of the
+// first of a run make one epoch - and every other source's points are given
+// to the nearest epoch within `window` of it, each point to one only. A
+// source is then its weighted mean there, or, with nothing within the window
+// but points either side no more than `gap` days apart, interpolated
+// between them - flagged, as the star may not have gone straight from one to
+// the other.
+function matchEpochs(sets, window, gap) {
+    let anchor = 0;
+    sets.forEach((s, i) => { if (s.t.length < sets[anchor].t.length) anchor = i; });
+    const A = sets[anchor];
+
+    const members = [];
+    let run = [];
+    A.t.forEach((t, k) => {
+        if (run.length && t - A.t[run[0]] > window) {
+            members.push(run);
+            run = [];
+        }
+        run.push(k);
+    });
+    if (run.length) members.push(run);
+    const centres = members.map(m => m.reduce((s, k) => s + A.t[k], 0) / m.length);
+
+    const values = sets.map((s, i) => {
+        const groups = centres.map(() => []);
+        if (i === anchor)
+            members.forEach((m, j) => m.forEach(k => groups[j].push(k)));
+        else
+            s.t.forEach((t, k) => {
+                const j = lastBefore(centres, t);
+                const near = [j, j + 1].filter(q => q >= 0 && q < centres.length)
+                    .sort((p, q) => Math.abs(centres[p] - t) - Math.abs(centres[q] - t))[0];
+                if (near !== undefined && Math.abs(centres[near] - t) <= window)
+                    groups[near].push(k);
+            });
+
+        return groups.map((g, j) => {
+            if (g.length) {
+                // Weighted where every point has an error, plain otherwise
+                if (g.every(k => s.e[k] !== null)) {
+                    let sw = 0, swy = 0;
+                    g.forEach(k => { const w = 1 / (s.e[k] * s.e[k]); sw += w; swy += w * s.y[k]; });
+                    return {v: swy / sw, e: 1 / Math.sqrt(sw), interp: false};
+                }
+                return {v: g.reduce((a, k) => a + s.y[k], 0) / g.length, e: null, interp: false};
+            }
+            if (!(gap > 0))
+                return null;
+            const p = lastBefore(s.t, centres[j]), q = p + 1;
+            if (p < 0 || q >= s.t.length || s.t[q] - s.t[p] > gap)
+                return null;
+            const f = (centres[j] - s.t[p]) / (s.t[q] - s.t[p]);
+            const e = s.e[p] === null || s.e[q] === null ? null
+                    : Math.hypot((1 - f) * s.e[p], f * s.e[q]);
+            return {v: (1 - f) * s.y[p] + f * s.y[q], e: e, interp: true};
+        });
+    });
+
+    return {t: centres, values: values};
+}
+
+// A straight line through points with errors in both coordinates, and
+// scatter about it beyond them: the likelihood of each point's distance from
+// the line given its error ellipse - x and y errors with their covariance -
+// widened by an intrinsic scatter across the line, which is fitted too, as a
+// star moving along a line seldom keeps to it within its errors. Points more
+// than COLOUR_FIT_CLIP sigma off are dropped and the fit made again. With no
+// errors at all it is orthogonal regression.
+//
+// The slope is scanned as an angle, so that a vertical line is as findable
+// as a flat one, and its uncertainty is where the profile likelihood falls
+// by a half.
+const COLOUR_FIT_CLIP = 4;
+const COLOUR_FIT_PASSES = 3;
+
+function fitLine(x, y, vx, vy, cxy) {
+    const n = x.length;
+    let used = x.map(() => true);
+    const mean = v => v.reduce((a, b) => a + b, 0) / v.length;
+    const spread = Math.max(1e-6, Math.sqrt(Math.max(
+        mean(x.map(v => (v - mean(x)) ** 2)), mean(y.map(v => (v - mean(y)) ** 2)))));
+
+    // The variance of each point across the line, and the likelihood -
+    // written as plain loops, as it is evaluated some ten thousand times
+    const variance = (i, b, s2) => vy[i] + b * b * vx[i] - 2 * b * cxy[i] + s2 * (1 + b * b);
+    const intercept = (b, keep, s2) => {
+        let sw = 0, swr = 0;
+        for (let i = 0; i < n; i++) {
+            if (!keep[i]) continue;
+            const v = variance(i, b, s2);
+            sw += 1 / v;
+            swr += (y[i] - b * x[i]) / v;
+        }
+        return swr / sw;
+    };
+    const nllAt = (b, keep, s2) => {
+        const a = intercept(b, keep, s2);
+        let nll = 0;
+        for (let i = 0; i < n; i++) {
+            if (!keep[i]) continue;
+            const v = variance(i, b, s2), r = y[i] - a - b * x[i];
+            nll += 0.5 * (r * r / v + Math.log(v));
+        }
+        return nll;
+    };
+
+    // The intrinsic scatter that suits the line best, by golden section in
+    // its logarithm
+    const profile = (theta, keep) => {
+        const b = Math.tan(theta);
+        let lo = Math.log(spread * spread * 1e-8), hi = Math.log(spread * spread * 4);
+        const g = 0.381966;
+        let c = lo + g * (hi - lo), d = hi - g * (hi - lo);
+        let fc = nllAt(b, keep, Math.exp(c)), fd = nllAt(b, keep, Math.exp(d));
+        for (let k = 0; k < 30; k++) {
+            if (fc < fd) { hi = d; d = c; fd = fc; c = lo + g * (hi - lo); fc = nllAt(b, keep, Math.exp(c)); }
+            else { lo = c; c = d; fc = fd; d = hi - g * (hi - lo); fd = nllAt(b, keep, Math.exp(d)); }
+        }
+        const s2 = Math.exp(0.5 * (lo + hi));
+        return {nll: nllAt(b, keep, s2), a: intercept(b, keep, s2), b: b, s2: s2};
+    };
+
+    const LIMIT = Math.PI / 2 - 1e-4;
+    let best = null;
+    for (let pass = 0; pass < COLOUR_FIT_PASSES; pass++) {
+        if (used.filter(Boolean).length < 3)
+            return null;
+
+        // A scan of the angle, then golden section about its best
+        const steps = 90;
+        let k0 = 0, f0 = Infinity;
+        for (let k = 0; k <= steps; k++) {
+            const f = profile(-LIMIT + 2 * LIMIT * k / steps, used).nll;
+            if (f < f0) { f0 = f; k0 = k; }
+        }
+        let lo = -LIMIT + 2 * LIMIT * Math.max(0, k0 - 1) / steps;
+        let hi = -LIMIT + 2 * LIMIT * Math.min(steps, k0 + 1) / steps;
+        for (let k = 0; k < 30; k++) {
+            const c = lo + (hi - lo) / 3, d = hi - (hi - lo) / 3;
+            if (profile(c, used).nll < profile(d, used).nll) hi = d; else lo = c;
+        }
+        const theta = 0.5 * (lo + hi);
+        best = Object.assign(profile(theta, used), {theta: theta});
+
+        const clipped = x.map((_, i) => {
+            const r = y[i] - best.a - best.b * x[i];
+            return Math.abs(r) / Math.sqrt(variance(i, best.b, best.s2)) <= COLOUR_FIT_CLIP;
+        });
+        if (clipped.every((v, i) => v === used[i]))
+            break;
+        used = clipped;
+    }
+
+    // Where the profile rises by a half either side
+    const edge = dir => {
+        let inside = best.theta, step = 1e-3, outside = null;
+        while (outside === null) {
+            const t = best.theta + dir * step;
+            if (Math.abs(t) >= LIMIT) return dir * LIMIT;
+            if (profile(t, used).nll - best.nll > 0.5) outside = t; else { inside = t; step *= 2; }
+        }
+        for (let k = 0; k < 30; k++) {
+            const mid = 0.5 * (inside + outside);
+            if (profile(mid, used).nll - best.nll > 0.5) outside = mid; else inside = mid;
+        }
+        return 0.5 * (inside + outside);
+    };
+    const lo = Math.tan(edge(-1)), hi = Math.tan(edge(1));
+
+    return {a: best.a, b: best.b, lo: lo, hi: hi, err: 0.5 * Math.abs(hi - lo),
+            scatter: Math.sqrt(best.s2), used: used, n: used.filter(Boolean).length};
+}
+
+// Harmonics a folded source's model may have, at most - a detached
+// eclipsing binary needs as many - and the points it needs for each of
+// their coefficients
+const COLOUR_MODEL_MAX_HARMONICS = 20;
+const COLOUR_MODEL_POINTS_PER_TERM = 3;
+
+// Solve the symmetric positive system A x = b in place, by Cholesky; null if
+// it is not positive
+function solveSymmetric(A, b) {
+    const n = b.length;
+    const L = A.map(r => r.slice());
+    for (let j = 0; j < n; j++) {
+        for (let k = 0; k < j; k++) L[j][j] -= L[j][k] * L[j][k];
+        if (!(L[j][j] > 0)) return null;
+        L[j][j] = Math.sqrt(L[j][j]);
+        for (let i = j + 1; i < n; i++) {
+            for (let k = 0; k < j; k++) L[i][j] -= L[i][k] * L[j][k];
+            L[i][j] /= L[j][j];
+        }
+    }
+    const z = b.slice();
+    for (let i = 0; i < n; i++) { for (let k = 0; k < i; k++) z[i] -= L[i][k] * z[k]; z[i] /= L[i][i]; }
+    for (let i = n - 1; i >= 0; i--) { for (let k = i + 1; k < n; k++) z[i] -= L[k][i] * z[k]; z[i] /= L[i][i]; }
+    return z;
+}
+
+function harmonicRow(phase, nh) {
+    const row = [1];
+    for (let h = 1; h <= nh; h++)
+        row.push(Math.cos(2 * Math.PI * h * phase), Math.sin(2 * Math.PI * h * phase));
+    return row;
+}
+
+// Folded sources each as a sum of harmonics of the phase, all with as
+// many as the Bayesian information criterion of them together asks for -
+// the same for all, as a colour of two models with different numbers of
+// harmonics is mostly the difference of how each rings about the eclipse or
+// the peak it cannot follow. Weighted by the errors where every point of a
+// source has one. Null where a source has too few points for one harmonic.
+function harmonicModels(pointsList) {
+    const prepared = pointsList.map(points => {
+        const weighted = points.e.every(e => e !== null);
+        return {
+            n: points.t.length,
+            phases: points.t.map(t => foldPhase(t, phasePeriod, phaseEpoch)),
+            w: points.e.map(e => weighted ? 1 / (e * e) : 1),
+            y: points.y
+        };
+    });
+
+    const fitOne = (src, nh) => {
+        const m = 2 * nh + 1;
+        const A = Array.from({length: m}, () => new Array(m).fill(0)), b = new Array(m).fill(0);
+        const rows = src.phases.map(p => harmonicRow(p, nh));
+        rows.forEach((r, i) => {
+            for (let p = 0; p < m; p++) {
+                b[p] += src.w[i] * r[p] * src.y[i];
+                for (let q = 0; q <= p; q++) A[p][q] += src.w[i] * r[p] * r[q];
+            }
+        });
+        for (let p = 0; p < m; p++) for (let q = p + 1; q < m; q++) A[p][q] = A[q][p];
+        const c = solveSymmetric(A, b);
+        if (!c) return null;
+        let rss = 0;
+        rows.forEach((r, i) => {
+            const d = src.y[i] - r.reduce((s, v, p) => s + v * c[p], 0);
+            rss += src.w[i] * d * d;
+        });
+        return {c: c, bic: src.n * Math.log(rss / src.n) + m * Math.log(src.n)};
+    };
+
+    let best = null;
+    for (let nh = 1; nh <= COLOUR_MODEL_MAX_HARMONICS; nh++) {
+        if (prepared.some(src => src.n < COLOUR_MODEL_POINTS_PER_TERM * (2 * nh + 1))) break;
+        const fits = prepared.map(src => fitOne(src, nh));
+        if (fits.some(f => !f)) break;
+        const bic = fits.reduce((s, f) => s + f.bic, 0);
+        if (!best || bic < best.bic)
+            best = {bic: bic, nh: nh, fits: fits};
+    }
+    if (!best)
+        return pointsList.map(() => null);
+    return best.fits.map(f => ({
+        nh: best.nh, c: f.c,
+        at: p => harmonicRow(p, best.nh).reduce((s, v, q) => s + v * f.c[q], 0)
+    }));
+}
+
+// The blackbody and extinction of each band, as the server worked them
+// out, by source and band - they never change
+const colourReferenceCache = new Map();
+let colourTemperatures = null;
+
+function referenceKey(i) {
+    const s = lightcurveData[i];
+    return `${s.source_id}|${s.filter}|${s.kind}`;
+}
+
+// The references for these sources, fetched if not yet known; calls `done`
+// once they are, and returns whether they already were
+function colourReferences(indices, done) {
+    const missing = [...new Set(indices)].filter(i => !colourReferenceCache.has(referenceKey(i)));
+    if (!missing.length)
+        return true;
+    fetch(`/targets/{{ target_id }}/colour_references/`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json', 'X-CSRFToken': getCookie('csrftoken')},
+        body: JSON.stringify({series: missing.map(i => ({
+            source_id: lightcurveData[i].source_id, filter: lightcurveData[i].filter, kind: lightcurveData[i].kind}))})
+    })
+    .then(response => response.json().then(data => {
+        if (!response.ok) throw new Error(data.error || 'Server error');
+        return data;
+    }))
+    .then(data => {
+        colourTemperatures = data.temperatures;
+        missing.forEach((i, k) => colourReferenceCache.set(referenceKey(i), data.bands[k]));
+        done();
+    })
+    .catch(error => {
+        console.error('Error fetching the colour references:', error);
+        missing.forEach(i => colourReferenceCache.set(referenceKey(i), {passband: null, error: true}));
+        done();
+    });
+    return false;
+}
+
+// A value of a table at a fractional index
+function atIndex(values, f) {
+    const k = Math.max(0, Math.min(values.length - 2, Math.floor(f)));
+    return values[k] + (values[k + 1] - values[k]) * (f - k);
+}
+
+// A round number not above `v`: 1, 2 or 5 times a power of ten
+function roundDown(v) {
+    const p = 10 ** Math.floor(Math.log10(v));
+    return [5, 2, 1].map(m => m * p).find(m => m <= v) || p;
+}
+
+// Hues all the way round and back, for a phase, which wraps
+const PHASE_COLORSCALE = [[0, '#d62728'], [0.25, '#bcbd22'], [0.5, '#2ca02c'],
+                          [0.75, '#1f77b4'], [1, '#d62728']];
+
 // `quiet` when redrawn for a change of the fold, which has nobody to tell
 // that the two sources share too little
 function plotColour(quiet) {
     const ia = parseInt(document.getElementById('colour-a').value);
     const ib = parseInt(document.getElementById('colour-b').value);
     const width = parseFloat(document.getElementById('colour-bin').value);
+    const gap = parseFloat(document.getElementById('colour-interp').value) || 0;
 
     if (ia === ib || !(width > 0)) {
-        if (!quiet) alert('Choose two different sources and a positive time bin.');
+        if (!quiet) alert('Choose two different sources and a positive matching window.');
         return;
     }
 
@@ -3726,58 +4101,101 @@ function plotColour(quiet) {
     const dValue = document.getElementById('colour-d').value;
     const id = dValue === '' ? null : parseInt(dValue);
 
-    const A = binnedByTime(lightcurveData[ia], seriesState[ia], width);
-    const B = binnedByTime(lightcurveData[ib], seriesState[ib], width);
-    const C = diagram ? binnedByTime(lightcurveData[ic], seriesState[ic], width) : null;
-    const D = diagram && id !== null ? binnedByTime(lightcurveData[id], seriesState[id], width) : null;
-
-    // The colour wherever the two share a bin; the diagram where all of its
-    // sources do
-    const t = [], colour = [];
-    const dt = [], dx = [], dy = [];
-    A.forEach((va, k) => {
-        if (!B.has(k)) return;
-        const mjd = (k + 0.5) * width;
-        if (folded && !inDateRange(mjd, dates)) return;
-        const col = va - B.get(k);
+    // The sources of the colour and of the diagram, each once
+    const used = [ia, ib];
+    if (diagram) {
+        if (!used.includes(ic)) used.push(ic);
+        if (id !== null && !used.includes(id)) used.push(id);
+    }
+    const slot = i => used.indexOf(i);
+    const points = used.map(i => colourPoints(i, dates, folded));
+    if (points.some(p => !p.t.length)) {
+        if (!quiet) alert('A source of the colour has no points' + (folded ? ' in the dates' : '') + '.');
+        return;
+    }
+    // The colour at the epochs of its own two sources, and the diagram at
+    // those of all of its sources - matched apart, as a sparse source of the
+    // diagram, WISE say, would otherwise thin the colour to its own visits
+    const colourMatch = matchEpochs(points.slice(0, 2), width, gap);
+    const t = [], colour = [], colourErr = [], colourInterp = [];
+    colourMatch.t.forEach((mjd, j) => {
+        const a = colourMatch.values[0][j], b = colourMatch.values[1][j];
+        if (!a || !b) return;
         t.push(mjd);
-        colour.push(col);
-        if (C && C.has(k) && (!D || D.has(k))) {
-            dt.push(mjd);
-            dx.push(col);
-            dy.push(D ? C.get(k) - D.get(k) : C.get(k));
-        }
+        colour.push(a.v - b.v);
+        colourErr.push(a.e === null || b.e === null ? null : Math.hypot(a.e, b.e));
+        colourInterp.push(a.interp || b.interp);
     });
 
-    if (colour.length < 3) {
-        if (!quiet) alert(`${lightcurveData[ia].label} and ${lightcurveData[ib].label} share only ${colour.length} bins of ${width} d`
-                          + (folded ? ' in the dates' : '') + ' - try a longer bin.');
+    // With the errors of the diagram and their covariance - a band that is
+    // in both the colour and the magnitude moves both at once
+    const dt = [], dx = [], dy = [], vx = [], vy = [], cxy = [], dInterp = [];
+    let errorsKnown = true;
+    if (diagram) {
+        const matched = used.length > 2 ? matchEpochs(points, width, gap) : colourMatch;
+        const value = (i, j) => matched.values[slot(i)][j];
+        matched.t.forEach((mjd, j) => {
+            const a = value(ia, j), b = value(ib, j);
+            const c = value(ic, j), d = id === null ? null : value(id, j);
+            if (!a || !b || !c || (id !== null && !d)) return;
+            const ex = a.e === null || b.e === null ? null : Math.hypot(a.e, b.e);
+            const parts = id === null ? [[ic, 1, c]] : [[ic, 1, c], [id, -1, d]];
+            const ey2 = parts.reduce((s, [, , p]) => s + (p.e === null ? NaN : p.e * p.e), 0);
+            // The covariance of the colour (a - b) with the y axis
+            let cov = 0;
+            parts.forEach(([k, sign]) => {
+                if (k === ia) cov += sign * (a.e || 0) ** 2;
+                if (k === ib) cov -= sign * (b.e || 0) ** 2;
+            });
+            if (ex === null || !isFinite(ey2)) errorsKnown = false;
+            dt.push(mjd);
+            dx.push(a.v - b.v);
+            dy.push(id === null ? c.v : c.v - d.v);
+            vx.push(ex === null ? 0 : ex * ex);
+            vy.push(isFinite(ey2) ? ey2 : 0);
+            cxy.push(cov);
+            dInterp.push(a.interp || b.interp || c.interp || (d !== null && d.interp));
+        });
+    }
+    // Without errors for all, none: a fit with only some would let those
+    // with none count without limit
+    if (!errorsKnown)
+        [vx, vy, cxy].forEach(v => v.fill(0));
+
+    // The harmonic models of the sources, when folded and asked for: they
+    // need no measurements taken together, so they give a colour where the
+    // points do not
+    const modelled = folded && document.getElementById('colour-model').checked;
+    const models = new Map();
+    if (modelled)
+        harmonicModels(points).forEach((m, k) => models.set(used[k], m));
+    const modelGrid = Array.from({length: 201}, (_, k) => k / 200);
+    const modelColour = modelled && models.get(ia) && models.get(ib)
+        ? modelGrid.map(p => models.get(ia).at(p) - models.get(ib).at(p)) : null;
+    let modelLoop = null;
+    if (diagram && modelColour && models.get(ic) && (id === null || models.get(id))) {
+        const mc = models.get(ic), md = id === null ? null : models.get(id);
+        modelLoop = {x: modelColour, y: modelGrid.map(p => mc.at(p) - (md ? md.at(p) : 0))};
+    }
+
+    if (colour.length < 3 && !modelColour) {
+        if (!quiet) alert(`${lightcurveData[ia].label} and ${lightcurveData[ib].label} are measured together only ${colour.length} times`
+                          + ` within ${width} d` + (folded ? ' in the dates' : '')
+                          + ' - try a wider window' + (gap > 0 ? ' or a longer interpolation' : ', or interpolating') + '.');
         return;
     }
 
-    // The diagram's vertical axis against the colour, by least squares
     const n = colour.length, nd = dx.length;
-    let slope = NaN, slopeErr = NaN, mc = 0, mm = 0;
-    if (nd > 2) {
-        mc = dx.reduce((s, v) => s + v, 0) / nd;
-        mm = dy.reduce((s, v) => s + v, 0) / nd;
-        let sxx = 0, sxy = 0;
-        dx.forEach((c, i) => { sxx += (c - mc) * (c - mc); sxy += (c - mc) * (dy[i] - mm); });
-        if (sxx > 0) {
-            slope = sxy / sxx;
-            const resid = dy.map((m, i) => m - mm - slope * (dx[i] - mc));
-            slopeErr = Math.sqrt(resid.reduce((s, r) => s + r * r, 0) / (nd - 2) / sxx);
-        }
-    }
-    const spread = colour.slice().sort((x, y) => x - y);
-    const range = [spread[Math.floor(0.05 * (n - 1))], spread[Math.ceil(0.95 * (n - 1))]];
+    const fitLineOn = diagram && document.getElementById('colour-fit').checked;
+    const fit = fitLineOn && nd > 2 ? fitLine(dx, dy, vx, vy, cxy) : null;
+    const spread = (n >= 3 ? colour : modelColour).slice().sort((x, y) => x - y);
+    const range = [spread[Math.floor(0.05 * (spread.length - 1))], spread[Math.ceil(0.95 * (spread.length - 1))]];
 
     const na = lightcurveData[ia].label, nb = lightcurveData[ib].label;
     const name = `${na} − ${nb}`;
     const yname = diagram ? (id === null ? lightcurveData[ic].label
                                          : `${lightcurveData[ic].label} − ${lightcurveData[id].label}`) : '';
     const theme = plotlyTheme();
-    const datesOf = t.map(mjdToDate);
     const axis = {showline: true, linecolor: theme.linecolor, gridcolor: theme.gridcolor, zeroline: false, automargin: true};
     // The colour against time or phase drawn as the light curve above is, so
     // that the two read alike and, at full width, line up
@@ -3786,24 +4204,30 @@ function plotColour(quiet) {
         type: 'line', xref: 'x', yref: 'y domain', x0: x, x1: x, y0: 0, y1: 1,
         line: {color: 'gray', width: 1, dash: 'dash'}
     })) : [];
+    const errorBars = values => ({type: 'data', array: values.map(e => e === null ? 0 : e),
+                                  color: 'rgba(76, 120, 168, 0.35)', thickness: 0.75, width: 0});
+    // Measured together filled, interpolated hollow
+    const symbols = flags => flags.map(f => f ? 'circle-open' : 'circle');
 
     // Against phase when folded - wrapped over the range the light curve
     // shows, with its median in bins of phase - and against time otherwise
     let left;
+    const phases = folded ? t.map(mjd => foldPhase(mjd, phasePeriod, phaseEpoch)) : null;
     if (folded) {
-        const phases = t.map(mjd => foldPhase(mjd, phasePeriod, phaseEpoch));
-        const x = [], y = [], when = [];
+        const x = [], y = [], when = [], err = [], flags = [];
         phases.forEach((p, i) => [-1, 0, 1].forEach(shift => {
             const q = p + shift;
             if (q >= -0.6 && q <= 1.6) {
                 x.push(q);
                 y.push(colour[i]);
                 when.push(t[i]);
+                err.push(colourErr[i]);
+                flags.push(colourInterp[i]);
             }
         }));
         left = [{
-            x: x, y: y, mode: 'markers', type: 'scatter',
-            marker: {size: 5, color: '#4c78a8'}, name: name, showlegend: false,
+            x: x, y: y, mode: 'markers', type: 'scatter', error_y: errorBars(err),
+            marker: {size: 5, color: '#4c78a8', symbol: symbols(flags)}, name: name, showlegend: false,
             customdata: when, hovertemplate: 'phase %{x:.3f}<br>MJD %{customdata:.2f}<br>' + name + ' %{y:.3f}<extra></extra>'
         }];
 
@@ -3821,19 +4245,39 @@ function plotColour(quiet) {
             name: 'binned median', showlegend: false,
             hovertemplate: 'phase %{x:.3f}<br>binned median %{y:.3f}<extra></extra>'
         });
+
+        if (modelColour) {
+            const x2 = [], y2 = [];
+            [-1, 0, 1].forEach(shift => {
+                modelGrid.forEach((p, k) => {
+                    const q = p + shift;
+                    if (q >= -0.6 && q <= 1.6) { x2.push(q); y2.push(modelColour[k]); }
+                });
+                x2.push(null); y2.push(null);
+            });
+            left.push({
+                x: x2, y: y2, mode: 'lines', type: 'scatter', line: {color: theme.font.color, width: 1},
+                opacity: 0.7, name: 'harmonic model', showlegend: false,
+                hovertemplate: `phase %{x:.3f}<br>model ${name} %{y:.3f}<br>${models.get(ia).nh} harmonics<extra></extra>`
+            });
+        }
     } else {
         left = [{
-            x: timeAxisMode === 'mjd' ? t : datesOf, y: colour, mode: 'markers', type: 'scatter',
-            marker: {size: 5, color: '#4c78a8'}, name: name, showlegend: false,
+            x: timeAxisMode === 'mjd' ? t : t.map(mjdToDate), y: colour, mode: 'markers', type: 'scatter',
+            error_y: errorBars(colourErr),
+            marker: {size: 5, color: '#4c78a8', symbol: symbols(colourInterp)}, name: name, showlegend: false,
             customdata: t, hovertemplate: 'MJD %{customdata:.2f}<br>' + name + ' %{y:.3f}<extra></extra>'
         }];
     }
 
     const traces = left;
-    const fitLine = diagram && document.getElementById('colour-fit').checked;
+    const annotations = [];
+    const notes = [];
+    let refRanges = null;
+
     if (diagram && document.getElementById('colour-connect').checked && dx.length > 1) {
-        // Under the points, faint, in the order of time - the bins need not
-        // come in it
+        // Under the points, faint, in the order of time - the epochs need
+        // not come in it
         const order = dt.map((_, i) => i).sort((i, j) => dt[i] - dt[j]);
         traces.push({
             x: order.map(i => dx[i]), y: order.map(i => dy[i]), xaxis: 'x2', yaxis: 'y2',
@@ -3842,51 +4286,164 @@ function plotColour(quiet) {
         });
     }
     if (diagram) {
+        // Coloured by phase when folded, which wraps, and by date otherwise
+        const dPhase = folded ? dt.map(mjd => foldPhase(mjd, phasePeriod, phaseEpoch)) : null;
+        const sx = vx.map(Math.sqrt), sy = vy.map(Math.sqrt);
         traces.push({
             x: dx, y: dy, xaxis: 'x2', yaxis: 'y2', mode: 'markers', type: 'scatter',
-            marker: {size: 5, color: dt, colorscale: 'Viridis', showscale: true,
-                     colorbar: {title: {text: 'MJD'}, thickness: 10, x: 1.02}},
-            showlegend: false, customdata: dt,
-            hovertemplate: name + ' %{x:.3f}<br>' + yname + ' %{y:.3f}<br>MJD %{customdata:.2f}<extra></extra>'
+            error_x: errorsKnown ? {type: 'data', array: sx, color: 'rgba(128, 128, 128, 0.3)', thickness: 0.75, width: 0} : undefined,
+            error_y: errorsKnown ? {type: 'data', array: sy, color: 'rgba(128, 128, 128, 0.3)', thickness: 0.75, width: 0} : undefined,
+            marker: folded
+                ? {size: 5, color: dPhase, cmin: 0, cmax: 1, colorscale: PHASE_COLORSCALE, showscale: true,
+                   symbol: symbols(dInterp), colorbar: {title: {text: 'phase'}, thickness: 10, x: 1.02}}
+                : {size: 5, color: dt, colorscale: 'Viridis', showscale: true, symbol: symbols(dInterp),
+                   colorbar: {title: {text: 'MJD'}, thickness: 10, x: 1.02}},
+            showlegend: false, customdata: folded ? dt.map((m, i) => [m, dPhase[i]]) : dt.map(m => [m, null]),
+            hovertemplate: name + ' %{x:.3f}<br>' + yname + ' %{y:.3f}<br>MJD %{customdata[0]:.2f}'
+                         + (folded ? '<br>phase %{customdata[1]:.3f}' : '') + '<extra></extra>'
         });
-        if (fitLine && isFinite(slope)) {
+        if (fit) {
             const lo = Math.min(...dx), hi = Math.max(...dx);
             traces.push({
-                x: [lo, hi], y: [mm + slope * (lo - mc), mm + slope * (hi - mc)], xaxis: 'x2', yaxis: 'y2',
+                x: [lo, hi], y: [fit.a + fit.b * lo, fit.a + fit.b * hi], xaxis: 'x2', yaxis: 'y2',
                 mode: 'lines', type: 'scatter', line: {color: '#d62728', width: 1.5}, hoverinfo: 'skip', showlegend: false
             });
+            const out = dx.map((_, i) => i).filter(i => !fit.used[i]);
+            if (out.length) traces.push({
+                x: out.map(i => dx[i]), y: out.map(i => dy[i]), xaxis: 'x2', yaxis: 'y2', mode: 'markers', type: 'scatter',
+                marker: {size: 7, color: 'gray', symbol: 'x-thin-open'}, hoverinfo: 'skip', showlegend: false
+            });
+        }
+        if (modelLoop) {
+            traces.push({
+                x: modelLoop.x, y: modelLoop.y, xaxis: 'x2', yaxis: 'y2',
+                mode: 'lines', type: 'scatter', line: {color: theme.font.color, width: 1}, opacity: 0.7,
+                hovertemplate: 'harmonic model<br>phase %{customdata:.3f}<extra></extra>', customdata: modelGrid,
+                showlegend: false
+            });
+        }
+
+        // The blackbody and the reddening, once their bands are known
+        // Read against the points, or against the model where they are too few
+        const rx = nd > 2 ? dx : modelLoop ? modelLoop.x : null;
+        const ry = nd > 2 ? dy : modelLoop ? modelLoop.y : null;
+        if (document.getElementById('colour-refs').checked && rx) {
+            const bands = [ia, ib, ic].concat(id === null ? [] : [id]);
+            if (colourReferences(bands, () => replotColour())) {
+                const refs = bands.map(i => colourReferenceCache.get(referenceKey(i)));
+                const unknown = bands.filter((_, k) => !refs[k].passband).map(i => lightcurveData[i].label);
+                if (unknown.length) {
+                    notes.push(`no passband known for ${[...new Set(unknown)].join(', ')}`);
+                } else {
+                    const [rA, rB, rC, rD] = refs;
+                    const T = colourTemperatures;
+                    const xT = T.map((_, k) => rA.mag[k] - rB.mag[k]);
+                    const yT0 = T.map((_, k) => rC.mag[k] - (rD ? rD.mag[k] : 0));
+                    const xm = median(rx), ym = median(ry);
+
+                    // The temperature whose blackbody has the star's median
+                    // colour - the blackbody colour falls as it heats
+                    let f = 0;
+                    if (xm <= Math.min(...xT)) f = xT.indexOf(Math.min(...xT));
+                    else if (xm >= Math.max(...xT)) f = xT.indexOf(Math.max(...xT));
+                    else for (let k = 0; k < T.length - 1; k++)
+                        if ((xT[k] - xm) * (xT[k + 1] - xm) <= 0) {
+                            f = k + (xm - xT[k]) / (xT[k + 1] - xT[k]);
+                            break;
+                        }
+                    const tStar = Math.exp(atIndex(T.map(Math.log), f));
+
+                    // Against a magnitude, a blackbody of fixed size heating
+                    // and cooling through the star's median point; against
+                    // a colour, the blackbodies as they are
+                    const shift = rD ? 0 : ym - atIndex(yT0, f);
+                    const yT = yT0.map(v => v + shift);
+
+                    const pad = (lo, hi) => { const m = Math.max(0.15 * (hi - lo), 0.05); return [lo - m, hi + m]; };
+                    const xr = pad(Math.min(...rx), Math.max(...rx)), yr = pad(Math.min(...ry), Math.max(...ry));
+                    refRanges = {x: xr, y: yr};
+
+                    traces.push({
+                        x: xT, y: yT, xaxis: 'x2', yaxis: 'y2', mode: 'lines', type: 'scatter',
+                        line: {color: '#ff7f0e', width: 1.25, dash: 'dash'}, customdata: T, showlegend: false,
+                        hovertemplate: 'blackbody %{customdata:.0f} K<extra></extra>'
+                    });
+                    const marks = [2500, 3000, 4000, 5000, 6000, 8000, 10000, 15000, 25000]
+                        .map(temp => {
+                            const g = Math.log(temp / T[0]) / Math.log(T[1] / T[0]);
+                            return {temp: temp, x: atIndex(xT, g), y: atIndex(yT, g)};
+                        })
+                        .filter(m => m.x >= xr[0] && m.x <= xr[1] && m.y >= yr[0] && m.y <= yr[1]);
+                    if (marks.length) traces.push({
+                        x: marks.map(m => m.x), y: marks.map(m => m.y), xaxis: 'x2', yaxis: 'y2',
+                        mode: 'markers+text', type: 'scatter', text: marks.map(m => `${m.temp} K`),
+                        textposition: 'top right', textfont: {size: 9, color: '#ff7f0e'},
+                        marker: {size: 4, color: '#ff7f0e'}, hoverinfo: 'skip', showlegend: false
+                    });
+
+                    // The reddening of the median point, by a round A_V that
+                    // spans about a third of the diagram
+                    const kx = atIndex(rA.ext, f) - atIndex(rB.ext, f);
+                    const ky = atIndex(rC.ext, f) - (rD ? atIndex(rD.ext, f) : 0);
+                    const av = roundDown(Math.min(Math.abs(kx) > 0 ? 0.35 * (xr[1] - xr[0]) / Math.abs(kx) : Infinity,
+                                                  Math.abs(ky) > 0 ? 0.35 * (yr[1] - yr[0]) / Math.abs(ky) : Infinity));
+                    if (isFinite(av)) annotations.push({
+                        xref: 'x2', yref: 'y2', axref: 'x2', ayref: 'y2', x: xm + kx * av, y: ym + ky * av, ax: xm, ay: ym,
+                        showarrow: true, arrowhead: 2, arrowsize: 1, arrowwidth: 1.5, arrowcolor: '#8c564b',
+                        text: '', hovertext: `reddening by A_V = ${av}`
+                    }, {
+                        xref: 'x2', yref: 'y2', x: xm + kx * av, y: ym + ky * av, showarrow: false,
+                        text: `A<sub>V</sub> = ${av}`, font: {size: 9, color: '#8c564b'}, xanchor: 'left', yanchor: 'bottom'
+                    });
+
+                    // The two slopes the fitted one is to be read against
+                    const g = Math.max(0.5, Math.min(T.length - 1.5, f));
+                    const bbSlope = (atIndex(yT, g + 0.5) - atIndex(yT, g - 0.5)) / (atIndex(xT, g + 0.5) - atIndex(xT, g - 0.5));
+                    notes.push(`dust ${(ky / kx).toFixed(2)}, blackbody at ${Math.round(tStar / 100) * 100} K ${bbSlope.toFixed(2)}`);
+                    const approx = bands.filter((_, k) => refs[k].approximate).map(i => lightcurveData[i].label);
+                    if (approx.length)
+                        notes.push(`approximate passbands for ${[...new Set(approx)].join(', ')}`);
+                }
+            }
         }
     }
 
+    const fitText = fit ? `; d(${yname}) / d(${name}) = ${fit.b.toFixed(2)} ± ${fit.err.toFixed(2)}`
+                        + ` from ${fit.n}${fit.n < nd ? ' of ' + nd : ''} epochs, scatter ${fit.scatter.toFixed(3)}`
+                        : fitLineOn && nd > 2 ? '; no line could be fitted' : '';
+
     document.getElementById('colour-box').style.display = 'block';
     Plotly.newPlot('colour-container', traces, {
-        title: {text: `${name} from ${n} bins of ${width} d: from ${range[0].toFixed(3)} to ${range[1].toFixed(3)} (5-95%)`
-                    + (diagram ? (fitLine && isFinite(slope)
-                        ? `; d(${yname}) / d(${name}) = ${slope.toFixed(2)} ± ${slopeErr.toFixed(2)} from ${nd} bins`
-                        : nd ? `; ${nd} bins in the diagram` : `; no bin with all of ${yname} too`) : ''),
+        title: {text: (n >= 3 ? `${name} at ${n} epochs within ${width} d${gap > 0 ? `, interpolated over ${gap} d` : ''}:`
+                         : `${name} from the harmonic models alone - ${colour.length || 'no'} epochs measured together:`)
+                    + ` ${range[0].toFixed(3)} to ${range[1].toFixed(3)} (5-95%)`
+                    + (diagram ? (nd ? fitText : modelLoop ? '' : `; no epoch has ${yname} too`) : '')
+                    + (notes.length ? `<br><span style="font-size: 10px">${notes.join('; ')}</span>` : ''),
                 font: {size: 12}},
         xaxis: Object.assign({}, plain, {domain: diagram ? [0, 0.55] : [0, 1],
             title: {text: folded ? (foldModel ? 'Phase (period change model)' : `Phase (P = ${phasePeriod.toFixed(6)} d)`)
                                  : (timeAxisMode === 'mjd' ? 'MJD' : 'Date')},
             range: folded ? [-0.6, 1.6] : undefined}),
         yaxis: Object.assign({}, plain, {title: {text: name}}),
-        // Said in the diagram itself when no bin has all of its sources - ATLAS,
-        // say, never takes c and o on the same night
-        annotations: diagram && !nd ? [{
+        // Said in the diagram itself when no epoch has all of its sources -
+        // ATLAS, say, never takes c and o on the same night
+        annotations: annotations.concat(diagram && !nd && !modelLoop ? [{
             xref: 'x2 domain', yref: 'y2 domain', x: 0.5, y: 0.5, showarrow: false,
-            text: `No bin of ${width} d has all of<br>${na}, ${nb}<br>and ${yname}`,
+            text: `No epoch within ${width} d has all of<br>${na}, ${nb}<br>and ${yname}`,
             font: {color: theme.font.color}
-        }] : [],
+        }] : []),
         // Brighter up, and bluer up as the two-colour diagrams of UBV have it
-        xaxis2: Object.assign({}, axis, {domain: [0.65, 0.95], anchor: 'y2', title: {text: name}, visible: diagram}),
-        yaxis2: Object.assign({}, axis, {anchor: 'x2', title: {text: yname}, autorange: 'reversed', visible: diagram}),
+        xaxis2: Object.assign({}, axis, {domain: [0.65, 0.95], anchor: 'y2', title: {text: name}, visible: diagram},
+                              refRanges ? {range: refRanges.x} : {}),
+        yaxis2: Object.assign({}, axis, {anchor: 'x2', title: {text: yname}, visible: diagram},
+                              refRanges ? {range: refRanges.y.slice().reverse()} : {autorange: 'reversed'}),
         shapes: phaseLines,
         hovermode: 'closest',
         autosize: true,
         // At full width, margins that put its plot area under the light
         // curve's, pixel for pixel - the box it sits in is indented by its
         // padding - so that a moment in one is straight below it in the other
-        margin: Object.assign({t: 30, b: 50}, diagram ? {l: 60, r: 30} : alignedMargins()),
+        margin: Object.assign({t: notes.length ? 45 : 30, b: 50}, diagram ? {l: 60, r: 30} : alignedMargins()),
         font: {size: 10, color: theme.font.color},
         paper_bgcolor: theme.paper_bgcolor,
         plot_bgcolor: theme.plot_bgcolor

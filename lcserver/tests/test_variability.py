@@ -105,3 +105,25 @@ class StructureFunctionTest(SimpleTestCase):
             sets.append((t, zero + rng.normal(0, 0.05, len(t)), np.full(len(t), 0.05)))
         bins = v.structure_function(sets)
         self.assertLessEqual(sum(b['detected'] for b in bins), 1)
+
+
+class ColourReferenceTest(SimpleTestCase):
+    """The blackbody and reddening the colour diagrams are read against."""
+
+    def test_sun_and_reddening(self):
+        from lcserver.processing import colours
+        out = colours.colour_references([('fram', 'B', 'native'), ('fram', 'V', 'native')])
+        T = np.array(out['temperatures'])
+        b, v = out['bands']
+        k = np.argmin(np.abs(T - 5800))
+        # A blackbody of the Sun's temperature has about its B - V
+        self.assertAlmostEqual(b['mag'][k] - v['mag'][k], 0.65, delta=0.06)
+        # A_V / E(B - V) = R_V
+        self.assertAlmostEqual(v['ext'][k] / (b['ext'][k] - v['ext'][k]), 3.1, delta=0.25)
+
+    def test_bands_without_passband(self):
+        from lcserver.processing import colours
+        out = colours.colour_references([('css', 'V', 'native'), ('atlas', 'g (from c)', 'derived')])
+        self.assertIsNone(out['bands'][0]['passband'])
+        self.assertEqual(out['bands'][1]['passband'], 'PS1_g')
+        self.assertEqual(out['bands'][1]['system'], 'AB')

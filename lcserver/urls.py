@@ -62,6 +62,7 @@ urlpatterns = [
     path('targets/<int:id>/fit_period_change/', views_lightcurve.fit_period_change, name='fit_period_change'),
     path('targets/<int:id>/dynamic_periodogram/', views_lightcurve.dynamic_periodogram, name='dynamic_periodogram'),
     path('targets/<int:id>/variability/', views_lightcurve.variability, name='variability'),
+    path('targets/<int:id>/colour_references/', views_lightcurve.colour_references, name='colour_references'),
     path('targets/<int:id>/spectrum/', views_spectrum.target_spectrum, name='target_spectrum'),
     path('targets/<int:id>/spectrum_data/', views_spectrum.load_spectrum_json, name='load_spectrum_json'),
     path('targets/<int:id>/fit_sed/', views_spectrum.fit_sed, name='fit_sed'),

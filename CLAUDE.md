@@ -299,7 +299,9 @@ thirty others - plus `utils.py` for what they share, `sedfit.py` for the SED
 fitting and `periods.py` for the light curve viewer's period tools (search,
 prewhitening, period change and O-C - from windows of the light curve or from
 eclipse minima timed one by one - time-resolved periodogram) and
-`variability.py` for its variability indices and structure function, which
+`variability.py` for its variability indices and structure function and
+`colours.py` for the passband of each light curve band, with the blackbody and
+reddening its colour diagrams are read against, which
 `views_lightcurve.py` only turns requests into calls of. `processing/__init__.py` re-exports each `target_xxx()`, so
 `processing.target_ztf` works regardless of which module it lives in. Each
 `target_xxx()` function:
