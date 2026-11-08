@@ -128,6 +128,17 @@ the period each window finds on its own — the one check on the count of
 cycles that does not depend on it. The light curve can then be folded with the
 model's phase.
 
+The light curve's shape is described in that fit by three harmonics, or as
+many as chosen — or, for auto, as the Bayesian information criterion asks
+for: one or two for a sinusoidal pulsator, a dozen and more for a detached
+eclipsing binary, whose narrow eclipses three harmonics put hours out. For an eclipsing binary seen often
+enough, the space missions above all, the O−C can instead come from the
+eclipse minima: each eclipse timed on its own by a curve symmetric about its
+minimum, and the model fitted to those times — primaries at whole cycles,
+secondaries half a cycle on with their offset from it fitted too, the errors
+of each series' primaries and secondaries scaled to their scatter, and the
+minima far off the fit left out.
+
 The errors throughout allow for noise that does not average down as white
 noise would, which over the thousands of points of a TESS sector is most of
 it, and the summary says when the O−C wanders beyond them — as on a spotted

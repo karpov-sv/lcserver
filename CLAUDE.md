@@ -297,7 +297,8 @@ once is `worker_concurrency` (default 4), not the size of the group.
 A package with a module per source - `ztf.py`, `asas.py`, `dasch.py` and some
 thirty others - plus `utils.py` for what they share, `sedfit.py` for the SED
 fitting and `periods.py` for the light curve viewer's period tools (search,
-prewhitening, period change and O-C, time-resolved periodogram), which
+prewhitening, period change and O-C - from windows of the light curve or from
+eclipse minima timed one by one - time-resolved periodogram), which
 `views_lightcurve.py` only turns requests into calls of. `processing/__init__.py` re-exports each `target_xxx()`, so
 `processing.target_ztf` works regardless of which module it lives in. Each
 `target_xxx()` function:

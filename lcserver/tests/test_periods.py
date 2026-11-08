@@ -314,6 +314,96 @@ class PeriodChangeTest(SimpleTestCase):
             self.assertLess(abs(s - expected), max(4 * err, 0.02))
 
 
+class EclipseTimingTest(SimpleTestCase):
+    """A detached eclipsing binary seen as the space missions see it - every
+    ten minutes for a month, in sectors years apart - with its period
+    changing, and its secondary eclipse off half a cycle as an eccentric
+    orbit puts it."""
+
+    period = 1.093
+    pdot = 3.0e-9           # days per day: some ten minutes of O-C over the span
+    delta = 0.004           # of a cycle, the secondary after half of one
+    noise = 0.002
+
+    def phase(self, t):
+        f0, fdot = 1.0 / self.period, -self.pdot / self.period ** 2
+        x = t - 59000.0
+        return f0 * x + 0.5 * fdot * x ** 2
+
+    def light_curve(self, seed=11):
+        rng = np.random.default_rng(seed)
+        out = []
+        for start in (57100.0, 58100.0, 59500.0, 60260.0):
+            t = start + np.arange(0, 27, 10 / 1440.0)
+            ph = self.phase(t) % 1.0
+            d1 = np.minimum(ph, 1.0 - ph)
+            d2 = np.abs(ph - 0.5 - self.delta)
+            flux = (1.0 - 0.6 * np.exp(-0.5 * (d1 / 0.02) ** 2)
+                    - 0.15 * np.exp(-0.5 * (d2 / 0.02) ** 2))
+            flux = flux + rng.normal(0, self.noise, len(t))
+            out.append((t, flux, np.full(len(t), self.noise), ('synthetic', None, 'native')))
+        return out
+
+    def test_harmonics_follow_the_shape(self):
+        """Narrow eclipses need many harmonics, a sinusoid one."""
+        series = self.light_curve()
+        tmin = min(s[0].min() for s in series)
+        tmax = max(s[0].max() for s in series)
+        # The true frequency, a straight line in the time from the middle
+        model = p.PhaseModel(tmin, tmax, order=1)
+        fdot = -self.pdot / self.period ** 2
+        coeffs = np.array([1.0 / self.period + fdot * (model.tref - 59000.0), fdot * model.half])
+        nharm, _ = p.choose_harmonics(series, 0, model, coeffs)
+        self.assertGreaterEqual(nharm, 12)
+
+        rng = np.random.default_rng(12)
+        sine = [(t, 1 + 0.05 * np.sin(2 * np.pi * self.phase(t)) + rng.normal(0, self.noise, len(t)), dy, g)
+                for t, _, dy, g in series]
+        nharm, _ = p.choose_harmonics(sine, 0, model, coeffs)
+        self.assertLessEqual(nharm, 2)
+
+    def test_minima_give_the_period_change_and_the_secondary(self):
+        """The minima, timed one by one from a reference period a little off,
+        give the rate the period changes at and the offset of the secondaries
+        to within their uncertainties, and those uncertainties match the
+        scatter of the minima."""
+        series = self.light_curve()
+        tmin = min(s[0].min() for s in series)
+        tmax = max(s[0].max() for s in series)
+        reference = self.period * (1 + 2e-6)
+        epoch = 59000.0
+
+        profile = p.eclipse_profile(series, 1.0 / reference, epoch)
+        self.assertLess(abs(profile['primary'][0] - 0.0) % 1.0, 0.02)
+        self.assertIsNotNone(profile['secondary'])
+
+        minima = p.eclipse_minima(series, 1.0 / reference, epoch, profile)
+        mt, me, ms, mi = (np.array([m[k] for m in minima]) for k in (0, 1, 2, 8))
+        ms = ms.astype(bool)
+        # Every eclipse of the four sectors, but those at their edges
+        self.assertGreater((~ms).sum(), 85)
+        self.assertGreater(ms.sum(), 85)
+
+        model = p.PhaseModel(tmin, tmax, order=1)
+        const, coeffs, cov, chi2, dof, counted, keep, errors = p.fit_minima(
+            model, mt, me, ms, 1.0 / reference, classes=mi)
+
+        f_mid = coeffs[0]
+        pdot = -coeffs[1] / model.half / f_mid ** 2
+        # The constant and delta come first in the covariance
+        pdot_err = np.sqrt(cov[3, 3]) / model.half / f_mid ** 2
+        self.assertLess(abs(pdot - self.pdot), 4 * pdot_err)
+        self.assertLess(abs(const[1] - self.delta), 4 * np.sqrt(cov[1, 1]))
+
+        # The cycles counted are the true ones
+        true = np.round(self.phase(mt) - np.where(ms, 0.5 + self.delta, 0.0))
+        fitted = np.round(counted - np.where(ms, 0.5 + const[1], 0.0))
+        self.assertEqual(len(set(fitted - true)), 1)
+
+        self.assertGreater(chi2 / dof, 0.7)
+        self.assertLess(chi2 / dof, 1.3)
+
+
 class TimeResolvedTest(SimpleTestCase):
 
     def test_peak_follows_a_drifting_period(self):

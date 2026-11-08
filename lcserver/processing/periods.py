@@ -5,9 +5,11 @@ the requests that ask for it: detrending by a penalised spline, the joint fit
 of each series' trend with harmonics shared within a survey and filter, the
 periodogram and box least squares searches and the spectral window, the
 refit of their highest peaks, prewhitening by several frequencies at once,
-the phase of a period that changes and the count of its cycles, the O-C of
-windows against a fixed template, red noise, and the periodogram in a window
-sliding along the light curve.
+the phase of a period that changes and the count of its cycles, the number
+of harmonics its light curve needs, the O-C of windows against a fixed
+template, the timing of eclipse minima one by one and the phase fitted to
+them, red noise, and the periodogram in a window sliding along the light
+curve.
 
 Everything here takes plain arrays - (mjd, value, error, group) per series,
 where a group is a survey in one filter - and knows nothing of targets,
@@ -178,10 +180,18 @@ def detrend_series(mjds, values, window_days, subtract):
 
 
 def harmonics(mjds, frequency, nharm):
-    """Sines and cosines of the first `nharm` harmonics of a frequency."""
-    phase = 2 * np.pi * frequency * mjds
-    return np.column_stack([fn((h + 1) * phase)
-                            for h in range(nharm) for fn in (np.sin, np.cos)])
+    """Sines and cosines of the first `nharm` harmonics of a frequency.
+
+    The higher harmonics are powers of the first, as complex numbers, taken
+    by repeated multiplication - what dozens of them for a detached eclipsing
+    binary would otherwise cost in sines and cosines is most of its fit.
+    """
+    phase = 2 * np.pi * frequency * np.asarray(mjds, dtype=float)
+    z = np.cumprod(np.repeat(np.exp(1j * phase)[:, None], nharm, axis=1), axis=1)
+    out = np.empty((len(phase), 2 * nharm))
+    out[:, 0::2] = z.imag
+    out[:, 1::2] = z.real
+    return out
 
 
 class SeriesFit:
@@ -261,8 +271,13 @@ class SeriesFit:
 
     def residuals_of(self, columns, coeffs):
         """The same, for any columns."""
-        v = self.yw - (columns * self.weight[:, None]) @ coeffs
-        out = np.array(v)
+        return self.residuals_from(self.yw - (columns * self.weight[:, None]) @ coeffs)
+
+    def residuals_from(self, v):
+        """Weighted values `v` - or columns of them - less the best trend
+        under them, followed by the rows of the curvature penalty: what
+        `residuals_of` makes of the data once the harmonics are off."""
+        out = np.array(v, dtype=float)
         penalty = []
         for (idx, bw, inverse), pen in zip(self.blocks, self.penalties):
             beta = inverse @ (bw.T @ v[idx])
@@ -735,6 +750,14 @@ PERIOD_CHANGE_MAX_COEFFS = 40
 # A spline starts from the polynomial of this order, fitted first
 PERIOD_CHANGE_SPLINE_START = 2
 
+# Numbers of harmonics the light curve may be described by in the period
+# change fit, chosen among by `choose_harmonics`. A sinusoidal pulsator needs
+# one or two; a detached eclipsing binary, its eclipses a tenth of a cycle
+# wide, a dozen and more - and fewer than enough puts its phase hours out.
+# The fit costs the square of the number: thirty took twice as long as twenty
+# over the K2 and TESS of target 1, and put its eclipses no better
+PERIOD_CHANGE_HARMONICS = (1, 2, 3, 4, 6, 8, 12, 16, 20)
+
 # Change of phase, in cycles, a unit step in each coefficient makes somewhere
 # in the data - what puts them all on one footing for the optimiser
 PERIOD_CHANGE_PHASE_STEP = 0.01
@@ -916,19 +939,37 @@ class PhaseModel:
 
         return coeffs
 
-    def from_phases(self, t, phase, error):
+    def fit_phases(self, t, phase, error, extra=None):
         """Coefficients fitted to phases measured at times `t`, along with a
         constant of their own - for a spline under a penalty on its curvature,
         a frequency changing by so much over a knot costing as much as a phase
-        out by as much at a point."""
-        a = np.column_stack([np.ones(len(t)), self.phase_basis(t)]) / error[:, None]
+        out by as much at a point.
+
+        `extra` are columns fitted along with the constant - the offset of
+        the secondary minima from half a cycle, say. Returns the constant and
+        those as one array, the coefficients, the covariance of all of them,
+        constants first, and the chi-squared.
+        """
+        const = np.ones((len(t), 1))
+        if extra is not None:
+            const = np.column_stack([const, extra])
+        nconst = const.shape[1]
+
+        a = np.column_stack([const, self.phase_basis(t)]) / error[:, None]
         b = phase / error
+        rows = len(b)
         if self.knot_days:
             curv = _curvature(self.ncoef)
             penalty = (np.sqrt(DETREND_PENALTY) * np.median(1 / error) * self.knot_days
-                       * np.column_stack([np.zeros(len(curv)), curv]))
+                       * np.column_stack([np.zeros((len(curv), nconst)), curv]))
             a, b = np.vstack([a, penalty]), np.r_[b, np.zeros(len(penalty))]
-        return np.linalg.lstsq(a, b, rcond=None)[0][1:]
+        x = np.linalg.lstsq(a, b, rcond=None)[0]
+        chi2 = float(np.sum((a[:rows] @ x - b[:rows]) ** 2))
+        return x[:nconst], x[nconst:], np.linalg.pinv(a.T @ a), chi2
+
+    def from_phases(self, t, phase, error):
+        """The coefficients of `fit_phases`, without their constant."""
+        return self.fit_phases(t, phase, error)[1]
 
     def project(self, other, coeffs):
         """These coefficients nearest to the frequency `other` has with `coeffs`."""
@@ -966,7 +1007,12 @@ def fit_phase_model(series, window_days, model, coeffs, nharm=PERIOD_HARMONICS):
     The trend and the harmonics, linear, are solved for at every trial of the
     phase rather than searched along with it, which leaves the optimiser only
     the coefficients and makes the covariance of those the one marginalised
-    over the rest.
+    over the rest. The Jacobian it is given is the derivative of the model in
+    the coefficients taken through that same solution - what is left of it
+    once the trend and the harmonics have fitted what they can, Kaufman's
+    variable projection - rather than differences of whole fits, one more
+    for every coefficient: with a dozen harmonics over a few TESS sectors
+    those were most of what the fit cost.
 
     Returns the coefficients, their covariance, the chi-squared and the
     degrees of freedom, the harmonics of every group as {group: coefficients},
@@ -997,15 +1043,35 @@ def fit_phase_model(series, window_days, model, coeffs, nharm=PERIOD_HARMONICS):
     nparams = (sum(f.ntrend for f in allfits) + 2 * nharm * len(fitted) + model.ncoef)
     dof = max(npoints - nparams, 1)
 
-    def group_coefficients(c):
-        out = {}
+    # Cycles per cycle of each harmonic, in radians, for their derivative
+    omega = 2 * np.pi * np.arange(1, nharm + 1)
+
+    def evaluate(c):
+        """The residuals at coefficients `c`, their Jacobian in them, and the
+        harmonics of every group."""
+        alpha, resid, jac = {}, [], []
         for g, members in fitted.items():
-            gram, proj = 0, 0
+            parts, gram, proj = [], 0, 0
             for fit, basis in members:
-                gm, pm = fit.normal_at(basis @ c)
-                gram, proj = gram + gm, proj + pm
-            out[g] = np.linalg.lstsq(gram, proj, rcond=None)[0]
-        return out
+                columns = harmonics(basis @ c, 1.0, nharm)
+                hw = columns * fit.weight[:, None]
+                mh = fit._detrend(hw)
+                gram, proj = gram + hw.T @ mh, proj + mh.T @ fit.yw
+                parts.append((fit, basis, columns, hw, mh))
+            inverse = np.linalg.pinv(gram)
+            alpha[g] = inverse @ proj
+
+            # The model moves with the phase by the derivative of the
+            # harmonics, and the phase with each coefficient by its basis
+            sines, cosines = alpha[g][0::2] * omega, alpha[g][1::2] * omega
+            moved = [-(fit.weight * (columns[:, 1::2] @ sines - columns[:, 0::2] @ cosines))[:, None] * basis
+                     for fit, basis, columns, _, _ in parts]
+            beta = inverse @ sum(mh.T @ m for (_, _, _, _, mh), m in zip(parts, moved))
+
+            for (fit, basis, columns, hw, mh), m in zip(parts, moved):
+                resid.append(fit.residuals_from(fit.yw - hw @ alpha[g]))
+                jac.append(fit.residuals_from(m - hw @ beta))
+        return np.concatenate(resid), np.concatenate(jac), alpha
 
     # Each coefficient scaled to move the phase by a fixed step somewhere in
     # the data
@@ -1013,20 +1079,22 @@ def fit_phase_model(series, window_days, model, coeffs, nharm=PERIOD_HARMONICS):
     scale = PERIOD_CHANGE_PHASE_STEP / np.maximum(np.max(np.abs(span), axis=0), 1e-12)
     c0 = np.asarray(coeffs, dtype=float)
 
-    def residuals(x):
-        c = c0 + x * scale
-        alpha = group_coefficients(c)
-        return np.concatenate([fit.residuals(basis @ c, alpha[g])
-                               for g, members in fitted.items()
-                               for fit, basis in members])
+    # The residuals and the Jacobian come of one evaluation, which the
+    # optimiser asks for in turn at the same point
+    last = {}
 
-    result = least_squares(residuals, np.zeros(model.ncoef), method='trf',
-                           diff_step=PERIOD_CHANGE_DIFF_STEP, x_scale=1.0)
+    def at(x):
+        if last.get('x') is None or not np.array_equal(last['x'], x):
+            last['x'], last['value'] = np.array(x), evaluate(c0 + x * scale)
+        return last['value']
+
+    result = least_squares(lambda x: at(x)[0], np.zeros(model.ncoef),
+                           jac=lambda x: at(x)[1] * scale, method='trf', x_scale=1.0)
 
     c = c0 + result.x * scale
     chi2 = float(2 * result.cost) + chi2_unfitted
 
-    alpha = group_coefficients(c)
+    _, _, alpha = at(result.x)
     times = np.concatenate([fit.mjds for members in fitted.values() for fit, _ in members])
     resid = np.concatenate([fit.residuals(basis @ c, alpha[g])[:len(fit.mjds)]
                             for g, members in fitted.items() for fit, basis in members])
@@ -1038,6 +1106,63 @@ def fit_phase_model(series, window_days, model, coeffs, nharm=PERIOD_HARMONICS):
            * (chi2 / dof) * beta ** 2)
 
     return c, cov, chi2, dof, alpha, beta
+
+
+def choose_harmonics(series, window_days, model, coeffs, candidates=PERIOD_CHANGE_HARMONICS):
+    """How many harmonics the light curve needs at the phase of `model` with
+    `coeffs`, chosen by the Bayesian information criterion among `candidates`.
+
+    Each is fitted as `fit_phase_model` fits them - every series its trend,
+    the harmonics shared within a group - at that phase as it is, which
+    leaves a linear fit, and scored by its chi-squared in units of the
+    reduced chi-squared of the most detailed, as the errors of most surveys
+    understate the scatter, plus the log of the points for every parameter.
+    Too few harmonics are not merely a worse fit: an eclipse a tenth of a
+    cycle wide is nothing like three of them, and the phase that fits such a
+    shape least badly is hours from the one of the eclipses - and differently
+    so in each survey, by how it samples them.
+
+    The phase has to be near already: folded at a constant period, a period
+    that changes by a few parts in a thousand over the years smears any shape
+    into a sinusoid, and one harmonic is all the smear needs.
+
+    Returns the number chosen and a (harmonics, chi-squared, BIC) for each
+    candidate fitted. Candidates the points cannot carry are left out.
+    """
+    npoints = sum(len(t) for t, _, _, _ in series)
+    phases = [(t, y, dy, group, model.phase_basis(t) @ coeffs) for t, y, dy, group in series]
+
+    fits = []
+    for nharm in candidates:
+        groups = {}
+        for t, y, dy, group, phase in phases:
+            groups.setdefault(group, []).append((SeriesFit(t, y, dy, window_days, nharm), phase))
+
+        chi2, nparams, any_fitted = 0.0, model.ncoef, False
+        for members in groups.values():
+            chi2 += sum(f.chi2_trend for f, _ in members)
+            nparams += sum(f.ntrend for f, _ in members)
+            if sum(len(f.mjds) - f.ntrend for f, _ in members) <= 2 * nharm + 2:
+                continue
+            gram, proj = 0, 0
+            for fit, phase in members:
+                g, pr = fit.normal_at(phase)
+                gram, proj = gram + g, proj + pr
+            chi2 -= float(np.linalg.lstsq(gram, proj, rcond=None)[0] @ proj)
+            nparams += 2 * nharm
+            any_fitted = True
+
+        if any_fitted and npoints - nparams > 1:
+            fits.append((nharm, chi2, npoints - nparams, nparams))
+
+    if not fits:
+        raise ValueError('Too few points for the harmonics in any survey and filter')
+
+    scale = max(fits[-1][1] / fits[-1][2], 1e-12)
+    scored = [(nharm, chi2, chi2 / scale + nparams * np.log(npoints))
+              for nharm, chi2, _, nparams in fits]
+    best = min(scored, key=lambda _: _[2])[0]
+    return best, scored
 
 
 def _oc_windows(times, length):
@@ -1145,6 +1270,12 @@ def local_periods(series, window_days, frequency, length, nharm=PERIOD_HARMONICS
 
 
 def connect_phases(model, t, phase, error, frequency):
+    """The coefficients of `model` fitted to the phases of windows, with the
+    cycles between them counted by `count_cycles`."""
+    return model.from_phases(t, count_cycles(model, t, phase, error, frequency), error)
+
+
+def count_cycles(model, t, phase, error, frequency):
     """Count the cycles between windows whose phases are known only modulo one.
 
     `phase` is the phase of the light curve in each window at times `t`, as
@@ -1164,7 +1295,7 @@ def connect_phases(model, t, phase, error, frequency):
     period that is wrong far from the middle has its cycle count wrong there,
     and no local optimiser counts it right again.
 
-    Returns the coefficients of `model` fitted to all the windows so counted.
+    Returns the phases so counted, in the order given.
     """
     order = np.argsort(t)
     t, phase, error = t[order], phase[order], error[order]
@@ -1211,7 +1342,9 @@ def connect_phases(model, t, phase, error, frequency):
         counted[j] = phase[j] + np.round(predicted - phase[j])
         lo, hi = min(lo, j), max(hi, j)
 
-    return model.from_phases(t, counted, error)
+    out = np.empty(n)
+    out[order] = counted
+    return out
 
 
 def _track(model, t, phase, error):
@@ -1316,6 +1449,367 @@ def measure_oc(series, window_days, phase, templates, length, nharm=PERIOD_HARMO
 
     return out
 
+
+# ------------------------------------------------------------ eclipse minima
+
+# Bins of phase the folded light curve is looked for its eclipses in
+ECLIPSE_PROFILE_BINS = 200
+
+# A secondary eclipse is a minimum away from the primary at least this deep,
+# as a fraction of the primary's depth and in units of the scatter of the
+# folded light curve outside the eclipses
+ECLIPSE_SECONDARY_DEPTH = 0.03
+ECLIPSE_SECONDARY_SIGMA = 5.0
+
+# The part of an eclipse a minimum is timed on: where the light is more than
+# this fraction of the depth below the light outside it - most of the eclipse,
+# the steep branches that carry the timing included, but not the shoulders,
+# which the reflection and the ellipsoidal variation shape as much as it
+ECLIPSE_TIMING_LEVEL = 0.2
+
+# Points a minimum needs within that part, at least so many of them on either
+# side of the minimum, and so many in the middle half - K2's half-hour cadence
+# puts seven in the eclipses of a binary of a day
+ECLIPSE_MIN_POINTS = 7
+ECLIPSE_MIN_SIDE = 3
+ECLIPSE_MIN_BOTTOM = 2
+
+# Even powers of the time from the minimum an eclipse is described by: the
+# constant, t^2, t^4 and t^6, which follow a flat bottom as well as a sharp one
+# - and one fewer for fewer points than this
+ECLIPSE_POLY_TERMS = 4
+ECLIPSE_POLY_POINTS = 12
+
+# Trial times of the minimum across half the timed part, and how many times the
+# points are taken again about the minimum found before it is given up on
+ECLIPSE_SHIFT_SAMPLES = 41
+ECLIPSE_RECENTRE = 3
+
+# Minima whose timing misses the fitted ephemeris by more than this many times
+# the scatter of the rest are left out of it - a few nights of systematics in
+# a sector make one, as does an eclipse half in a gap
+MINIMA_CLIP_SIGMA = 5.0
+
+# The errors of the minima of one series and one kind - its primaries, or its
+# secondaries - are scaled to their scatter about the fit when there are at
+# least this many of them, and by that of all the minima otherwise; the fit is
+# made again until the scales settle, at most so many times. The curve an
+# eclipse is timed with follows a deep primary less well than a shallow
+# secondary, which leaves the primaries' errors five times their scatter in
+# TESS and K2, while the errors K2 gives its fluxes are far below theirs
+MINIMA_RESCALE_MIN = 5
+MINIMA_ITERATIONS = 10
+
+
+def _light(series, magnitudes):
+    """Each series as light about its median - a magnitude rises as the light
+    falls - so that an eclipse is a minimum whatever the units."""
+    out = []
+    for t, y, dy, group in series:
+        light = y - np.median(y)
+        out.append((t, -light if magnitudes else light, dy, group))
+    return out
+
+
+def eclipse_profile(series, frequency, epoch, magnitudes=False):
+    """Where the eclipses are in the cycle, from the light curve folded at
+    `frequency` from `epoch`.
+
+    The series are pooled about their medians and folded into
+    ECLIPSE_PROFILE_BINS bins, the median of each. The primary eclipse is the
+    deepest bin; the secondary the deepest away from it, if it is deep enough
+    to be one. Each eclipse's half-width is how far from its minimum the light
+    recovers to ECLIPSE_TIMING_LEVEL of its depth.
+
+    Returns {'primary': (phase, half-width, depth), 'secondary': the same or
+    None}, the phases in cycles from `epoch` and the depths in the units of
+    the light curve.
+    """
+    nb = ECLIPSE_PROFILE_BINS
+    phases, values = [], []
+    for t, light, _, _ in _light(series, magnitudes):
+        phases.append(((t - epoch) * frequency) % 1.0)
+        values.append(light)
+    phases, values = np.concatenate(phases), np.concatenate(values)
+
+    index = np.minimum((phases * nb).astype(int), nb - 1)
+    profile = np.full(nb, np.nan)
+    for i in np.unique(index):
+        profile[i] = np.median(values[index == i])
+
+    filled = np.isfinite(profile)
+    if filled.sum() < nb / 2:
+        raise ValueError('The folded light curve covers too little of the cycle to find its eclipses in')
+
+    # Empty bins from their neighbours, round the cycle
+    centres = (np.arange(nb) + 0.5) / nb
+    profile = np.interp(centres, centres[filled], profile[filled], period=1.0)
+    profile = median_filter(profile, size=3, mode='wrap')
+
+    baseline = np.median(profile)
+
+    def eclipse(i):
+        depth = baseline - profile[i]
+        level = baseline - ECLIPSE_TIMING_LEVEL * depth
+        reach = []
+        for step in (-1, 1):
+            k = 1
+            while k < nb // 4 and profile[(i + step * k) % nb] < level:
+                k += 1
+            reach.append(k)
+        return centres[i], max(reach) / nb, float(depth)
+
+    primary = eclipse(int(np.argmin(profile)))
+    if not primary[2] > 0:
+        raise ValueError('The folded light curve has no eclipse to time')
+
+    # Away from the primary by more than twice its half-width
+    distance = np.abs((centres - primary[0] + 0.5) % 1.0 - 0.5)
+    away = distance > min(2 * primary[1], 0.35)
+
+    secondary = None
+    if np.any(away):
+        outside = profile[away]
+        sigma = 1.4826 * np.median(np.abs(outside - np.median(outside)))
+        i = int(np.flatnonzero(away)[np.argmin(outside)])
+        depth = baseline - profile[i]
+        if depth > ECLIPSE_SECONDARY_DEPTH * primary[2] and depth > ECLIPSE_SECONDARY_SIGMA * sigma:
+            secondary = eclipse(i)
+
+    return {'primary': primary, 'secondary': secondary}
+
+
+def _time_minimum(t, light, error, centre, halfwidth):
+    """The time of one minimum, from the points within `halfwidth` days of
+    `centre`, as `eclipse_minima` describes. None where they do not time it."""
+    if len(t) < ECLIPSE_MIN_POINTS:
+        return None
+
+    grid = np.linspace(-0.25, 0.25, ECLIPSE_SHIFT_SAMPLES) * halfwidth
+    step = grid[1] - grid[0]
+    weight = 1.0 / error
+    nterms = ECLIPSE_POLY_TERMS if len(t) >= ECLIPSE_POLY_POINTS else ECLIPSE_POLY_TERMS - 1
+    yw = light * weight
+
+    def fit(at):
+        u2 = ((t - at) / halfwidth) ** 2
+        a = np.column_stack([u2 ** k for k in range(nterms)]) * weight[:, None]
+        coeffs = np.linalg.lstsq(a, yw, rcond=None)[0]
+        resid = yw - a @ coeffs
+        return float(resid @ resid), coeffs, resid
+
+    chi2 = np.array([fit(centre + _)[0] for _ in grid])
+    i = int(np.argmin(chi2))
+    if not 0 < i < len(grid) - 1:
+        return None
+
+    prev, best, nxt = chi2[i - 1], chi2[i], chi2[i + 1]
+    denom = prev - 2 * best + nxt
+    if not denom > 0:
+        return None
+
+    tmin = centre + grid[i] + 0.5 * step * (prev - nxt) / denom
+    c2, coeffs, resid = fit(tmin)
+
+    # Both branches seen, and the bottom between them
+    before, after = np.sum(t < tmin), np.sum(t > tmin)
+    middle = np.sum(np.abs(t - tmin) < 0.5 * halfwidth)
+    if min(before, after) < ECLIPSE_MIN_SIDE or middle < ECLIPSE_MIN_BOTTOM:
+        return None
+
+    # A minimum, rising towards the edges of the part timed
+    depth = float(np.sum(coeffs[1:]))
+    if not depth > 0:
+        return None
+
+    dof = max(len(t) - nterms - 1, 1)
+    beta = red_noise_factor(t, resid, halfwidth / 3.0)
+    error = np.sqrt(max(c2 / dof, 1.0) * 2 * step ** 2 / denom) * beta
+
+    return float(tmin), float(error), float(-coeffs[0]), float(beta)
+
+
+def eclipse_minima(series, frequency, epoch, profile, magnitudes=False):
+    """The time of every eclipse the light curve covers well enough to time.
+
+    The eclipses are expected where `profile` - from `eclipse_profile` - has
+    them on the ephemeris of `frequency` and `epoch`, and each is timed in each
+    series on its own: the points within its half-width of where it is
+    expected, fitted with a curve symmetric about the minimum - even powers of
+    the time from it - whose time is varied to the least chi-squared, linear
+    in everything else. The points are then taken again about the minimum
+    found, until it stays within an eighth of the half-width of their middle.
+    No template of the light curve enters - the timing rests on the symmetry
+    of an eclipse alone, as Kwee and van Woerden's does.
+
+    The uncertainty is from the curvature of the chi-squared, scaled by the
+    reduced chi-squared when above one and by `red_noise_factor` on a third
+    of the half-width - an a priori one, which `fit_minima` scales to what
+    the minima scatter by.
+
+    Returns per minimum (MJD, its uncertainty, whether it is a secondary,
+    first and last MJD of the points timed, their number, the light at the
+    minimum below the series' median, red noise factor, index of the series),
+    in time order.
+    """
+    out = []
+    eclipses = [(False, profile['primary'])]
+    if profile.get('secondary'):
+        eclipses.append((True, profile['secondary']))
+
+    for index, (t, light, dy, _) in enumerate(_light(series, magnitudes)):
+        order = np.argsort(t)
+        t, light, dy = t[order], light[order], dy[order]
+
+        for secondary, (phase, halfwidth, _) in eclipses:
+            width = halfwidth / frequency
+            first = np.ceil((t[0] - epoch) * frequency - phase - halfwidth)
+            last = np.floor((t[-1] - epoch) * frequency - phase + halfwidth)
+
+            for cycle in np.arange(first, last + 1):
+                centre = epoch + (cycle + phase) / frequency
+                timed = None
+                for _ in range(ECLIPSE_RECENTRE + 1):
+                    a, b = np.searchsorted(t, [centre - width, centre + width])
+                    timed = _time_minimum(t[a:b], light[a:b], dy[a:b], centre, width)
+                    if timed is None or abs(timed[0] - centre) < width / 8:
+                        break
+                    centre = timed[0]
+                else:
+                    timed = None
+
+                if timed is not None:
+                    tmin, error, level, beta = timed
+                    out.append((tmin, error, secondary, float(t[a]), float(t[b - 1]),
+                                int(b - a), level, beta, index))
+
+    out.sort(key=lambda _: _[0])
+    return out
+
+
+def fit_minima(model, times, errors, secondary, frequency, classes=None, keep=None):
+    """The phase of `model` fitted to the times of eclipse minima.
+
+    A primary minimum is at a whole number of cycles of the phase, a secondary
+    one at half a cycle more and an offset, delta, of its own - nought for a
+    circular orbit, (2/pi) e cos(omega) or so for an eccentric one - fitted
+    along with the constant of the phase. The cycles are counted first on the
+    primaries alone, by `count_cycles`, which is what survives the gaps; each
+    secondary is then given the count that puts it nearest to the fit of
+    them. Minima missing the fit by more than MINIMA_CLIP_SIGMA times the
+    scatter of the rest are left out, and the fit made again without them.
+
+    The errors of each of `classes` - the series a minimum was timed in -
+    and kind are scaled to the scatter of its minima about the fit, as
+    MINIMA_RESCALE_MIN says, so that the weights are what the minima show
+    rather than what the timing of each supposed. With `keep` given, the
+    minima it marks are fitted with their errors as they are and none are
+    clipped - for models of lower order to be compared with the one whose
+    fit settled both, on the same minima and the same weights.
+
+    `times` and `errors` in days. Returns the constants - of the phase, then
+    delta when there are secondaries - the coefficients, their covariance,
+    constants first, scaled by the reduced chi-squared when above one, the
+    chi-squared and degrees of freedom, the phases counted, which minima
+    were kept, and their errors as scaled, in days.
+    """
+    times = np.asarray(times, dtype=float)
+    err = np.asarray(errors, dtype=float) * frequency
+    secondary = np.asarray(secondary, dtype=bool)
+    primary = ~secondary
+
+    # Too few primaries to count on, and the secondaries are taken as they are
+    if primary.sum() < 3:
+        base = np.ones(len(times), dtype=bool)
+    else:
+        base = primary
+    first = np.where(secondary, 0.5, 0.0)
+    counted = first.copy()
+    counted[base] = count_cycles(model, times[base], first[base], err[base], frequency)
+
+    const, coeffs, _, _ = model.fit_phases(times[base], counted[base], err[base])
+    predicted = const[0] + model.phase_basis(times) @ coeffs
+
+    with_delta = bool(secondary.any() and primary.any())
+    delta = 0.0
+    if with_delta and base is primary:
+        # Where the secondaries fall from half a cycle after the primaries
+        delta = float(np.median(predicted[secondary] % 1.0 - 0.5))
+
+    labels = []
+    if classes is not None:
+        labels = [np.asarray(classes) == c for c in np.unique(classes)]
+        labels = [_ & kind for _ in labels for kind in (primary, secondary) if np.any(_ & kind)]
+
+    fixed = keep is not None
+    keep = np.ones(len(times), dtype=bool) if keep is None else np.asarray(keep, dtype=bool)
+    for _ in range(MINIMA_ITERATIONS):
+        # Each minimum the count of cycles that puts it nearest to the fit so
+        # far; the secondaries half a cycle on, delta fitted on top
+        frac = np.where(secondary, 0.5 + delta, 0.0)
+        target = np.where(secondary, 0.5, 0.0) + np.round(predicted - frac)
+        extra = -secondary[keep].astype(float) if with_delta else None
+        const, coeffs, cov, chi2 = model.fit_phases(times[keep], target[keep], err[keep], extra=extra)
+        if with_delta:
+            delta = float(const[1])
+        frac = np.where(secondary, 0.5 + delta, 0.0)
+        predicted = const[0] + model.phase_basis(times) @ coeffs
+        if fixed:
+            break
+
+        # The phase the model gives the minimum, less the half cycle and
+        # delta a secondary is at, against its count
+        resid = (predicted - frac - np.round(predicted - frac)) / err
+
+        settled = True
+        if labels:
+            overall = np.sqrt(np.mean(resid[keep] ** 2))
+            scales = np.ones(len(times))
+            for label in labels:
+                k = label & keep
+                scales[label] = np.sqrt(np.mean(resid[k] ** 2)) if k.sum() >= MINIMA_RESCALE_MIN else overall
+            scales = np.maximum(scales, 1e-3)
+            err, resid = err * scales, resid / scales
+            settled = np.all(np.abs(scales[keep] - 1) < 0.02)
+
+        sigma = 1.4826 * np.median(np.abs(resid[keep]))
+        clipped = np.abs(resid) < MINIMA_CLIP_SIGMA * max(sigma, 1.0)
+        if clipped.sum() <= model.ncoef + 2 or (np.array_equal(clipped, keep) and settled):
+            break
+        keep = clipped
+
+    counted = frac + np.round(predicted - frac)
+    dof = max(int(keep.sum()) - model.ncoef - len(const), 1)
+    cov = cov * max(chi2 / dof, 1.0)
+    return const, coeffs, cov, chi2, dof, counted, keep, err / frequency
+
+
+
+def minima_periods(times, errors, counted, keep, frequency, length):
+    """The period within every window of `length` days, from the minima in it.
+
+    A straight line through the phases `fit_minima` counted for the minima
+    kept, against their times - within a window of a season, the count is the
+    reference period's own and no other could be. Windows with fewer than
+    three minima, or spanning fewer than three cycles, are left out.
+
+    Returns per window what `local_periods` does: (mean MJD, first and last
+    MJD, number of minima, frequency, its uncertainty), the latter scaled by
+    the reduced chi-squared when above one.
+    """
+    out = []
+    for a, b in _oc_windows(times[keep], length):
+        k = keep & (times >= a) & (times < b)
+        if k.sum() < 3 or np.ptp(times[k]) * frequency < 3:
+            continue
+        w = 1.0 / (errors[k] * frequency)
+        x = np.column_stack([np.ones(k.sum()), times[k] - times[k].mean()]) * w[:, None]
+        sol = np.linalg.lstsq(x, counted[k] * w, rcond=None)[0]
+        chi2 = float(np.sum((x @ sol - counted[k] * w) ** 2))
+        cov = np.linalg.pinv(x.T @ x) * max(chi2 / max(k.sum() - 2, 1), 1.0)
+        out.append((float(times[k].mean()), float(times[k].min()), float(times[k].max()),
+                    int(k.sum()), float(sol[1]), float(np.sqrt(cov[1, 1]))))
+    return out
 
 # The time-resolved periodogram: at most so many windows, each searched on a
 # grid of at most so many frequencies, and sent back decimated to so many

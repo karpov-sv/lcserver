@@ -581,7 +581,9 @@
       <span class="span-help-popover help-secondary float-end" title="Period change">
         <p>A period that changes with time, fitted to the light curve itself: the phase is the integral of a frequency that is a <b>polynomial</b> in time of the given order - 0 for a constant period, 1 for one changing at a constant rate - or a <b>spline</b> with a knot every so many days, for a period that wanders.</p>
         <p><b>Fit Period Change</b> starts from the period being folded at, and uses it with T₀ as the reference ephemeris of the O−C diagram, moving T₀ to the nearest maximum of light. It uses the same visible sources, error filters, dates and trend as <b>Fit Period</b>. Counting the cycles across seasonal gaps is what such a fit depends on, so it is started in several ways - from the phases of windows that follow the seasons, and from the periods found within each - and the one that fits best is kept.</p>
-        <p>The O−C is measured in windows of <b>O−C window</b> days, each fitted with the folded light curve's shape, shifted and scaled; it is drawn with the model and its band, the residuals from it, and the period of the model with time beside the period each window finds on its own - the one check of the cycle count that does not depend on it. The errors allow for noise that does not average down as white noise would, and the summary says when the O−C wanders beyond them, as on a spotted star it will.</p>
+        <p>With <b>O−C from light curve windows</b>, the model is fitted to the light curve itself, its shape described by the number of <b>harmonics</b> chosen - three suit most pulsators and are quick, while the narrow eclipses of a detached binary need a dozen and more, which fewer put hours out. <b>Auto</b> takes as many as the Bayesian information criterion asks for. The O−C is measured in windows of <b>O−C window</b> days, each fitted with that shape, shifted and scaled.</p>
+        <p>With <b>O−C from eclipse minima</b>, every eclipse covered well enough - points along both branches and across the bottom, as the space missions have them - is timed on its own by a curve symmetric about its minimum, and the model is fitted to those times, primaries at whole cycles and secondaries half a cycle on, with their offset from it fitted too, as an eccentric orbit shifts them. The errors of each series' primaries and secondaries are scaled to their scatter, and minima far off the fit are left out, drawn hollow. T₀ is then a primary minimum.</p>
+        <p>The O−C is drawn with the model and its band, the residuals from it, and the period of the model with time beside the period each window finds on its own - the one check of the cycle count that does not depend on it. The errors allow for noise that does not average down as white noise would, and the summary says when the O−C wanders beyond them, as on a spotted star it will.</p>
         <p><b>Fold with model</b> folds the light curve with the model's phase rather than a constant period.</p>
       </span>
     </h6>
@@ -611,12 +613,34 @@
         <small class="text-muted">d between knots</small>
       </div>
       <div class="col-auto">
+        <select class="form-select form-select-sm" id="pc-timing" onchange="onTimingChange(); checkPeriodChangeStale()"
+                title="What the O−C and the model are measured from: windows of the light curve, each fitted with its folded shape, or the times of the eclipse minima of an eclipsing binary, each timed on its own">
+          <option value="windows" selected>O−C from light curve windows</option>
+          <option value="minima">O−C from eclipse minima</option>
+        </select>
+      </div>
+      <div class="col-auto" id="pc-harmonics-group">
+        <select class="form-select form-select-sm" id="pc-harmonics" onchange="checkPeriodChangeStale()"
+                title="How many harmonics describe the shape of the light curve fitted in windows. Three suit most pulsators and are quick; the narrow eclipses of a detached binary need a dozen and more, and fewer put their phase hours out. Auto chooses by the Bayesian information criterion, at the cost of a fit or two more - and many harmonics make each fit slower.">
+          <option value="auto">auto harmonics</option>
+          <option value="1">1 harmonic</option>
+          <option value="2">2 harmonics</option>
+          <option value="3" selected>3 harmonics</option>
+          <option value="4">4 harmonics</option>
+          <option value="6">6 harmonics</option>
+          <option value="8">8 harmonics</option>
+          <option value="12">12 harmonics</option>
+          <option value="16">16 harmonics</option>
+          <option value="20">20 harmonics</option>
+        </select>
+      </div>
+      <div class="col-auto">
         <label for="pc-window" class="col-form-label col-form-label-sm">O−C window:</label>
       </div>
       <div class="col-auto">
         <input type="number" class="form-control form-control-sm" id="pc-window" onchange="checkPeriodChangeStale()"
                style="width: 80px;" step="1" min="1" value="100"
-               title="Days of data each point of the O-C diagram is measured from. Each window starts at the first point after the last one, so that they follow the seasons.">
+               title="Days of data each point of the O-C diagram is measured from - or, from eclipse minima, each period in a window is. Each window starts at the first point after the last one, so that they follow the seasons.">
       </div>
       <div class="col-auto">
         <small class="text-muted">d</small>
@@ -2275,6 +2299,12 @@ function fitPeriod() {
 // Each fit numbered, so that the folds cached for one are not taken for another
 let periodModelCount = 0;
 
+// The eclipse minima are timed without harmonics
+function onTimingChange() {
+    document.getElementById('pc-harmonics-group').style.display =
+        document.getElementById('pc-timing').value === 'minima' ? 'none' : '';
+}
+
 function onPeriodModelChange() {
     const spline = document.getElementById('pc-model').value === 'spline';
     ['pc-order-group', 'pc-order-label'].forEach(id =>
@@ -2330,6 +2360,9 @@ function periodChangeSelection() {
         order: model === 'spline' ? null : parseInt(document.getElementById('pc-order').value),
         knot_days: model === 'spline' ? parseFloat(document.getElementById('pc-knots').value) : null,
         oc_window: parseFloat(document.getElementById('pc-window').value),
+        timing: document.getElementById('pc-timing').value,
+        harmonics: document.getElementById('pc-timing').value === 'minima'
+                   ? null : document.getElementById('pc-harmonics').value,
         detrend_window: detrendWindow(),
         prewhiten: removedFrequencies.slice(),
         mjd_min: dates.min,
@@ -2404,8 +2437,9 @@ function fitPeriodChange() {
         return response.json();
     })
     .then(data => {
-        // T0 moved to the maximum of light. Taken back from the input as it
-        // shows it, so that the ephemeris folded at is the model's to the bit
+        // T0 moved to the maximum of light, or the primary minimum. Taken
+        // back from the input as it shows it, so that the ephemeris folded at
+        // is the model's to the bit
         const epochInput = document.getElementById('epoch-input');
         epochInput.value = data.epoch.toFixed(6);
         data.epoch = parseFloat(epochInput.value);
@@ -2422,20 +2456,49 @@ function fitPeriodChange() {
         foldModel = data;
 
         const perYear = 365.25;
-        let message = `Period change fit: ${data.model}, with ${data.harmonics} harmonics\n\n`
+        const minima = data.timing === 'minima';
+        let message = `Period change fit: ${data.model}, ${fitBasis(data)}\n\n`
             + `Reference ephemeris: P = ${data.period.toFixed(6)} d, `
-            + `T₀ = ${data.epoch.toFixed(4)} MJD (a maximum of light)\n`
+            + `T₀ = ${data.epoch.toFixed(4)} MJD (${minima ? 'a primary minimum' : 'a maximum of light'})\n`
             + `At MJD ${data.tref.toFixed(1)}, the middle of the data:\n`
             + `  P = ${data.period_tref.toFixed(6)} ± ${data.period_tref_err.toExponential(1)} d\n`
             + `  dP/dt = ${data.pdot.toExponential(3)} ± ${data.pdot_err.toExponential(1)} d/d`
             + ` = ${(data.pdot * perYear).toExponential(3)} d/yr\n\n`
-            + `χ² = ${data.chi2.toFixed(1)}, reduced ${data.reduced_chi2.toFixed(2)}; `
-            + `the noise is ${data.red_noise.toFixed(1)}× worse than white on a tenth of a cycle `
-            + `- the errors above are scaled by both\n`
-            + `Fitted ${data.n_points} points from ${data.n_series} series over ${data.time_span.toFixed(1)} days`
+            + (minima
+               ? `χ² = ${data.chi2.toFixed(1)}, reduced ${data.reduced_chi2.toFixed(2)} - `
+                 + `the errors above are scaled by it when above one\n`
+               : `χ² = ${data.chi2.toFixed(1)}, reduced ${data.reduced_chi2.toFixed(2)}; `
+                 + `the noise is ${data.red_noise.toFixed(1)}× worse than white on a tenth of a cycle `
+                 + `- the errors above are scaled by both\n`)
+            + (minima
+               ? `Timed ${data.minima.primary} primary and ${data.minima.secondary} secondary minima, `
+                 + `${data.minima.used} of them fitted, in ${data.n_points} points`
+               : `Fitted ${data.n_points} points`)
+            + ` from ${data.n_series} series over ${data.time_span.toFixed(1)} days`
             + ` - ${seriesSummary(selection.series)}`
             + (data.detrend_window ? `, each with its trend slower than ${data.detrend_window} d` : '')
-            + `.\n\nBy model (lower BIC is better):\n`;
+            + `.\n`;
+
+        if (minima) {
+            const prof = data.minima.profile;
+            const eclipse = (name, e) => `  ${name} at phase ${e.phase.toFixed(3)}, `
+                + `${(e.depth).toPrecision(3)} deep, timed within ±${(e.halfwidth * data.period * 24).toFixed(2)} h\n`;
+            message += `\nEclipses in the fold at the reference ephemeris:\n` + eclipse('primary', prof.primary)
+                + (prof.secondary ? eclipse('secondary', prof.secondary) : '  no secondary deep enough to time\n');
+            if (data.minima.delta !== null) {
+                // Sterne's first order relation of the secondary's displacement
+                // to the eccentricity
+                const ecosw = Math.PI / 2 * data.minima.delta;
+                message += `Secondaries at phase 0.5 + ${data.minima.delta.toFixed(6)} ± ${data.minima.delta_err.toFixed(6)}`
+                    + ` (${(data.minima.delta * data.period * 1440).toFixed(2)} min) - e cos ω ≈ ${ecosw.toFixed(5)}\n`;
+            }
+        } else if (data.harmonic_scores) {
+            message += `\nHarmonics, by BIC (lower is better):\n  `
+                + data.harmonic_scores.map(h => `${h.harmonics}: ${h.bic.toFixed(1)}`
+                                                + (h.harmonics === data.harmonics ? ' ←' : '')).join(', ') + '\n';
+        }
+
+        message += `\nBy model (lower BIC is better):\n`;
 
         data.stages.forEach(stage => {
             message += `  ${stage.model}: χ² ${stage.chi2.toFixed(1)}, BIC ${stage.bic.toFixed(1)}\n`;
@@ -2444,11 +2507,14 @@ function fitPeriodChange() {
         if (data.prewhitened && data.prewhitened.length)
             message += `\nRemoved first, fitted together:\n${removedSummary(data.prewhitened)}`;
 
-        message += `\nO−C measured in ${data.oc.mjd.length} windows of ${data.oc_window} d, `
-                 + `the period on its own in ${data.local.mjd.length} of them.`
+        message += (minima
+                    ? `\nO−C of ${data.oc.mjd.length} minima, the period on its own in `
+                      + `${data.local.mjd.length} windows of ${data.oc_window} d.`
+                    : `\nO−C measured in ${data.oc.mjd.length} windows of ${data.oc_window} d, `
+                      + `the period on its own in ${data.local.mjd.length} of them.`)
                  + (data.oc_scatter !== null
-                    ? ` The O−C scatters about the model with χ² ${data.oc_scatter.toFixed(1)} per window`
-                      + ` - about one if its errors account for all of it.`
+                    ? ` The O−C scatters about the model with χ² ${data.oc_scatter.toFixed(1)} per `
+                      + `${minima ? 'minimum' : 'window'} - about one if its errors account for all of it.`
                     : '');
 
         if (data.warnings && data.warnings.length > 0) {
@@ -2500,14 +2566,70 @@ function plotOC(data) {
 
     // What the model leaves of each O-C point, which the trend of the O-C
     // itself would hide - days of it against errors of hundredths. Not the
-    // residuals of a fit to the points, as the model was fitted to the light
-    // curve, so they need not average to zero exactly.
+    // residuals of a fit to the points when the model was fitted to the
+    // light curve, so they need not average to zero exactly then.
     const residual = oc.mjd.map((t, i) => oc.oc[i] - modelOffset(data, t) * data.period);
     const resUpper = curve.offset_err.map(e => e * data.period);
     const resLower = resUpper.map(e => -e);
 
     // The bands answer to the one legend entry
     const band = {mode: 'lines', type: 'scatter', legendgroup: 'band', hoverinfo: 'skip'};
+
+    // The O-C points, of windows or of primary and secondary minima, those
+    // left out of the fit hollow - on the O-C panel, or on the residuals. The
+    // secondaries first, so that the primaries, timed better, are on top
+    const kinds = {
+        window: {name: 'O−C', color: '#1f77b4', symbol: 'circle'},
+        secondary: {name: 'Secondary minima', color: '#ff7f0e', symbol: 'diamond'},
+        primary: {name: 'Primary minima', color: '#1f77b4', symbol: 'circle'}
+    };
+    function pointTraces(residuals) {
+        const out = [];
+        Object.entries(kinds).forEach(([kind, style]) => [true, false].forEach(used => {
+            const idx = oc.mjd.map((_, i) => i).filter(i => oc.kind[i] === kind && oc.used[i] === used);
+            if (!idx.length)
+                return;
+            const pick = a => idx.map(i => a[i]);
+            const trace = {
+                x: pick(oc.mjd), mode: 'markers', type: 'scatter',
+                name: style.name + (used ? '' : ', left out'),
+                legendgroup: kind + used, showlegend: !residuals,
+                error_y: {type: 'data', array: pick(oc.oc_err), visible: true, thickness: 1},
+                marker: {color: style.color, size: kind === 'window' ? 6 : 5,
+                         symbol: style.symbol + (used ? '' : '-open')}
+            };
+            if (residuals) {
+                Object.assign(trace, {
+                    y: pick(residual), yaxis: 'y3',
+                    customdata: idx.map(i => [oc.oc_err[i], residual[i] / data.period]),
+                    hovertemplate: 'MJD %{x:.4f}<br>O−C − model %{y:.5f} ± %{customdata[0]:.5f} d'
+                                 + '<br>= %{customdata[1]:.4f} cycles<extra></extra>'
+                });
+            } else if (kind === 'window') {
+                Object.assign(trace, {
+                    y: pick(oc.oc),
+                    customdata: idx.map(i => [oc.mjd_min[i], oc.mjd_max[i], oc.n[i], oc.amplitude[i],
+                                              oc.oc_err[i], oc.red_noise[i]]),
+                    hovertemplate: 'MJD %{customdata[0]:.1f} – %{customdata[1]:.1f}, %{customdata[2]} points'
+                                 + '<br>O−C %{y:.4f} ± %{customdata[4]:.4f} d'
+                                 + ' (noise %{customdata[5]:.1f}× worse than white)'
+                                 + '<br>amplitude %{customdata[3]:.2f} × the template<extra></extra>'
+                });
+            } else {
+                Object.assign(trace, {
+                    y: pick(oc.oc),
+                    customdata: idx.map(i => [oc.n[i], oc.amplitude[i], oc.oc_err[i],
+                                              oc.oc_err[i] * 1440]),
+                    hovertemplate: `${style.name.replace(' minima', ' minimum')} at MJD %{x:.5f}, %{customdata[0]} points`
+                                 + '<br>O−C %{y:.5f} ± %{customdata[2]:.5f} d (± %{customdata[3]:.2f} min)'
+                                 + '<br>%{customdata[1]:.4g} below the median of its series'
+                                 + (used ? '' : '<br>left out of the fit') + '<extra></extra>'
+                });
+            }
+            out.push(trace);
+        }));
+        return out;
+    }
 
     const traces = [Object.assign({}, band, {
         x: curve.mjd, y: ocUpper, line: {width: 0}, showlegend: false
@@ -2518,17 +2640,7 @@ function plotOC(data) {
         x: curve.mjd, y: modelOC, mode: 'lines', type: 'scatter',
         name: 'Model', line: {color: '#d62728', width: 1.5},
         hovertemplate: 'MJD %{x:.1f}<br>O−C %{y:.4f} d<extra>model</extra>'
-    }, {
-        x: oc.mjd, y: oc.oc, mode: 'markers', type: 'scatter', name: 'O−C',
-        error_y: {type: 'data', array: oc.oc_err, visible: true, thickness: 1},
-        marker: {color: '#1f77b4', size: 6},
-        customdata: oc.mjd.map((_, i) => [oc.mjd_min[i], oc.mjd_max[i], oc.n[i], oc.amplitude[i],
-                                          oc.oc_err[i], oc.red_noise[i]]),
-        hovertemplate: 'MJD %{customdata[0]:.1f} – %{customdata[1]:.1f}, %{customdata[2]} points'
-                     + '<br>O−C %{y:.4f} ± %{customdata[4]:.4f} d'
-                     + ' (noise %{customdata[5]:.1f}× worse than white)'
-                     + '<br>amplitude %{customdata[3]:.2f} × the template<extra></extra>'
-    }, Object.assign({}, band, {
+    }, ...pointTraces(false), Object.assign({}, band, {
         x: curve.mjd, y: resUpper, yaxis: 'y3', line: {width: 0}, showlegend: false
     }), Object.assign({}, band, {
         x: curve.mjd, y: resLower, yaxis: 'y3', line: {width: 0}, showlegend: false,
@@ -2545,15 +2657,7 @@ function plotOC(data) {
         y: [data.period / 4, data.period / 4, null, -data.period / 4, -data.period / 4],
         mode: 'lines', type: 'scatter', yaxis: 'y3', name: '± ¼ cycle',
         line: {color: theme.font.color, width: 1, dash: 'dot'}, hoverinfo: 'skip'
-    }, {
-        x: oc.mjd, y: residual, mode: 'markers', type: 'scatter', yaxis: 'y3',
-        name: 'O−C − model', showlegend: false,
-        error_y: {type: 'data', array: oc.oc_err, visible: true, thickness: 1},
-        marker: {color: '#1f77b4', size: 6},
-        customdata: oc.mjd.map((_, i) => [oc.oc_err[i], residual[i] / data.period]),
-        hovertemplate: 'MJD %{x:.1f}<br>O−C − model %{y:.4f} ± %{customdata[0]:.4f} d'
-                     + '<br>= %{customdata[1]:.3f} cycles<extra></extra>'
-    }, Object.assign({}, band, {
+    }, ...pointTraces(true), Object.assign({}, band, {
         x: curve.mjd, y: upper, yaxis: 'y2', line: {width: 0}, showlegend: false
     }), Object.assign({}, band, {
         x: curve.mjd, y: lower, yaxis: 'y2', line: {width: 0}, showlegend: false,
@@ -2590,9 +2694,10 @@ function plotOC(data) {
                   zeroline: false, automargin: true};
 
     // The residuals and their errors decide the range, not the band, which
-    // widens without end across a gap with no data
+    // widens without end across a gap with no data - those of the points
+    // fitted, so that a minimum left out does not squash the rest
     const reach = Math.max(1e-4 * data.period,
-                           ...residual.map((r, i) => Math.abs(r) + oc.oc_err[i]));
+                           ...residual.map((r, i) => oc.used[i] ? Math.abs(r) + oc.oc_err[i] : 0));
 
     Plotly.newPlot('oc-container', traces, {
         title: {text: `O−C against P = ${data.period.toFixed(6)} d, T₀ = ${data.epoch.toFixed(4)} MJD`
@@ -2956,14 +3061,25 @@ function downloadPeriodogram() {
                 pg.periods.map((p, i) => [p, pg.power[i]]));
 }
 
+// What a period change fit was fitted to
+function fitBasis(data) {
+    return data.timing === 'minima'
+        ? 'fitted to the times of the eclipse minima'
+        : `with ${data.harmonics} harmonics` + (data.harmonic_scores ? ', as many as the BIC chose' : '');
+}
+
 function changeComments(data) {
+    const minima = data.timing === 'minima';
     return [
-        `${TARGET_NAME} - period changing as a ${data.model}, ${data.harmonics} harmonics`,
-        `O-C against P = ${data.period} d, T0 = ${data.epoch} MJD; times in days`,
+        `${TARGET_NAME} - period changing as a ${data.model}, ${fitBasis(data)}`,
+        `O-C against P = ${data.period} d, T0 = ${data.epoch} MJD (${minima ? 'primary minimum' : 'maximum of light'}); times in days`,
         `At MJD ${data.tref}: P = ${data.period_tref} +- ${data.period_tref_err} d, dP/dt = ${data.pdot} +- ${data.pdot_err}`,
-        `chi2 ${data.chi2}, reduced ${data.reduced_chi2}, red noise factor ${data.red_noise}`,
+        `chi2 ${data.chi2}, reduced ${data.reduced_chi2}` + (minima ? '' : `, red noise factor ${data.red_noise}`),
+        ...(minima && data.minima.delta !== null
+            ? [`secondary minima at phase 0.5 + ${data.minima.delta} +- ${data.minima.delta_err}`] : []),
         ...settingsComments(JSON.parse(data.selection)),
-        `O-C windows of ${data.oc_window} d`
+        minima ? `Periods in windows of ${data.oc_window} d; amplitude is the light at minimum below the median of its series`
+               : `O-C windows of ${data.oc_window} d`
     ];
 }
 
@@ -2974,12 +3090,12 @@ function downloadOC() {
     const oc = data.oc;
     const rows = oc.mjd.map((t, i) => {
         const model = modelOffset(data, t) * data.period;
-        return [t, oc.mjd_min[i], oc.mjd_max[i], oc.n[i], oc.oc[i], oc.oc_err[i],
-                model, oc.oc[i] - model, oc.amplitude[i], oc.red_noise[i]];
+        return [t, oc.kind[i], oc.used[i] ? 1 : 0, oc.mjd_min[i], oc.mjd_max[i], oc.n[i], oc.oc[i],
+                oc.oc_err[i], model, oc.oc[i] - model, oc.amplitude[i], oc.red_noise[i]];
     });
 
     downloadCSV(`${filePrefix()}_oc.csv`, changeComments(data),
-                ['mjd', 'mjd_min', 'mjd_max', 'n', 'oc', 'oc_err', 'model_oc', 'residual',
+                ['mjd', 'kind', 'used', 'mjd_min', 'mjd_max', 'n', 'oc', 'oc_err', 'model_oc', 'residual',
                  'amplitude', 'red_noise'], rows);
 }
 

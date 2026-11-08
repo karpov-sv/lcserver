@@ -20,18 +20,24 @@ from .processing.periods import (
     OC_EXCESS_SCATTER,
     PERIOD_AMBIGUOUS_DCHI2,
     PERIOD_CHANGE_CURVE_POINTS,
+    PERIOD_CHANGE_HARMONICS,
     PERIOD_CHANGE_MAX_COEFFS,
     PERIOD_CHANGE_MAX_ORDER,
     PERIOD_CHANGE_SPLINE_START,
     PERIOD_HARMONICS,
     PERIOD_MAX_NTERMS,
+    MINIMA_CLIP_SIGMA,
     PhaseModel,
     alias_kind,
+    choose_harmonics,
     connect_phases,
     detrend_series,
     dynamic_power,
+    eclipse_minima,
+    eclipse_profile,
     find_period,
     fit_frequencies,
+    fit_minima,
     fit_phase_model,
     fourier_parameters,
     frequency_columns,
@@ -39,6 +45,7 @@ from .processing.periods import (
     harmonics,
     local_periods,
     measure_oc,
+    minima_periods,
     refine_peaks,
     rotate_harmonics,
 )
@@ -928,6 +935,235 @@ def _positive(data, key, default, kind=float):
     return value
 
 
+def _change_from_light_curve(loaded, detrend_window, period, order, knot_days, oc_window, mode, tmin, tmax,
+                             nharm=PERIOD_HARMONICS):
+    """The period change fitted to the light curve itself, with `nharm`
+    harmonics - or, for 'auto', as many as `choose_harmonics` finds it needs -
+    and its O-C measured in windows of `oc_window` days.
+
+    Returns what `_fit_period_change` makes its answer of: the model, its
+    coefficients and their covariance, the chi-squared and degrees of
+    freedom, each stage as (model, chi-squared) and the number of points
+    their BIC counts, the phase of the maximum of light, the O-C as a
+    function of the linear phase it is measured from, and the periods of the
+    windows on their own.
+    """
+    notes = []
+
+    def fit_stages(nharm):
+        # The period within each window, which needs no count of the cycles
+        # between them
+        local = local_periods(loaded, detrend_window, 1.0 / period, oc_window, nharm=nharm)
+        lt, lf, le = (np.array([_[k] for _ in local]) for k in (0, 4, 5))
+
+        def best_fit(m, starts):
+            fits = [fit_phase_model(loaded, detrend_window, m, c, nharm=nharm) for c in starts]
+            return min(fits, key=lambda _: _[2])
+
+        # Order by order from a constant period, each started both from the
+        # last and from the periods of the windows - a period that changes a
+        # lot is out of reach of a start from a constant one, which ends a
+        # cycle or more out at the ends. Whichever fits better is kept, and
+        # the chi-squared of each order tells what it bought over the last
+        stages = []
+        model, coeffs = None, None
+        for o in range(order + 1):
+            m = PhaseModel(tmin, tmax, order=o)
+            starts = [m.initial(1.0 / period) if coeffs is None else np.r_[coeffs, 0.0]]
+            if o > 0 and len(local) > o + 1:
+                starts.append(m.from_frequencies(lt, lf, le))
+            fitted = best_fit(m, starts)
+            model, coeffs = m, fitted[0]
+            stages.append((m, fitted))
+
+        target_model = model
+        if knot_days:
+            target_model = PhaseModel(tmin, tmax, knot_days=knot_days)
+            if target_model.ncoef > PERIOD_CHANGE_MAX_COEFFS:
+                raise _BadRequest('Too many knots',
+                                  f'A knot every {knot_days:g} days makes {target_model.ncoef} coefficients over '
+                                  f'{tmax - tmin:.0f} days; at most {PERIOD_CHANGE_MAX_COEFFS} are fitted')
+
+        # And from the phases of the windows, against the template of the
+        # last fit, with the cycles between them counted one window at a time
+        # - the start that survives the gaps, where the others lose count
+        starts = []
+        if knot_days or order > 0:
+            def reference(t):
+                return (np.asarray(t, dtype=float) - model.tref) / period
+
+            windows = measure_oc(loaded, detrend_window, reference, stages[-1][1][4], oc_window, nharm=nharm)
+            if len(windows) > 2:
+                wt, ws, we = (np.array([_[k] for _ in windows]) for k in (0, 4, 5))
+                starts.append(connect_phases(target_model, wt, reference(wt) - ws, we,
+                                             1.0 / period))
+
+        if knot_days:
+            starts.append(target_model.project(model, coeffs))
+            if len(local) > 2:
+                starts.append(target_model.from_frequencies(lt, lf, le))
+            stages.append((target_model, best_fit(target_model, starts)))
+            model = target_model
+        elif starts:
+            fitted = best_fit(model, starts)
+            if fitted[2] < stages[-1][1][2]:
+                stages[-1] = (model, fitted)
+        return stages, (lt, lf, le)
+
+    def choose(m, c):
+        try:
+            return choose_harmonics(loaded, detrend_window, m, c)
+        except ValueError as e:
+            raise _BadRequest('Too few points for the harmonics', str(e))
+
+    harmonic_scores = None
+    if nharm == 'auto':
+        # As many harmonics as the light curve needs at the starting period,
+        # and again at the phase the fit found with them - which a period that
+        # changes a lot is the first to need - fitted again if that is
+        # another number
+        m0 = PhaseModel(tmin, tmax, order=0)
+        nharm, harmonic_scores = choose(m0, m0.initial(1.0 / period))
+        stages, (lt, lf, le) = fit_stages(nharm)
+        again, scores = choose(stages[-1][0], stages[-1][1][0])
+        if again != nharm:
+            nharm, harmonic_scores = again, scores
+            stages, (lt, lf, le) = fit_stages(nharm)
+    else:
+        stages, (lt, lf, le) = fit_stages(nharm)
+    model = stages[-1][0]
+
+    coeffs, cov, chi2, dof, group_harmonics, red_noise = stages[-1][1]
+
+    # The phase zero moved to the maximum of light of the template of the
+    # group with most points, so that T0 is a time of maximum as an
+    # ephemeris has it
+    sizes = {}
+    for t, _, _, g in loaded:
+        sizes[g] = sizes.get(g, 0) + len(t)
+    main = max(group_harmonics, key=lambda g: sizes.get(g, 0))
+    g = np.arange(1000) / 1000.0
+    curve = harmonics(g, 1.0, nharm) @ group_harmonics[main]
+    zero = float(g[np.argmax(curve) if mode == 'flux' else np.argmin(curve)])
+    templates = {k: rotate_harmonics(v_, -zero, nharm)[0] for k, v_ in group_harmonics.items()}
+
+    def measure(linear_phase):
+        return [w + ('window', True)
+                for w in measure_oc(loaded, detrend_window, linear_phase, templates, oc_window, nharm=nharm)]
+
+    return {
+        'model': model, 'coeffs': coeffs, 'cov': cov, 'chi2': chi2, 'dof': dof,
+        'stages': [(m, f[2]) for m, f in stages],
+        'nbic': sum(len(t) for t, _, _, _ in loaded),
+        'zero': zero, 'measure': measure, 'local': (lt, lf, le), 'notes': notes,
+        'harmonics': nharm,
+        'harmonic_scores': [{'harmonics': n, 'chi2': round(c, 2), 'bic': round(b, 2)}
+                            for n, c, b in harmonic_scores] if harmonic_scores else None,
+        'red_noise': red_noise,
+    }
+
+
+def _change_from_minima(loaded, detrend_window, period, epoch, order, knot_days, oc_window, mode, tmin, tmax):
+    """The period change fitted to the times of the eclipse minima, each
+    timed on its own - see `eclipse_minima` - rather than to the light
+    curve, which no number of harmonics describes as well as a detached
+    eclipsing binary's eclipses can be timed.
+
+    The eclipses are looked for in the light curve folded at the reference
+    ephemeris, with its trend taken off first when one is asked for: a slope
+    across an eclipse would move its minimum. Returns what
+    `_change_from_light_curve` does, the phase zero at a primary minimum,
+    and the periods of the windows from the minima in each.
+    """
+    notes = []
+    magnitudes = mode != 'flux'
+    frequency = 1.0 / period
+    reference = epoch if epoch is not None else tmin
+
+    series = loaded
+    if detrend_window:
+        series = [(t, detrend_series(t, y, detrend_window, subtract=magnitudes)[0], dy, g)
+                  for t, y, dy, g in loaded]
+
+    try:
+        profile = eclipse_profile(series, frequency, reference, magnitudes)
+    except ValueError as e:
+        raise _BadRequest('No eclipses to time', str(e))
+
+    minima = eclipse_minima(series, frequency, reference, profile, magnitudes)
+    mt, me, ms, mi = (np.array([_[k] for _ in minima]) for k in (0, 1, 2, 8))
+    if len(minima) < max(order + 3, 4):
+        raise _BadRequest('Too few eclipse minima',
+                          f'Only {len(minima)} eclipses are covered well enough to time. Each needs '
+                          f'points along both of its branches and across its bottom, as few but the '
+                          f'space missions and dense photometry from the ground have them.')
+    ms = ms.astype(bool)
+
+    models = [PhaseModel(tmin, tmax, order=o)
+              for o in range(PERIOD_CHANGE_SPLINE_START + 1 if knot_days else order + 1)]
+    if knot_days:
+        models.append(PhaseModel(tmin, tmax, knot_days=knot_days))
+        if models[-1].ncoef > PERIOD_CHANGE_MAX_COEFFS:
+            raise _BadRequest('Too many knots',
+                              f'A knot every {knot_days:g} days makes {models[-1].ncoef} coefficients over '
+                              f'{tmax - tmin:.0f} days; at most {PERIOD_CHANGE_MAX_COEFFS} are fitted')
+
+    # The errors scaled and the outliers clipped about the model asked for,
+    # and every order up to it fitted to the same minima with the same
+    # errors, so that their chi-squared tells what each order bought
+    settled = fit_minima(models[-1], mt, me, ms, frequency, classes=mi)
+    errors, keep = settled[7], settled[6]
+    stages = [(m, fit_minima(m, mt, errors, ms, frequency, keep=keep)) for m in models[:-1]]
+    stages.append((models[-1], settled))
+
+    model = stages[-1][0]
+    const, coeffs, cov, chi2, dof, counted, keep, errors = stages[-1][1]
+    nconst = len(const)
+    delta = float(const[1]) if nconst > 1 else 0.0
+    delta_err = float(np.sqrt(max(cov[1, 1], 0))) if nconst > 1 else None
+
+    if not keep.all():
+        notes.append(f'{int((~keep).sum())} of the {len(keep)} minima miss the fit by more than '
+                     f'{MINIMA_CLIP_SIGMA:g} times the scatter of the rest, and are left out of it - '
+                     f'drawn hollow.')
+
+    # The period within each window, from the minima in it alone
+    local = minima_periods(mt, errors, counted, keep, frequency, oc_window)
+    lt, lf, le = (np.array([_[k] for _ in local]) for k in (0, 4, 5))
+
+    frac = np.where(ms, 0.5 + delta, 0.0)
+
+    def measure(linear_phase):
+        out = []
+        # With the errors as the fit scaled them to the scatter
+        for i, (tm, _, secondary, ta, tb, n, level, beta, _) in enumerate(minima):
+            shift = (linear_phase(np.array([tm]))[0] - frac[i] + 0.5) % 1.0 - 0.5
+            out.append((tm, ta, tb, n, float(shift), errors[i] * frequency, level, beta,
+                        'secondary' if secondary else 'primary', bool(keep[i])))
+        return out
+
+    def described(eclipse):
+        if eclipse is None:
+            return None
+        phase, halfwidth, depth = eclipse
+        return {'phase': round(phase, 4), 'halfwidth': round(halfwidth, 4), 'depth': round(depth, 5)}
+
+    return {
+        'model': model, 'coeffs': coeffs, 'cov': cov[nconst:, nconst:], 'chi2': chi2, 'dof': dof,
+        'stages': [(m, f[3]) for m, f in stages],
+        'nbic': int(keep.sum()),
+        # The phase is a whole number of cycles at a primary minimum
+        'zero': -float(const[0]),
+        'measure': measure, 'local': (lt, lf, le), 'notes': notes,
+        'minima': {
+            'primary': int((~ms).sum()), 'secondary': int(ms.sum()), 'used': int(keep.sum()),
+            'delta': round(delta, 6) if nconst > 1 else None,
+            'delta_err': round(delta_err, 6) if delta_err is not None else None,
+            'profile': {k: described(v) for k, v in profile.items()},
+        },
+    }
+
+
 @login_required
 @require_http_methods(["POST"])
 def fit_period_change(request, id):
@@ -947,7 +1183,8 @@ def _fit_period_change(request, id):
     The period and T0 of the fold are the reference ephemeris, and the period
     is where the fit starts from - it has to be near already, as from "Fit
     Period". The phase of the model then folds the light curve, with T0 moved
-    to the maximum of light nearest to where it was.
+    to the maximum of light nearest to where it was - or, when the minima of
+    an eclipsing binary are what is timed, to the primary minimum.
     """
     target = models.Target.objects.get(id=id)
 
@@ -962,6 +1199,24 @@ def _fit_period_change(request, id):
             detrend_window, mjd_min, mjd_max = _fit_options(data)
             period = _positive(data, 'period', None)
             oc_window = _positive(data, 'oc_window', 100.0)
+
+            # What the O-C and the model are measured from: windows of the
+            # light curve fitted with its shape, or the eclipse minima
+            timing = data.get('timing') or 'windows'
+            if timing not in ('windows', 'minima'):
+                raise _BadRequest('Invalid timing', 'The O-C is measured in windows or from eclipse minima')
+
+            # How many harmonics describe the light curve in windows, or
+            # 'auto' for as many as it needs
+            nharm = data.get('harmonics') or PERIOD_HARMONICS
+            if nharm != 'auto':
+                try:
+                    nharm = int(nharm)
+                except (TypeError, ValueError):
+                    nharm = 0
+                if not 1 <= nharm <= max(PERIOD_CHANGE_HARMONICS):
+                    raise _BadRequest('Invalid number of harmonics',
+                                      f'It is auto, or 1 to {max(PERIOD_CHANGE_HARMONICS)}')
 
             kind = data.get('model', 'polynomial')
             if kind == 'spline':
@@ -1027,92 +1282,32 @@ def _fit_period_change(request, id):
 
         notes = []
 
-        # The period within each window, which needs no count of the cycles
-        # between them
-        local = local_periods(loaded, detrend_window, 1.0 / period, oc_window)
-        lt, lf, le = (np.array([_[k] for _ in local]) for k in (0, 4, 5))
+        try:
+            if timing == 'minima':
+                fit = _change_from_minima(loaded, detrend_window, period, epoch, order, knot_days,
+                                          oc_window, mode, tmin, tmax)
+            else:
+                fit = _change_from_light_curve(loaded, detrend_window, period, order, knot_days,
+                                               oc_window, mode, tmin, tmax, nharm=nharm)
+        except _BadRequest as e:
+            return e.response()
 
-        def best_fit(m, starts):
-            fits = [fit_phase_model(loaded, detrend_window, m, c) for c in starts]
-            return min(fits, key=lambda _: _[2])
-
-        # Order by order from a constant period, each started both from the
-        # last and from the periods of the windows - a period that changes a
-        # lot is out of reach of a start from a constant one, which ends a
-        # cycle or more out at the ends. Whichever fits better is kept, and
-        # the chi-squared of each order tells what it bought over the last
-        stages = []
-        model, coeffs = None, None
-        for o in range(order + 1):
-            m = PhaseModel(tmin, tmax, order=o)
-            starts = [m.initial(1.0 / period) if coeffs is None else np.r_[coeffs, 0.0]]
-            if o > 0 and len(local) > o + 1:
-                starts.append(m.from_frequencies(lt, lf, le))
-            fitted = best_fit(m, starts)
-            model, coeffs = m, fitted[0]
-            stages.append((m, fitted))
-
-        target_model = model
-        if knot_days:
-            target_model = PhaseModel(tmin, tmax, knot_days=knot_days)
-            if target_model.ncoef > PERIOD_CHANGE_MAX_COEFFS:
-                return JsonResponse({
-                    'error': 'Too many knots',
-                    'details': f'A knot every {knot_days:g} days makes {target_model.ncoef} coefficients over '
-                               f'{span:.0f} days; at most {PERIOD_CHANGE_MAX_COEFFS} are fitted'
-                }, status=400)
-
-        # And from the phases of the windows, against the template of the
-        # last fit, with the cycles between them counted one window at a time
-        # - the start that survives the gaps, where the others lose count
-        starts = []
-        if knot_days or order > 0:
-            def reference(t):
-                return (np.asarray(t, dtype=float) - model.tref) / period
-
-            windows = measure_oc(loaded, detrend_window, reference, stages[-1][1][4], oc_window)
-            if len(windows) > 2:
-                wt, ws, we = (np.array([_[k] for _ in windows]) for k in (0, 4, 5))
-                starts.append(connect_phases(target_model, wt, reference(wt) - ws, we,
-                                             1.0 / period))
-
-        if knot_days:
-            starts.append(target_model.project(model, coeffs))
-            if len(local) > 2:
-                starts.append(target_model.from_frequencies(lt, lf, le))
-            stages.append((target_model, best_fit(target_model, starts)))
-            model = target_model
-        elif starts:
-            fitted = best_fit(model, starts)
-            if fitted[2] < stages[-1][1][2]:
-                stages[-1] = (model, fitted)
-
-        coeffs, cov, chi2, dof, group_harmonics, red_noise = stages[-1][1]
+        model, coeffs, cov = fit['model'], fit['coeffs'], fit['cov']
+        chi2, dof = fit['chi2'], fit['dof']
         reduced = chi2 / dof
+        zero = fit['zero']
 
         # Each stage scored against the scatter the last one leaves, as the
         # errors of most surveys understate it
         scored = []
-        for m, (c, _, x2, d, _, _) in stages:
+        for m, x2 in fit['stages']:
             scored.append({'model': m.describe(), 'ncoef': m.ncoef,
                            'chi2': round(x2, 2),
-                           'bic': round(x2 / max(reduced, 1e-12) + m.ncoef * np.log(npoints), 2)})
+                           'bic': round(x2 / max(reduced, 1e-12) + m.ncoef * np.log(fit['nbic']), 2)})
         preferred = min(range(len(scored)), key=lambda i: scored[i]['bic'])
         if preferred != len(scored) - 1:
             notes.append(f'The Bayesian information criterion prefers the {scored[preferred]["model"]} '
                          f'to the {scored[-1]["model"]} - the extra freedom is not bought by the data.')
-
-        # The phase zero moved to the maximum of light of the template of the
-        # group with most points, so that T0 is a time of maximum as an
-        # ephemeris has it
-        sizes = {}
-        for t, _, _, g in loaded:
-            sizes[g] = sizes.get(g, 0) + len(t)
-        main = max(group_harmonics, key=lambda g: sizes.get(g, 0))
-        g = np.arange(1000) / 1000.0
-        curve = harmonics(g, 1.0, PERIOD_HARMONICS) @ group_harmonics[main]
-        zero = float(g[np.argmax(curve) if mode == 'flux' else np.argmin(curve)])
-        templates = {k: rotate_harmonics(v_, -zero, PERIOD_HARMONICS)[0] for k, v_ in group_harmonics.items()}
 
         def model_phase(t):
             return model.phase_basis(t) @ coeffs - zero
@@ -1120,7 +1315,8 @@ def _fit_period_change(request, id):
         def model_frequency(t):
             return model.frequency_basis(t) @ coeffs
 
-        # The maximum nearest to the T0 asked for, or to the middle of the data
+        # The maximum of light, or the primary minimum, nearest to the T0
+        # asked for, or to the middle of the data
         t0 = epoch if epoch is not None and tmin <= epoch <= tmax else model.tref
         cycle = float(np.round(model_phase(t0)[0]))
         for _ in range(5):
@@ -1133,55 +1329,61 @@ def _fit_period_change(request, id):
             """O-C of the model, in cycles of the reference period."""
             return linear_phase(t) - (model_phase(t) - cycle)
 
-        oc = measure_oc(loaded, detrend_window, linear_phase, templates, oc_window)
+        oc = fit['measure'](linear_phase)
 
         # Each shift taken a whole number of cycles from where the model has it,
         # which is what counts the cycles across the gaps
         oc_points = {'mjd': [], 'mjd_min': [], 'mjd_max': [], 'n': [], 'oc': [],
-                     'oc_err': [], 'amplitude': [], 'red_noise': []}
-        for tm, ta, tb, n, shift, err, amp, beta in oc:
+                     'oc_err': [], 'amplitude': [], 'red_noise': [], 'kind': [], 'used': []}
+        for tm, ta, tb, n, shift, err, amp, beta, kind, used in oc:
             shift += np.round(offset(tm)[0] - shift)
-            for key, value in zip(oc_points, (round(tm, 4), round(ta, 4), round(tb, 4), n,
+            for key, value in zip(oc_points, (round(tm, 6), round(ta, 4), round(tb, 4), n,
                                               round(float(shift * period), 6),
                                               round(err * period, 6), round(amp, 4),
-                                              round(beta, 2))):
+                                              round(beta, 2), kind, used)):
                 oc_points[key].append(value)
+
+        used = np.array(oc_points['used'], dtype=bool)
+        oc_mjd = np.array(oc_points['mjd'])
 
         # How far the O-C strays from the model, against its errors. Well
         # above one, the phase wanders more than the noise accounts for -
         # which on a spotted star is the spots, growing, decaying and
         # migrating, and otherwise a model too simple for the period
         oc_scatter = None
-        if len(oc_points['mjd']) > 1:
-            dev = (np.array(oc_points['oc']) / period - offset(np.array(oc_points['mjd'])))
-            oc_scatter = float(np.mean((dev * period / np.array(oc_points['oc_err'])) ** 2))
+        if used.sum() > 1:
+            dev = (np.array(oc_points['oc'])[used] / period - offset(oc_mjd[used]))
+            oc_scatter = float(np.mean((dev * period / np.array(oc_points['oc_err'])[used]) ** 2))
             if oc_scatter > OC_EXCESS_SCATTER:
                 notes.append(f'The O-C scatters about the model {np.sqrt(oc_scatter):.1f} times more than '
-                             f'its errors allow (chi-squared {oc_scatter:.1f} per window) - the phase '
+                             f'its errors allow (chi-squared {oc_scatter:.1f} per point) - the phase '
                              f'wanders beyond the noise, as spots make it on a spotted star, or the '
                              f'model is too simple for how the period changes.')
 
-        # A window the model misses by a good part of a cycle has its cycle
+        # A point the model misses by a good part of a cycle has its cycle
         # count in doubt, and with it the model around it
-        missed = [tm for tm, o in zip(oc_points['mjd'], oc_points['oc'])
-                  if abs(o / period - offset(tm)[0]) > 0.25]
+        missed = [tm for tm, o, u in zip(oc_points['mjd'], oc_points['oc'], used)
+                  if u and abs(o / period - offset(tm)[0]) > 0.25]
         if missed:
-            notes.append(f'The model misses {len(missed)} of the O-C windows by more than a quarter '
+            notes.append(f'The model misses {len(missed)} of the O-C points by more than a quarter '
                          f'of a cycle (around MJD {", ".join(f"{_:.0f}" for _ in missed[:5])}'
                          f'{", ..." if len(missed) > 5 else ""}) - the count of cycles there is in '
                          f'doubt. Narrow the dates, or give the model more freedom.')
 
-        if len(oc_points['mjd']) < 3:
+        if timing != 'minima' and len(oc_points['mjd']) < 3:
             notes.append(f'Only {len(oc_points["mjd"])} windows of {oc_window:g} days had enough '
                          f'points for an O-C - try longer ones.')
+
+        notes.extend(fit['notes'])
+        lt, lf, le = fit['local']
 
         grid = np.linspace(tmin, tmax, PERIOD_CHANGE_CURVE_POINTS)
         fb = model.frequency_basis(grid)
         freq = fb @ coeffs
         freq_err = np.sqrt(np.maximum(np.einsum('ij,jk,ik->i', fb, cov, fb), 0))
 
-        # And of its O-C, counted from T0 - pinned at a maximum of light, and
-        # so known exactly there by construction, the uncertainty growing with
+        # And of its O-C, counted from T0 - pinned at a maximum of light, or
+        # a primary minimum, and so known exactly there by construction, the uncertainty growing with
         # the cycles away from it
         pb = model.phase_basis(grid) - model.phase_basis(t0)[0]
         offset_err = np.sqrt(np.maximum(np.einsum('ij,jk,ik->i', pb, cov, pb), 0))
@@ -1208,7 +1410,12 @@ def _fit_period_change(request, id):
             'kind': 'spline' if knot_days else 'polynomial',
             'order': order if not knot_days else None,
             'knot_days': knot_days,
-            'harmonics': PERIOD_HARMONICS,
+            'timing': timing,
+            # How many harmonics the light curve was fitted with, and what
+            # each number tried scored - none when the minima were timed
+            'harmonics': fit.get('harmonics'),
+            'harmonic_scores': fit.get('harmonic_scores'),
+            'minima': fit.get('minima'),
             'stages': scored,
             'chi2': round(chi2, 2),
             'reduced_chi2': round(reduced, 4),
@@ -1238,11 +1445,11 @@ def _fit_period_change(request, id):
             },
             'oc': oc_points,
             'prewhitened': removed,
-            # Chi-squared per window of the O-C about the model
+            # Chi-squared per point of the O-C about the model
             'oc_scatter': oc_scatter,
-            # How much worse than white the residuals of the fit are, which the
-            # errors of the model are scaled by
-            'red_noise': round(red_noise, 2),
+            # How much worse than white the residuals of the fit to the light
+            # curve are, which the errors of the model are scaled by
+            'red_noise': round(fit['red_noise'], 2) if fit.get('red_noise') is not None else None,
             'detrended': detrended,
             # The period within each window, on its own
             'local': {
