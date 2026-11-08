@@ -327,6 +327,70 @@
   </div>
 </div>
 
+<!-- How much the star varies and on what timescales, whether or not it has
+     a period - per survey and filter, of the points the period tools see -->
+<div class="control-panel mt-3" id="var-panel" style="display: none;">
+  <h5 class="mb-0">
+    <span class="panel-toggle collapsed" data-bs-toggle="collapse" data-bs-target="#var-section"
+      role="button" aria-expanded="false" aria-controls="var-section"
+      title="Click to show or hide">
+      <i class="fa fa-caret-down"></i> Variability
+    </span>
+    <span class="span-help-popover help-secondary float-end" title="Variability">
+      <p>Indices of the variation of every survey in one filter, and its structure function - for a star with no period as much as for one with. Of the points the period tools see: the visible sources, error filters and <b>Dates</b>, with the trend taken off if <b>Remove trend</b> is ticked and any removed periods taken off too.</p>
+      <p><b>χ²ᵣ</b> is the reduced chi-squared about the weighted mean, and <b>log p</b> the chance of one as large from the errors alone. <b>RMS</b> is the scatter with the errors taken off in quadrature - in magnitudes, or as a fraction of the mean in flux; when it is not two sigma clear of none, an upper limit. <b>η</b>, von Neumann's ratio, is about 2 for noise and near 0 for a variation slow against the sampling; Stetson's <b>J</b> is about 0 for noise and positive when points close in time vary together, <b>K</b> about 0.80 for a Gaussian and lower for a star that spends its time at the extremes - an eclipsing binary, a dipper. <b>Skew</b> is positive, in magnitudes, for dips and negative for outbursts. <b>5–95%</b> is the range of the middle 90% of points, and <b>slope</b> the linear trend per year.</p>
+      <p>The <b>structure function</b> is the scatter of the differences of pairs of points against the time between them, robustly from their interquartile range and with the noise of each pair taken off. It rises with the lag for as long as the star keeps varying more, and levels off at the timescale beyond which it varies no more; a period dips it at its multiples. Pairs are taken within each series only, each calibrated or normalized on its own.</p>
+      <p>A <b>hollow triangle</b> is a lag at which the star cannot be told to vary at all: the differences of its pairs are no larger than their errors alone would make them. What is left once the noise is taken off is then zero within its uncertainty, and the triangle stands at the most it can be - two sigma above - with the star's real variation at that lag somewhere below it. They gather at the shortest lags, where a star changes less within a night than its photometry can see.</p>
+      <p>The line, unless <b>Random walk</b> is unticked, is a damped random walk fitted to it, SF∞ √(1 − e<sup>−Δt/τ</sup>), with its timescale <b>τ</b> and amplitude <b>SF∞</b> - √2 times the rms of the walk. A τ longer than a tenth of the span is no more than a lower limit, marked ≳.</p>
+      <p><b>Pairs across sources</b> adds a structure function of all the visible sources together, at the offsets they are drawn at - out to the lags between a plate archive and a modern survey, which is as good as the offsets that bring them together.</p>
+    </span>
+  </h5>
+
+  <div class="collapse" id="var-section">
+    <div class="row g-2 align-items-center mt-1">
+      <div class="col-auto">
+        <div class="form-check">
+          <input class="form-check-input" type="checkbox" id="var-across"
+                 title="A structure function of all the visible sources together, with pairs between them, at the offsets they are drawn at">
+          <label class="form-check-label small" for="var-across">Pairs across sources</label>
+        </div>
+      </div>
+      <div class="col-auto">
+        <div class="form-check">
+          <input class="form-check-input" type="checkbox" id="var-drw" checked onchange="toggleDrwLines()"
+                 title="The damped random walk fitted to each structure function, as a line - untick to see the points alone">
+          <label class="form-check-label small" for="var-drw">Random walk</label>
+        </div>
+      </div>
+      <div class="col-auto">
+        <button class="btn btn-sm btn-primary" onclick="computeVariability()" id="var-btn">
+          <i class="fa fa-line-chart"></i> Compute
+        </button>
+      </div>
+      <div class="col-auto">
+        <small class="text-muted" id="var-summary"></small>
+      </div>
+    </div>
+
+    <div class="table-responsive mt-2" id="var-table-box" style="display: none;">
+      <table class="table table-sm small mb-0">
+        <thead><tr>
+          <th>Survey</th><th class="text-end">N</th><th class="text-end">χ²ᵣ</th><th class="text-end">log p</th>
+          <th class="text-end">RMS</th><th class="text-end">η</th><th class="text-end">J</th><th class="text-end">K</th>
+          <th class="text-end">Skew</th><th class="text-end">5–95%</th><th class="text-end">Slope /yr</th>
+          <th class="text-end">τ, d</th><th class="text-end">SF∞</th>
+        </tr></thead>
+        <tbody id="var-table"></tbody>
+      </table>
+    </div>
+
+    <div id="var-box" class="plotly-resizable mt-2" style="height: 420px; display: none;">
+      <div id="var-container" class="plotly-chart"></div>
+      <div class="plot-resize-handle" role="separator" title="Drag to resize the plot"></div>
+    </div>
+  </div>
+</div>
+
 <!-- Phase Folding Panel -->
 <div class="control-panel mt-3" id="phase-panel" style="display: none;">
   <h5 class="mb-3">
@@ -2889,6 +2953,199 @@ function plotDynamic(data) {
     });
 }
 
+// ------------------------------------------------------------- variability
+
+function computeVariability() {
+    if (!dataLoaded) {
+        alert('Data is still loading. Please wait...');
+        return;
+    }
+
+    // With the offsets, which the pairs across sources are taken at
+    const visibleSeries = requestedSeries().map(s => Object.assign(s, {offset: seriesState[s.index].offset}));
+    if (!visibleSeries.length) {
+        alert('No visible series! Please enable at least one data source.');
+        return;
+    }
+
+    const dates = dateRange();
+    const btn = document.getElementById('var-btn');
+    const originalHtml = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fa fa-spinner fa-spin"></i> Computing...';
+
+    fetch(`/targets/{{ target_id }}/variability/`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json', 'X-CSRFToken': getCookie('csrftoken')},
+        body: JSON.stringify({
+            series: visibleSeries,
+            mode: isMagnitudeMode ? 'magnitude' : 'flux',
+            across: document.getElementById('var-across').checked,
+            detrend_window: detrendWindow(),
+            prewhiten: removedFrequencies.slice(),
+            mjd_min: dates.min,
+            mjd_max: dates.max
+        })
+    })
+    .then(response => response.json().then(data => {
+        if (!response.ok)
+            throw new Error((data.error || 'Server error') + (data.details ? '\n\n' + data.details : ''));
+        return data;
+    }))
+    .then(data => plotVariability(data))
+    .catch(error => {
+        console.error('Error computing the variability:', error);
+        alert(`Variability failed:\n\n${error.message}`);
+    })
+    .finally(() => {
+        btn.disabled = false;
+        btn.innerHTML = originalHtml;
+    });
+}
+
+// A number to so many significant digits, or a dash for none
+function sig(v, digits = 3) {
+    if (v === undefined || v === null || !isFinite(v))
+        return '&mdash;';
+    if (v !== 0 && (Math.abs(v) < 1e-3 || Math.abs(v) >= 1e5))
+        return v.toExponential(digits - 1);
+    return Number(v.toPrecision(digits)).toString();
+}
+
+function withError(v, e, digits = 2) {
+    return e === null || e === undefined || !isFinite(e) ? sig(v, digits + 1) : `${sig(v, digits + 1)} ± ${sig(e, digits)}`;
+}
+
+function drwCells(drw) {
+    if (!drw)
+        return '<td class="text-end">&mdash;</td><td class="text-end">&mdash;</td>';
+    const tau = drw.tau_limit ? `≳ ${sig(drw.tau)}` : withError(drw.tau, drw.tau_err);
+    return `<td class="text-end" title="reduced χ² of the fit ${sig(drw.chi2)}">${tau}</td>`
+         + `<td class="text-end">${withError(drw.sf_inf, drw.sf_inf_err)}</td>`;
+}
+
+function plotVariability(data) {
+    const theme = plotlyTheme();
+    const unit = data.magnitudes ? 'mag' : 'relative flux';
+
+    const body = document.getElementById('var-table');
+    body.innerHTML = '';
+    const traces = [];
+    let lagMin = Infinity, lagMax = 0;
+
+    const addCurve = (bins, drw, name, color) => {
+        const up = bins.filter(b => b.detected), down = bins.filter(b => !b.detected);
+        const hover = name + '<br>lag %{x:.3g} d<br>SF %{y:.3g} ' + unit + '<br>%{customdata} pairs<extra></extra>';
+        traces.push({
+            x: up.map(b => b.lag), y: up.map(b => b.sf), customdata: up.map(b => b.npairs),
+            error_y: {type: 'data', array: up.map(b => b.sf_err), color: color, thickness: 1, width: 0},
+            mode: 'markers', type: 'scatter', name: name, legendgroup: name,
+            marker: {color: color, size: 6}, hovertemplate: hover
+        });
+        if (down.length) traces.push({
+            x: down.map(b => b.lag), y: down.map(b => b.sf), customdata: down.map(b => b.npairs),
+            mode: 'markers', type: 'scatter', name: name + ' (upper limits)', legendgroup: name, showlegend: false,
+            marker: {color: color, size: 7, symbol: 'triangle-down-open'},
+            hovertemplate: name + '<br>lag %{x:.3g} d<br>SF < %{y:.3g} ' + unit + '<br>%{customdata} pairs<extra></extra>'
+        });
+        bins.forEach(b => { lagMin = Math.min(lagMin, b.lag_min); lagMax = Math.max(lagMax, b.lag_max); });
+        if (drw && bins.length) {
+            const lo = Math.log10(bins[0].lag_min), hi = Math.log10(bins[bins.length - 1].lag_max);
+            const x = Array.from({length: 100}, (_, k) => 10 ** (lo + (hi - lo) * k / 99));
+            traces.push({
+                x: x, y: x.map(l => drw.sf_inf * Math.sqrt(1 - Math.exp(-l / drw.tau))),
+                mode: 'lines', type: 'scatter', name: name + ' DRW', legendgroup: name, showlegend: false,
+                meta: 'drw', visible: document.getElementById('var-drw').checked,
+                line: {color: color, width: 1.5, dash: drw.tau_limit ? 'dot' : 'solid'},
+                hovertemplate: `${name}: damped random walk<br>τ = ${sig(drw.tau)} d, SF∞ = ${sig(drw.sf_inf)} ${unit}<extra></extra>`
+            });
+        }
+    };
+
+    data.groups.forEach(g => {
+        const color = seriesState[g.series[0]].color;
+        const v = g.indices;
+        const rms = v.rms === undefined ? '&mdash;'
+                  : v.rms_detected ? withError(v.rms, v.rms_err) : `< ${sig(v.rms + 2 * v.rms_err, 2)}`;
+        const swatch = '<span style="display: inline-block; width: 0.8em; height: 0.8em; border-radius: 2px;'
+                     + ` margin-right: 0.4em; background-color: ${color};"></span>`;
+        const row = document.createElement('tr');
+        row.innerHTML = `<td class="text-nowrap">${swatch}${g.name}</td>`
+            + `<td class="text-end">${v.n}</td>`
+            + `<td class="text-end">${sig(v.chi2)}</td>`
+            + `<td class="text-end">${v.log10_p === undefined ? '&mdash;' : v.log10_p < -99 ? '&lt; −99' : sig(v.log10_p, 2)}</td>`
+            + `<td class="text-end">${rms}</td>`
+            + `<td class="text-end">${sig(v.eta)}</td>`
+            + `<td class="text-end">${sig(v.stetson_j)}</td>`
+            + `<td class="text-end">${sig(v.stetson_k)}</td>`
+            + `<td class="text-end">${sig(v.skewness, 2)}</td>`
+            + `<td class="text-end">${sig(v.amplitude)}</td>`
+            + `<td class="text-end">${withError(v.slope, v.slope_err)}</td>`
+            + drwCells(g.drw);
+        body.appendChild(row);
+        if (g.sf.length)
+            addCurve(g.sf, g.drw, g.name, color);
+    });
+
+    if (data.across) {
+        const row = document.createElement('tr');
+        row.innerHTML = '<td class="text-nowrap" colspan="11"><i>All sources, pairs across them</i></td>' + drwCells(data.across.drw);
+        body.appendChild(row);
+        addCurve(data.across.sf, data.across.drw, 'All sources', theme.font.color);
+    }
+
+    let summary = `${data.n_points} points from ${data.n_series} series`;
+    if (data.detrend_window)
+        summary += `, trend slower than ${data.detrend_window} d removed`;
+    if (data.prewhitened && data.prewhitened.length)
+        summary += `, ${data.prewhitened.length} period${data.prewhitened.length > 1 ? 's' : ''} removed`;
+    document.getElementById('var-summary').textContent = summary;
+    document.getElementById('var-table-box').style.display = 'block';
+
+    if (!traces.length) {
+        document.getElementById('var-box').style.display = 'none';
+        return;
+    }
+    document.getElementById('var-box').style.display = 'block';
+
+    const axis = {showline: true, linecolor: theme.linecolor, gridcolor: theme.gridcolor,
+                  automargin: true, zeroline: false, type: 'log'};
+    Plotly.newPlot('var-container', traces, {
+        title: {text: varTitle(), font: {size: 12}},
+        xaxis: Object.assign({}, axis, {title: {text: 'Lag, days'}}),
+        yaxis: Object.assign({}, axis, {title: {text: `SF, ${unit}`}}),
+        legend: {orientation: 'h', y: -0.2},
+        hovermode: 'closest',
+        autosize: true,
+        margin: {t: 30, r: 30},
+        font: {size: 10, color: theme.font.color},
+        paper_bgcolor: theme.paper_bgcolor,
+        plot_bgcolor: theme.plot_bgcolor
+    }, {responsive: true, displaylogo: false});
+}
+
+function varTitle() {
+    return 'Structure function, noise taken off'
+         + (document.getElementById('var-drw').checked ? '; lines: damped random walk' : '');
+}
+
+// The random walk lines shown or hidden, without computing anything again
+function toggleDrwLines() {
+    const plot = document.getElementById('var-container');
+    if (!plot.data)
+        return;
+    const lines = plot.data.map((trace, i) => trace.meta === 'drw' ? i : -1).filter(i => i >= 0);
+    if (lines.length)
+        Plotly.restyle(plot, {visible: document.getElementById('var-drw').checked}, lines);
+    Plotly.relayout(plot, {'title.text': varTitle()});
+}
+
+// Nothing computed of the other mode's data stays in sight
+function clearVariability() {
+    ['var-box', 'var-table-box'].forEach(id => document.getElementById(id).style.display = 'none');
+    document.getElementById('var-summary').textContent = '';
+}
+
 // ------------------------------------------------------------ prewhitening
 
 // Frequencies taken off the light curve before a search, in cycles per day,
@@ -4005,6 +4262,8 @@ function loadLightcurveData() {
     document.getElementById('control-panel').style.display = 'none';
     document.getElementById('phase-panel').style.display = 'none';
     document.getElementById('colour-panel').style.display = 'none';
+    document.getElementById('var-panel').style.display = 'none';
+    clearVariability();
 
     // The light curve of the other mode goes as soon as the new one is asked
     // for, rather than staying in sight, and seemingly current, for as long
@@ -4064,6 +4323,7 @@ function loadLightcurveData() {
                 // Show controls, plot container, and initialize
                 document.getElementById('control-panel').style.display = 'block';
                 document.getElementById('phase-panel').style.display = 'block';
+                document.getElementById('var-panel').style.display = 'block';
                 // A colour is a difference of magnitudes: in flux mode there is none
                 document.getElementById('colour-panel').style.display = isMagnitudeMode ? 'block' : 'none';
                 if (isMagnitudeMode)

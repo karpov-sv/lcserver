@@ -56,6 +56,7 @@ from .processing.periods import (
     refine_peaks,
     rotate_harmonics,
 )
+from .processing.variability import fit_drw, structure_function, variability_indices
 
 
 def json_safe(values):
@@ -69,6 +70,18 @@ def json_safe(values):
     which every consumer of this already understands as a point with no bar.
     """
     return [None if not np.isfinite(v) else float(v) for v in values]
+
+
+def _finite(value):
+    """`value` with every number JSON cannot carry - NaN, infinity - as null,
+    through dicts and lists."""
+    if isinstance(value, dict):
+        return {k: _finite(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_finite(v) for v in value]
+    if isinstance(value, float) and not np.isfinite(value):
+        return None
+    return value
 
 
 def load_magnitude_data(basepath):
@@ -1731,6 +1744,105 @@ def dynamic_periodogram(request, id):
         traceback.print_exc()
         return JsonResponse({
             'error': 'Unexpected error computing the time-resolved periodogram',
+            'details': str(e),
+            'traceback': traceback.format_exc()
+        }, status=500)
+
+
+@login_required
+@require_http_methods(["POST"])
+def variability(request, id):
+    """Indices of the variation and the structure function, per survey and filter.
+
+    Of the points the period tools see - the series and filters asked for,
+    within the dates, with the removed frequencies taken off and the trend,
+    if asked, too. Each survey in one filter is pooled for its indices and
+    has its structure function from pairs within each of its series; asked
+    `across`, one more is computed from every pair of the series together,
+    with the offsets the viewer draws them at, out to the longest lags the
+    surveys reach between them.
+    """
+    from threadpoolctl import threadpool_limits
+
+    target = models.Target.objects.get(id=id)
+
+    if not target.can_view(request.user):
+        return JsonResponse({'error': 'Forbidden'}, status=403)
+
+    try:
+        data = json.loads(request.body)
+        mode = data.get('mode', 'magnitude')
+        magnitudes = mode != 'flux'
+
+        try:
+            detrend_window, mjd_min, mjd_max = _fit_options(data)
+            requested = _requested_series(target, data.get('series', []), mode,
+                                          mjd_min, mjd_max)
+            with threadpool_limits(limits=1, user_api='blas'):
+                requested, removed = _prewhiten_request(requested, detrend_window, data)
+        except _BadRequest as e:
+            return e.response()
+
+        offsets = {}
+        for s in data.get('series', []):
+            try:
+                offsets[s.get('index')] = float(s.get('offset') or 0)
+            except (TypeError, ValueError):
+                pass
+
+        groups = {}
+        for index, s, t, y, dy, searched in requested:
+            if detrend_window:
+                y, _ = detrend_series(t, y, detrend_window, subtract=magnitudes)
+            groups.setdefault(_series_group(s), []).append(
+                (index, t[searched], y[searched], dy[searched]))
+
+        if not groups:
+            return JsonResponse({'error': 'No valid data points',
+                                 'details': 'No series has points in the dates'}, status=400)
+
+        out = []
+        for group, members in groups.items():
+            t = np.concatenate([_[1] for _ in members])
+            sets = [_[1:] for _ in members if len(_[1]) > 1]
+            bins = structure_function(sets)
+            out.append({
+                'name': _group_name(group),
+                'series': [_[0] for _ in members],
+                'indices': variability_indices(t, np.concatenate([_[2] for _ in members]),
+                                               np.concatenate([_[3] for _ in members]),
+                                               magnitudes=magnitudes),
+                'sf': bins,
+                'drw': fit_drw(bins, np.ptp(t)),
+            })
+
+        result = {
+            'groups': out,
+            'n_points': int(sum(g['indices']['n'] for g in out)),
+            'n_series': int(sum(len(g['series']) for g in out)),
+            'detrend_window': float(detrend_window),
+            'prewhitened': removed,
+            'magnitudes': magnitudes,
+        }
+
+        if data.get('across') and len(requested) > 1:
+            pooled = [m for ms in groups.values() for m in ms]
+            t = np.concatenate([m[1] for m in pooled])
+            y = np.concatenate([m[2] + offsets.get(m[0], 0.0) for m in pooled])
+            dy = np.concatenate([m[3] for m in pooled])
+            bins = structure_function([(t, y, dy)])
+            result['across'] = {'sf': bins, 'drw': fit_drw(bins, np.ptp(t))}
+
+        return JsonResponse(_finite(result))
+
+    except json.JSONDecodeError as e:
+        return JsonResponse({'error': 'Invalid JSON in request body', 'details': str(e)}, status=400)
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return JsonResponse({
+            'error': 'Unexpected error computing the variability',
             'details': str(e),
             'traceback': traceback.format_exc()
         }, status=500)

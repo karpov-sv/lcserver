@@ -153,6 +153,22 @@ it, and the summary says when the O−C wanders beyond them — as on a spotted
 star it will. What each fit said stays on the page, and the light curve, the
 periodogram, the O−C and the model can be downloaded as CSV.
 
+## Variability without a period
+
+Not every star has a period to find, and the viewer says how much one varies
+and on what timescales either way. For each survey in one filter, it gives
+the reduced chi-squared about the mean and the chance of one as large from
+the errors alone, the scatter with the errors taken off, von Neumann's ratio
+and Stetson's J and K (noise, a slow variation, or one that spends its time at
+the extremes), the skewness that tells dips from outbursts, and the trend per
+year. Beside them is the structure function, the scatter of the differences of
+pairs of points against the time between them, with the noise of each pair
+taken off. Pairs are taken within each series, which is calibrated on its
+own, or, if asked, across all the series at the offsets they are drawn at,
+out to the century between a plate and ZTF. A damped random walk is fitted
+to it for a timescale and an amplitude, and a timescale longer than a tenth of
+the span is reported as no more than a lower limit.
+
 ## Fitting a photosphere
 
 From the spectral viewer, the distribution the `sed` step built can be fitted
@@ -440,6 +456,7 @@ and O−C. No database is needed, and they take a few seconds.
 lcserver/
 ├── processing/     one module per survey, each registering itself
 │   ├── periods.py  the period search, prewhitening and the period change fit
+│   ├── variability.py  variability indices and the structure function
 │   ├── sedfit.py   the photosphere fit - grids, priors, sampling, figures
 │   └── gridstats.py  what a grid says as colours and magnitudes, for the page
 ├── ingest/         turning somebody else's data into ours, once and by hand
