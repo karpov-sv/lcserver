@@ -498,6 +498,30 @@ def targets(request, id=None):
 
             return HttpResponseRedirect(request.path_info)
 
+        # Clearing what one source left behind - the same cleanup it does
+        # itself before a re-run. Handled ahead of the forms, so that whatever
+        # was typed into the form is not stored by a click meant to discard.
+        # Config keys it wrote, and results built on it, such as Combined, stay.
+        action = (request.POST.get('action') or '') if request.method == 'POST' else ''
+        if action.startswith('clear_') and action != 'clear_cache':
+            source_id = action[len('clear_'):]
+            survey_config = surveys.get_survey_source(source_id)
+
+            if not target.can_edit(request.user):
+                messages.error(request, "You don't have permission to modify this target")
+            elif not survey_config or source_id == 'info':
+                messages.error(request, f"Cannot clear {source_id}")
+            else:
+                from . import processing
+                processing.cleanup_paths(surveys.get_output_files(source_id),
+                                         basepath=path)
+                target.source_states = {k: v for k, v in (target.source_states or {}).items()
+                                        if k != source_id}
+                target.save()
+                messages.success(request, f"Cleared {survey_config['short_name']} data")
+
+            return HttpResponseRedirect(request.path_info)
+
         # Form actions
         if request.method == 'POST':
             # Handle forms

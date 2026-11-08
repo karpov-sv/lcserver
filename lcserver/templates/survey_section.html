@@ -29,13 +29,21 @@
       <form action="" method="POST" class="mb-0">
         <fieldset class="small" {% if target.celery_id %}disabled{% endif %}>
           {% crispy form %}
-          <div class="mt-2">
+          <div class="mt-2 d-flex align-items-center">
             <button type="submit" name="action" value="target_{{ source_id }}"
                     class="btn {{ source_config.button_class }}">
               {{ source_config.button_text }}
             </button>
             {% if source_config.manual %}
               <span class="text-muted ms-2">Not part of "Run everything" - it runs only from here</span>
+            {% endif %}
+            {# After the step's own button, so that Enter in a field still runs the step rather than clearing it #}
+            {% if source_id != 'info' and source_config.log_file in files %}
+              <button type="submit" name="action" value="clear_{{ source_id }}"
+                      class="btn btn-outline-danger ms-auto"
+                      title="Delete the files this step produced, leaving the rest of the target as it is">
+                Clear
+              </button>
             {% endif %}
           </div>
         </fieldset>
