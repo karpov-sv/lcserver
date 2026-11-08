@@ -49,6 +49,19 @@ PERIOD_ALIASES = [1.0, 0.5, 1/3, 0.99726957, 0.49863478, 365.25]
 # through one isolated night would follow the very signal it is meant to leave.
 DETREND_SPLINE_ORDER = 3
 
+# A level of the trend is only told from the signal when it rests on many
+# visits, at phases the signal averages out over: so many at least for each
+# interval between knots, a visit being points no more than so many days
+# apart. And a stretch has a level of its own only with so many points at
+# least - enough for its level to be fitted along with the signal, as the
+# joint fit does: a WISE visit of a score of points over two days has one,
+# while a single Gaia epoch, whose level would take all of its variation, is
+# pooled with every other such stretch of its series into one trend as slow
+# as their visits together allow
+DETREND_MIN_VISITS = 8
+DETREND_VISIT_DAYS = 0.5
+DETREND_MIN_POINTS = 10
+
 # Outliers are clipped from the fit of the trend, though not from the data
 DETREND_CLIP_SIGMA = 3.0
 DETREND_ITERATIONS = 3
@@ -80,9 +93,11 @@ def trend_blocks(mjds, window_days):
 
     Returns (indices, columns) pairs, one per stretch of the series that no gap
     longer than the window interrupts: the points of the stretch, and the
-    B-spline basis evaluated at them, with a knot every `window_days` days. The
-    trend over the whole series is block-diagonal in these, so each is fitted
-    on its own.
+    B-spline basis evaluated at them, with a knot every `window_days` days -
+    or fewer, so that every interval between them has DETREND_MIN_VISITS
+    visits. The stretches with fewer than DETREND_MIN_POINTS points are pooled
+    into one more, whose knots are as few by the same rule. The trend over the whole
+    series is block-diagonal in these, so each is fitted on its own.
 
     Days rather than points, as ground-based sampling is anything but even: a
     window counted in points, converted at the median cadence, covers no time
@@ -94,18 +109,29 @@ def trend_blocks(mjds, window_days):
     order = np.argsort(x)
     breaks = np.where(np.diff(x[order]) > window_days)[0] + 1
 
-    blocks = []
-    for idx in np.split(order, breaks):
+    def visits(idx):
+        return 1 + int(np.sum(np.diff(x[idx]) > DETREND_VISIT_DAYS))
+
+    def block(idx):
         lo, hi = x[idx].min(), x[idx].max()
-        nknots = int(round((hi - lo) / window_days))
+        nknots = min(int(round((hi - lo) / window_days)), visits(idx) // DETREND_MIN_VISITS)
         k = DETREND_SPLINE_ORDER
 
         if nknots < 1 or len(idx) <= nknots + k:
-            blocks.append((idx, np.ones((len(idx), 1))))
-            continue
+            return idx, np.ones((len(idx), 1))
 
         knots = np.r_[[lo] * k, np.linspace(lo, hi, nknots + 1), [hi] * k]
-        blocks.append((idx, BSpline.design_matrix(x[idx], knots, k).toarray()))
+        return idx, BSpline.design_matrix(x[idx], knots, k).toarray()
+
+    blocks, pooled = [], []
+    for idx in np.split(order, breaks):
+        if len(idx) < DETREND_MIN_POINTS:
+            pooled.append(idx)
+        else:
+            blocks.append(block(idx))
+
+    if pooled:
+        blocks.append(block(np.concatenate(pooled)))
 
     return blocks
 
@@ -262,6 +288,20 @@ class SeriesFit:
         mh = self._detrend(h)
 
         return h.T @ mh, mh.T @ self.yw
+
+    def trend(self, phase=None, coeffs=None):
+        """The best trend under the harmonics `coeffs` at `phase` - or under
+        nothing, with none given - in the units of the values: the trend the
+        joint fit takes off, rather than the one `detrend_series` takes off
+        before any period is known, which takes with it whatever of the signal
+        a short stretch holds."""
+        v = np.array(self.yw)
+        if coeffs is not None:
+            v = v - (harmonics(phase, 1.0, self.nharm) * self.weight[:, None]) @ coeffs
+        out = np.empty(len(v))
+        for idx, bw, inverse in self.blocks:
+            out[idx] = bw @ (inverse @ (bw.T @ v[idx]))
+        return out / self.weight
 
     def residuals(self, phase, coeffs):
         """The weighted residuals of the harmonics `coeffs` at `phase` and of
@@ -750,6 +790,15 @@ PERIOD_CHANGE_MAX_COEFFS = 40
 # A spline starts from the polynomial of this order, fitted first
 PERIOD_CHANGE_SPLINE_START = 2
 
+# The curvature of a spline's frequency costs as much as a phase out by this
+# many cycles at a point, for a bend that would move the phase by as much over
+# one interval between knots. Where data are, they decide; across a gap, where
+# only the phase gained over all of it is known, it picks the smoothest of the
+# frequencies that gain it, rather than leaving the coefficients there free
+# to swing - target 74's period wandered by a tenth of a day across the years
+# before 2015 with a knot every half year
+PERIOD_CHANGE_SPLINE_PHASE = 0.03
+
 # Numbers of harmonics the light curve may be described by in the period
 # change fit, chosen among by `choose_harmonics`. A sinusoidal pulsator needs
 # one or two; a detached eclipsing binary, its eclipses a tenth of a cycle
@@ -757,6 +806,21 @@ PERIOD_CHANGE_SPLINE_START = 2
 # The fit costs the square of the number: thirty took twice as long as twenty
 # over the K2 and TESS of target 1, and put its eclipses no better
 PERIOD_CHANGE_HARMONICS = (1, 2, 3, 4, 6, 8, 12, 16, 20)
+
+# Whole cycles added before the widest gap between the O-C windows in the
+# refit from them, and the scaled chi-squared within which another count is
+# noted as fitting about as well
+PERIOD_CHANGE_GAP_COUNTS = (0, -1, 1, -2, 2)
+PERIOD_CHANGE_GAP_AMBIGUOUS = 25.0
+
+# The errors of each survey and filter are scaled by the square root of its
+# reduced chi-squared about the fit - never below the errors it gives - and
+# the fit made again, at most this many times, until no scale moves by more
+# than this factor. A scale above the last is noted as the model following
+# that survey poorly
+PERIOD_CHANGE_RESCALE_PASSES = 4
+PERIOD_CHANGE_RESCALE_SETTLED = 1.05
+PERIOD_CHANGE_RESCALE_WARN = 10.0
 
 # Change of phase, in cycles, a unit step in each coefficient makes somewhere
 # in the data - what puts them all on one footing for the optimiser
@@ -774,6 +838,15 @@ PERIOD_CHANGE_CURVE_POINTS = 2000
 # period within each window is searched for, and in how many steps at most
 PERIOD_CHANGE_LOCAL_RANGE = 0.05
 PERIOD_CHANGE_LOCAL_SAMPLES = 2000
+
+# A window decides its own period only with at least so many degrees of
+# freedom left over its trend and harmonics, and no other minimum of its
+# chi-squared within so much of the best, scaled by the reduced chi-squared.
+# A dozen DASCH plates over a season fit three harmonics at a handful of
+# frequencies about as well, and the one that comes out best is chance - with
+# an error from its own curvature that says nothing of the others
+PERIOD_CHANGE_LOCAL_MIN_DOF = 10
+PERIOD_CHANGE_LOCAL_AMBIGUOUS = 9.0
 
 # Trial phase shifts across one cycle in each O-C window
 OC_SHIFT_SAMPLES = 200
@@ -1046,6 +1119,11 @@ def fit_phase_model(series, window_days, model, coeffs, nharm=PERIOD_HARMONICS):
     # Cycles per cycle of each harmonic, in radians, for their derivative
     omega = 2 * np.pi * np.arange(1, nharm + 1)
 
+    # The curvature of a spline's frequency, in units of the phase it moves
+    # over an interval between knots - see PERIOD_CHANGE_SPLINE_PHASE
+    bend = (_curvature(model.ncoef) * model.knot_days / PERIOD_CHANGE_SPLINE_PHASE
+            if model.knot_days else np.zeros((0, model.ncoef)))
+
     def evaluate(c):
         """The residuals at coefficients `c`, their Jacobian in them, and the
         harmonics of every group."""
@@ -1071,6 +1149,8 @@ def fit_phase_model(series, window_days, model, coeffs, nharm=PERIOD_HARMONICS):
             for (fit, basis, columns, hw, mh), m in zip(parts, moved):
                 resid.append(fit.residuals_from(fit.yw - hw @ alpha[g]))
                 jac.append(fit.residuals_from(m - hw @ beta))
+        resid.append(bend @ c)
+        jac.append(bend)
         return np.concatenate(resid), np.concatenate(jac), alpha
 
     # Each coefficient scaled to move the phase by a fixed step somewhere in
@@ -1106,6 +1186,72 @@ def fit_phase_model(series, window_days, model, coeffs, nharm=PERIOD_HARMONICS):
            * (chi2 / dof) * beta ** 2)
 
     return c, cov, chi2, dof, alpha, beta
+
+
+def refit_from_windows(series, window_days, model, coeffs, alpha, length,
+                       counts=PERIOD_CHANGE_GAP_COUNTS, nharm=PERIOD_HARMONICS):
+    """The fit of `fit_phase_model` again, started from the phases of the O-C
+    windows measured against the fit it has - and from those with whole
+    cycles added before the widest gap between them.
+
+    The phases the windows measure are where the light curve is, window by
+    window, and a start built from them knows where a lone visit at an end of
+    the data is, which a start built before the weights of the surveys were
+    settled may not: the WISE visit of 2010 that target 74 begins with, four
+    hundred cycles before the next data, was half a cycle out of every fit
+    from the earlier starts, and in phase from this one, at a lower
+    chi-squared. Across the widest gap the count of cycles itself may be in
+    doubt, and each of `counts` is tried.
+
+    Returns the widest gap as (first, last MJD, cycles across it) and a
+    (cycles added, fit) for each count, the fit as `fit_phase_model` returns
+    it; no gap and no fits with fewer than three windows.
+    """
+    def phase(t):
+        return model.phase_basis(np.asarray(t, dtype=float)) @ coeffs
+
+    windows = measure_oc(series, window_days, phase, alpha, length, nharm=nharm)
+    if len(windows) < 3:
+        return None, []
+
+    wt, ws, we = (np.array([_[k] for _ in windows]) for k in (0, 4, 5))
+    measured = phase(wt) - ws
+
+    order = np.argsort(wt)
+    wt, measured, we = wt[order], measured[order], we[order]
+    widest = int(np.argmax(np.diff(measured)))
+    gap = (float(wt[widest]), float(wt[widest + 1]), float(measured[widest + 1] - measured[widest]))
+    before = np.arange(len(wt)) <= widest
+
+    fits = []
+    for k in counts:
+        start = model.from_phases(wt, measured + np.where(before, -k, 0), we)
+        try:
+            fits.append((k, fit_phase_model(series, window_days, model, start, nharm=nharm)))
+        except ValueError:
+            continue
+    return gap, fits
+
+
+def group_scatter(series, window_days, model, coeffs, alpha, nharm=PERIOD_HARMONICS):
+    """The chi-squared of every group about a fit of `fit_phase_model` - its
+    coefficients and the harmonics `alpha` of each group - and its degrees of
+    freedom, as {group: (chi-squared, degrees of freedom)}. A group without
+    harmonics of its own, too few points for them, is counted about its
+    trend alone."""
+    out = {}
+    for t, y, dy, group in series:
+        fit = SeriesFit(t, y, dy, window_days, nharm)
+        if group in alpha:
+            r = fit.residuals(model.phase_basis(t) @ coeffs, alpha[group])
+            chi2, used = float(r @ r), fit.ntrend
+        else:
+            chi2, used = fit.chi2_trend, fit.ntrend
+        c, d = out.get(group, (0.0, 0))
+        out[group] = (c + chi2, d + len(t) - used)
+
+    # The harmonics are shared by the group, and counted once
+    return {g: (c, max(d - (2 * nharm if g in alpha else 0), 1)) for g, (c, d) in out.items()}
 
 
 def choose_harmonics(series, window_days, model, coeffs, candidates=PERIOD_CHANGE_HARMONICS):
@@ -1190,9 +1336,13 @@ def local_periods(series, window_days, frequency, length, nharm=PERIOD_HARMONICS
     the years slips by whole cycles from what a constant one predicts.
 
     Returns per window (mean MJD, first and last MJD, number of points,
-    frequency, its uncertainty), the latter scaled by the reduced chi-squared
-    of the window when above one. Windows whose best frequency is at an edge
-    of the range, or that span fewer than three cycles, are left out.
+    frequency, its uncertainty, whether the window decides it), the
+    uncertainty scaled by the reduced chi-squared of the window when above
+    one. A window that does not decide its period - see
+    PERIOD_CHANGE_LOCAL_MIN_DOF - still gives the frequency it fits best,
+    which the start of a fit, robust to outliers, can still use; its
+    uncertainty is not to be taken as one. Windows whose best frequency is at
+    an edge of the range, or that span fewer than three cycles, are left out.
     """
     alltimes = np.concatenate([t for t, _, _, _ in series])
     out = []
@@ -1218,7 +1368,9 @@ def local_periods(series, window_days, frequency, length, nharm=PERIOD_HARMONICS
 
         fits = [_ for members in groups.values() for _ in members]
         chi2_trend = sum(_.chi2_trend for _ in fits)
-        dof = max(len(times) - sum(_.ntrend for _ in fits) - 2 * nharm * len(fitted) - 1, 1)
+        dof = len(times) - sum(_.ntrend for _ in fits) - 2 * nharm * len(fitted) - 1
+        decided = dof >= PERIOD_CHANGE_LOCAL_MIN_DOF
+        dof = max(dof, 1)
 
         def chi2(f):
             total = chi2_trend
@@ -1244,6 +1396,13 @@ def local_periods(series, window_days, frequency, length, nharm=PERIOD_HARMONICS
         if not denom > 0:
             continue
 
+        # Another minimum nearly as deep, and the window cannot tell them apart
+        inner = values[1:-1]
+        minima = np.flatnonzero((inner < values[:-2]) & (inner < values[2:])) + 1
+        others = values[minima[minima != i]]
+        if np.any((others - best) / max(best / dof, 1.0) < PERIOD_CHANGE_LOCAL_AMBIGUOUS):
+            decided = False
+
         f = grid[i] + 0.5 * step * (prev - nxt) / denom
 
         # As for the O-C, no better known than the noise allows when it does
@@ -1264,7 +1423,7 @@ def local_periods(series, window_days, frequency, length, nharm=PERIOD_HARMONICS
         error = np.sqrt(max(best / dof, 1.0) / (denom / (2 * step ** 2))) * beta
 
         out.append((float(np.mean(times)), float(times.min()), float(times.max()),
-                    int(len(times)), float(f), float(error)))
+                    int(len(times)), float(f), float(error), bool(decided)))
 
     return out
 
@@ -1374,9 +1533,18 @@ def measure_oc(series, window_days, phase, templates, length, nharm=PERIOD_HARMO
     over the thousands of points of a TESS sector, and the shift is no better
     known than it allows.
 
-    Windows covering less than OC_MIN_COVERAGE of the cycle are left out.
+    Windows covering less than OC_MIN_COVERAGE of the cycle are left out. So is,
+    from each window, every survey and filter without points enough outside it
+    for its template - one seen in this window alone has a template fitted to
+    the very points measured, and fits them at whatever phase the model gives
+    them: it has nothing to say of the shift, and pulls it to nought. Target
+    74's W3 and W4, seen in one visit of 2010 and nowhere else, held the
+    window of that visit in phase while W1 and W2 put it half a cycle out.
     """
     alltimes = np.concatenate([t for t, _, _, _ in series])
+    totals = {}
+    for t, _, _, group in series:
+        totals[group] = totals.get(group, 0) + len(t)
     grid = np.arange(OC_SHIFT_SAMPLES) / OC_SHIFT_SAMPLES - 0.5
     step = 1.0 / OC_SHIFT_SAMPLES
     out = []
@@ -1385,6 +1553,10 @@ def measure_oc(series, window_days, phase, templates, length, nharm=PERIOD_HARMO
         # Cycles per day of the reference, which the phase is linear in
         frequency = float(phase(np.array([a + 1.0]))[0] - phase(np.array([a]))[0])
 
+        inside = {}
+        for t, _, _, group in series:
+            inside[group] = inside.get(group, 0) + int(np.sum((t >= a) & (t < b)))
+
         parts = {}
         members = []
         chi2_trend, npts, ntrend = 0.0, 0, 0
@@ -1392,6 +1564,8 @@ def measure_oc(series, window_days, phase, templates, length, nharm=PERIOD_HARMO
         for t, y, dy, group in series:
             k = (t >= a) & (t < b)
             if group not in templates or not np.any(k):
+                continue
+            if totals[group] - inside[group] <= 2 * nharm + 2:
                 continue
             fit = SeriesFit(t[k], y[k], dy[k], window_days, nharm)
             ph = phase(t[k])
@@ -1794,8 +1968,9 @@ def minima_periods(times, errors, counted, keep, frequency, length):
     three minima, or spanning fewer than three cycles, are left out.
 
     Returns per window what `local_periods` does: (mean MJD, first and last
-    MJD, number of minima, frequency, its uncertainty), the latter scaled by
-    the reduced chi-squared when above one.
+    MJD, number of minima, frequency, its uncertainty, and True - a straight
+    line through minima has no aliases), the uncertainty scaled by the
+    reduced chi-squared when above one.
     """
     out = []
     for a, b in _oc_windows(times[keep], length):
@@ -1808,7 +1983,7 @@ def minima_periods(times, errors, counted, keep, frequency, length):
         chi2 = float(np.sum((x @ sol - counted[k] * w) ** 2))
         cov = np.linalg.pinv(x.T @ x) * max(chi2 / max(k.sum() - 2, 1), 1.0)
         out.append((float(times[k].mean()), float(times[k].min()), float(times[k].max()),
-                    int(k.sum()), float(sol[1]), float(np.sqrt(cov[1, 1]))))
+                    int(k.sum()), float(sol[1]), float(np.sqrt(cov[1, 1])), True))
     return out
 
 # The time-resolved periodogram: at most so many windows, each searched on a

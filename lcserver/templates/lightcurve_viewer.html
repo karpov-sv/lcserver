@@ -333,7 +333,7 @@
     Phase Folding
     <span class="span-help-popover help-secondary float-end" title="Phase folding">
       <p>A period and T₀ fold the light curve, drawn from phase -0.6 to 1.6 so that a cycle is seen whole either side; 0 turns folding off. <b>×2</b> and <b>÷2</b> try the period's double and half - an eclipsing binary found at half its period, or a double wave at twice. <b>Binned median</b> draws each series' median in bins of phase, its shape at the period folded at.</p>
-      <p><b>Fit Period</b> searches the visible sources, as filtered by their maximum errors and limited to the <b>Dates</b>, over the <b>search range</b>, each series about its own median. Lomb-Scargle fits a sinusoid, and with more harmonics a light curve of another shape - a pulsator's sawtooth, a contact binary's double wave; box least squares looks for a dip once a cycle, an eclipse or a transit. <b>Remove trend</b> fits each series a smooth curve with a knot every <i>window</i> days alongside, so that a short period can be found underneath a long variation; the window must be several times the period sought.</p>
+      <p><b>Fit Period</b> searches the visible sources, as filtered by their maximum errors and limited to the <b>Dates</b>, over the <b>search range</b>, each series about its own median. Lomb-Scargle fits a sinusoid, and with more harmonics a light curve of another shape - a pulsator's sawtooth, a contact binary's double wave; box least squares looks for a dip once a cycle, an eclipse or a transit. <b>Remove trend</b> fits each series a smooth curve with a knot every <i>window</i> days alongside, so that a short period can be found underneath a long variation; the window must be several times the period sought. No knots are closer than the visits allow, and isolated points - single Gaia or Pan-STARRS epochs - share one slow trend rather than each taking its own level, and with it all of its variation. The light curve is then shown with the trend that was fitted along with the period.</p>
       <p>The highest peaks are fitted again - each series with its own trend, each survey and filter with its own harmonics - and ranked by that fit, which is what tells apart the aliases the periodogram gives the same power. Their buttons fold at them; hovering one gives its power, uncertainty and how much of the variation it explains. The uncertainties allow for noise that does not average down as white noise would.</p>
       <p>Under the periodogram, the period folded at is marked, with its daily aliases, and the periodogram of the sampling alone centred on it: wherever that rises, the same signal is seen again through the sampling. Click anywhere on the periodogram to fold there.</p>
       <p><b>Remove folded period</b> takes the signal of the period folded at off the light curve and searches again - prewhitening, for a star with more than one period. Every removed period is fitted again with the others each time, and the light curve is shown as the residuals until they are cleared. What the last search said is kept below the periodogram, to copy or download.</p>
@@ -579,11 +579,11 @@
         <i class="fa fa-caret-down"></i> Period Change
       </span>
       <span class="span-help-popover help-secondary float-end" title="Period change">
-        <p>A period that changes with time, fitted to the light curve itself: the phase is the integral of a frequency that is a <b>polynomial</b> in time of the given order - 0 for a constant period, 1 for one changing at a constant rate - or a <b>spline</b> with a knot every so many days, for a period that wanders.</p>
+        <p>A period that changes with time, fitted to the light curve itself: the phase is the integral of a frequency that is a <b>polynomial</b> in time of the given order - 0 for a constant period, 1 for one changing at a constant rate - or a <b>spline</b> with a knot every so many days, for a period that wanders - kept smooth where no data say otherwise, so that across a gap it bridges the period from one side to the other rather than swinging about.</p>
         <p><b>Fit Period Change</b> starts from the period being folded at, and uses it with T₀ as the reference ephemeris of the O−C diagram, moving T₀ to the nearest maximum of light. It uses the same visible sources, error filters, dates and trend as <b>Fit Period</b>. Counting the cycles across seasonal gaps is what such a fit depends on, so it is started in several ways - from the phases of windows that follow the seasons, and from the periods found within each - and the one that fits best is kept.</p>
-        <p>With <b>O−C from light curve windows</b>, the model is fitted to the light curve itself, its shape described by the number of <b>harmonics</b> chosen - three suit most pulsators and are quick, while the narrow eclipses of a detached binary need a dozen and more, which fewer put hours out. <b>Auto</b> takes as many as the Bayesian information criterion asks for. The O−C is measured in windows of <b>O−C window</b> days, each fitted with that shape, shifted and scaled.</p>
+        <p>With <b>O−C from light curve windows</b>, the model is fitted to the light curve itself, its shape described by the number of <b>harmonics</b> chosen - three suit most pulsators and are quick, while the narrow eclipses of a detached binary need a dozen and more, which fewer put hours out. <b>Auto</b> takes as many as the Bayesian information criterion asks for. Each survey's errors are scaled to its scatter about the fit, and the fit made again, so that a few points with tiny errors that no model follows do not outweigh the thousands that count the cycles. The O−C is measured in windows of <b>O−C window</b> days, each fitted with that shape, shifted and scaled - by the surveys seen outside the window as well, as one seen in it alone fits any shift. The fit is then started once more from where the windows put the phase, and with whole cycles more or fewer across the widest gap between them; the summary says when another count there fits about as well.</p>
         <p>With <b>O−C from eclipse minima</b>, every eclipse covered well enough - points along both branches and across the bottom, as the space missions have them - is timed on its own by a curve symmetric about its minimum, and the model is fitted to those times, primaries at whole cycles and secondaries half a cycle on, with their offset from it fitted too, as an eccentric orbit shifts them. The errors of each series' primaries and secondaries are scaled to their scatter, and minima far off the fit are left out, drawn hollow. T₀ is then a primary minimum.</p>
-        <p>The O−C is drawn with the model and its band, the residuals from it, and the period of the model with time beside the period each window finds on its own - the one check of the cycle count that does not depend on it. The errors allow for noise that does not average down as white noise would, and the summary says when the O−C wanders beyond them, as on a spotted star it will.</p>
+        <p>The O−C is drawn with the model and its band, the residuals from it, and the period of the model with time beside the period each window finds on its own - the one check of the cycle count that does not depend on it. A window with too few points, or too aliased, to decide its period - one that fits several about as well - is drawn hollow, without an error bar. The errors allow for noise that does not average down as white noise would, and the summary says when the O−C wanders beyond them, as on a spotted star it will.</p>
         <p><b>Fold with model</b> folds the light curve with the model's phase rather than a constant period.</p>
       </span>
     </h6>
@@ -2492,7 +2492,13 @@ function fitPeriodChange() {
                 message += `Secondaries at phase 0.5 + ${data.minima.delta.toFixed(6)} ± ${data.minima.delta_err.toFixed(6)}`
                     + ` (${(data.minima.delta * data.period * 1440).toFixed(2)} min) - e cos ω ≈ ${ecosw.toFixed(5)}\n`;
             }
-        } else if (data.harmonic_scores) {
+        }
+
+        if (data.error_scales && data.error_scales.length)
+            message += `\nErrors scaled to each survey's scatter about the fit:\n  `
+                + data.error_scales.map(e => `${e.group} ×${e.scale.toFixed(2)}`).join(', ') + '\n';
+
+        if (!minima && data.harmonic_scores) {
             message += `\nHarmonics, by BIC (lower is better):\n  `
                 + data.harmonic_scores.map(h => `${h.harmonics}: ${h.bic.toFixed(1)}`
                                                 + (h.harmonics === data.harmonics ? ' ←' : '')).join(', ') + '\n';
@@ -2507,11 +2513,15 @@ function fitPeriodChange() {
         if (data.prewhitened && data.prewhitened.length)
             message += `\nRemoved first, fitted together:\n${removedSummary(data.prewhitened)}`;
 
+        const undecided = (data.local.decided || []).filter(d => !d).length;
         message += (minima
                     ? `\nO−C of ${data.oc.mjd.length} minima, the period on its own in `
                       + `${data.local.mjd.length} windows of ${data.oc_window} d.`
                     : `\nO−C measured in ${data.oc.mjd.length} windows of ${data.oc_window} d, `
-                      + `the period on its own in ${data.local.mjd.length} of them.`)
+                      + `the period on its own in ${data.local.mjd.length - undecided} of them`
+                      + (undecided ? ` - and ${undecided} more fit several periods about as well, `
+                                     + `too few points or too aliased to decide, drawn hollow` : '')
+                      + '.')
                  + (data.oc_scatter !== null
                     ? ` The O−C scatters about the model with χ² ${data.oc_scatter.toFixed(1)} per `
                       + `${minima ? 'minimum' : 'window'} - about one if its errors account for all of it.`
@@ -2558,6 +2568,10 @@ function plotOC(data) {
 
     const theme = plotlyTheme();
     const oc = data.oc, curve = data.curve, local = data.local;
+    // Whether each window decided its own period - all did, from a fit that
+    // does not say
+    const isDecided = i => !local.decided || local.decided[i];
+    const pickLocal = (decided, a) => a.filter((_, i) => isDecided(i) === decided);
     const modelOC = curve.offset.map(o => o * data.period);
     const ocUpper = modelOC.map((o, i) => o + curve.offset_err[i] * data.period);
     const ocLower = modelOC.map((o, i) => o - curve.offset_err[i] * data.period);
@@ -2667,12 +2681,20 @@ function plotOC(data) {
         name: 'Model period', line: {color: '#d62728', width: 1.5}, showlegend: false,
         hovertemplate: 'MJD %{x:.1f}<br>P %{y:.6f} d<extra>model</extra>'
     }, {
-        x: local.mjd, y: local.period, mode: 'markers', type: 'scatter', yaxis: 'y2',
-        name: 'Period in a window',
-        error_y: {type: 'data', array: local.period_err, visible: true, thickness: 1},
+        x: pickLocal(true, local.mjd), y: pickLocal(true, local.period), mode: 'markers', type: 'scatter',
+        yaxis: 'y2', name: 'Period in a window',
+        error_y: {type: 'data', array: pickLocal(true, local.period_err), visible: true, thickness: 1},
         marker: {color: '#2ca02c', size: 6, symbol: 'square'},
-        customdata: local.period_err,
+        customdata: pickLocal(true, local.period_err),
         hovertemplate: 'MJD %{x:.1f}<br>P %{y:.5f} ± %{customdata:.5f} d<extra>window</extra>'
+    }, {
+        // Windows too few points, or too aliased, to decide their period: the
+        // best of several about as good, its error no error
+        x: pickLocal(false, local.mjd), y: pickLocal(false, local.period), mode: 'markers', type: 'scatter',
+        yaxis: 'y2', name: 'Period in a window, undecided',
+        marker: {color: '#2ca02c', size: 5, symbol: 'square-open', opacity: 0.5},
+        hovertemplate: 'MJD %{x:.1f}<br>P %{y:.5f} d - one of several periods this window fits'
+                     + ' about as well<extra>window</extra>'
     }, {
         x: [curve.mjd[0], curve.mjd[curve.mjd.length - 1]], y: [data.period, data.period],
         mode: 'lines', type: 'scatter', yaxis: 'y2', name: 'Reference period',
@@ -2682,7 +2704,8 @@ function plotOC(data) {
     // The period range of the model and of the windows that measured theirs
     // well, so that one window a few nights fell in does not squash the rest
     const span = Math.max(...curve.period) - Math.min(...curve.period);
-    const good = local.period.filter((p, i) => local.period_err[i] < Math.max(span, 1e-4 * data.period));
+    const good = local.period.filter((p, i) => isDecided(i)
+                                               && local.period_err[i] < Math.max(span, 1e-4 * data.period));
     const all = curve.period.concat(good, [data.period]);
     const lo = Math.min(...all), hi = Math.max(...all);
     // At least as wide as the band is where it is typical, so that a period
@@ -3075,6 +3098,8 @@ function changeComments(data) {
         `O-C against P = ${data.period} d, T0 = ${data.epoch} MJD (${minima ? 'primary minimum' : 'maximum of light'}); times in days`,
         `At MJD ${data.tref}: P = ${data.period_tref} +- ${data.period_tref_err} d, dP/dt = ${data.pdot} +- ${data.pdot_err}`,
         `chi2 ${data.chi2}, reduced ${data.reduced_chi2}` + (minima ? '' : `, red noise factor ${data.red_noise}`),
+        ...(data.error_scales && data.error_scales.length
+            ? ['errors scaled by ' + data.error_scales.map(e => `${e.group} x${e.scale}`).join(', ')] : []),
         ...(minima && data.minima.delta !== null
             ? [`secondary minima at phase 0.5 + ${data.minima.delta} +- ${data.minima.delta_err}`] : []),
         ...settingsComments(JSON.parse(data.selection)),

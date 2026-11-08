@@ -78,6 +78,25 @@ class DetrendTest(SimpleTestCase):
         self.assertAlmostEqual(np.std(kept) / np.std(signal), 1.0, delta=0.1)
 
 
+    def test_isolated_points_keep_their_variation(self):
+        """Points a month apart, each alone in its stretch, share one trend
+        rather than each taking its own level - and all of its variation with
+        it - while a season observed nightly keeps a trend of its own."""
+        rng = np.random.default_rng(13)
+        sparse = 58000.0 + 35.0 * np.arange(40) + rng.uniform(0, 1, 40)
+        y = 15 + pulsator(sparse, 0.7) + rng.normal(0, 0.01, len(sparse))
+
+        blocks = p.trend_blocks(sparse, 10.0)
+        self.assertEqual(len(blocks), 1)
+        detrended, _ = p.detrend_series(sparse, y, 10.0, subtract=True)
+        self.assertGreater(np.std(detrended) / np.std(y), 0.8)
+
+        nightly = 60000.0 + np.arange(120) + 0.3
+        blocks = p.trend_blocks(np.r_[sparse, nightly], 10.0)
+        self.assertEqual(len(blocks), 2)
+        self.assertGreater(max(c.shape[1] for _, c in blocks), 1)
+
+
 class PeriodSearchTest(SimpleTestCase):
 
     def test_true_period_beats_its_daily_alias(self):
@@ -293,6 +312,38 @@ class PeriodChangeTest(SimpleTestCase):
         offset = np.median(fitted - true)
         self.assertLess(np.max(np.abs(fitted - offset - true)), 0.1)
 
+    def test_sparse_windows_do_not_decide_their_period(self):
+        """A season of a few dozen points decides its period; a dozen points
+        in one filter fit several about as well, and say so."""
+        series = self.light_curve()
+        dense = p.local_periods(series, 0, 1.0 / self.period, 150)
+        self.assertGreater(np.mean([w[6] for w in dense]), 0.8)
+
+        sparse = [(t[::3], y[::3], dy[::3], g) for t, y, dy, g in series[:1]]
+        windows = p.local_periods(sparse, 0, 1.0 / self.period, 150)
+        self.assertTrue(windows)
+        self.assertFalse(any(w[6] for w in windows))
+
+    def test_scatter_of_each_group_tells_its_errors(self):
+        """About the fit, a survey whose errors are right scatters by them, and
+        one that quotes errors five times too small by five times its errors -
+        the scale its errors are then given."""
+        series = self.light_curve()
+        t, y, dy, g = series[1]
+        series[1] = (t, y, dy / 5, g)
+        tmin = min(s[0].min() for s in series)
+        tmax = max(s[0].max() for s in series)
+
+        model = p.PhaseModel(tmin, tmax, order=1)
+        local = p.local_periods(series, 0, 1.0 / self.period, 150)
+        lt, lf, le = (np.array([w[k] for w in local]) for k in (0, 4, 5))
+        c, _, _, _, alpha, _ = p.fit_phase_model(series, 0, model, model.from_frequencies(lt, lf, le))
+
+        scatter = p.group_scatter(series, 0, model, c, alpha)
+        ratio = {group[1]: chi2 / dof for group, (chi2, dof) in scatter.items()}
+        self.assertAlmostEqual(ratio['g'], 1.0, delta=0.2)
+        self.assertAlmostEqual(np.sqrt(ratio['r']), 5.0, delta=0.5)
+
     def test_oc_recovers_a_shift(self):
         """A window shifted by a known part of a cycle reads as that shift."""
         rng = np.random.default_rng(10)
@@ -312,6 +363,50 @@ class PeriodChangeTest(SimpleTestCase):
         for mid, _, _, _, s, err, _, _ in windows:
             expected = shift if mid > t.min() + 200 else 0.0
             self.assertLess(abs(s - expected), max(4 * err, 0.02))
+
+
+    def test_spline_bridges_a_gap_smoothly(self):
+        """Across two years with no data, a spline with a knot every hundred
+        days keeps to the period changing as it does on either side, rather
+        than swinging about in coefficients nothing constrains."""
+        series = [(t[(t < 58400) | (t > 59130)], y[(t < 58400) | (t > 59130)],
+                   dy[(t < 58400) | (t > 59130)], g) for t, y, dy, g in self.light_curve()]
+        tmin = min(s[0].min() for s in series)
+        tmax = max(s[0].max() for s in series)
+
+        model = p.PhaseModel(tmin, tmax, knot_days=100)
+        local = p.local_periods(series, 0, 1.0 / self.period, 150)
+        lt, lf, le = (np.array([w[k] for w in local]) for k in (0, 4, 5))
+        c, _, _, _, _, _ = p.fit_phase_model(series, 0, model, model.from_frequencies(lt, lf, le))
+
+        gap = np.linspace(58450, 59080, 50)
+        fitted = model.frequency_basis(gap) @ c
+        true = 1.0 / self.period - self.pdot / self.period ** 2 * (gap - 59000.0)
+        self.assertLess(np.max(np.abs(fitted - true)) * self.period ** 2, 2e-3)
+
+    def test_a_band_seen_in_one_window_does_not_hold_it_in_phase(self):
+        """A window shifted in the band seen throughout reads as that shift,
+        though another band, seen in that window alone and with a template
+        fitted there at the unshifted phase - as the fit gives it one - agrees
+        with any."""
+        rng = np.random.default_rng(14)
+        period, shift = 1.7, 0.3
+        t = nightly_times(rng, 200, per_night=3, span=400)
+        late = t > t.min() + 300
+        y = 15 + 0.3 * np.sin(2 * np.pi * (t / period - np.where(late, shift, 0.0))) + rng.normal(0, 0.02, len(t))
+
+        lone = np.sort(rng.uniform(t.min() + 310, t.min() + 390, 60))
+        z = 9 + 0.3 * np.sin(2 * np.pi * lone / period) + rng.normal(0, 0.005, len(lone))
+
+        template = np.zeros(6)
+        template[0] = 0.3
+        series = [(t, y, np.full(len(t), 0.02), ('synthetic', 'g', 'native')),
+                  (lone, z, np.full(len(lone), 0.005), ('synthetic', 'W3', 'native'))]
+        templates = {g: template for _, _, _, g in series}
+        windows = p.measure_oc(series, 0, lambda x: np.asarray(x) / period, templates, 100)
+
+        last = max(windows, key=lambda w: w[0])
+        self.assertLess(abs(last[4] - shift), max(4 * last[5], 0.02))
 
 
 class EclipseTimingTest(SimpleTestCase):

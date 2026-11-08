@@ -100,7 +100,10 @@ filter with its own harmonics — and ranked by that fit, which is what tells
 apart the aliases a periodogram gives the same power, and what gives the
 period its uncertainty. A slow trend can be fitted alongside, so that a short
 period can be looked for underneath it, and the search limited to a range of
-dates.
+dates. The trend has no knots closer than the visits allow, and isolated
+points — single Gaia or Pan-STARRS epochs — share one slow trend rather than
+each taking a level of its own, and all of its variation with it; the light
+curve is then shown with the trend fitted along with the period.
 
 The periodogram of the sampling alone is drawn under the periodogram, centred
 on the period folded at: wherever it rises, that period is seen again, through
@@ -118,7 +121,8 @@ which of several — comes and goes.
 
 A period that changes is fitted from there: the phase as the integral of a
 frequency that is a polynomial in time, or a spline with a knot every so many
-days, started from the period being folded at. Counting the cycles across the
+days, kept smooth where no data say otherwise so that it bridges a gap rather
+than swinging about across it, started from the period being folded at. Counting the cycles across the
 seasonal gaps is what such a fit lives or dies by, so it starts both from the
 phases of windows that follow the seasons, linked one window at a time, and
 from the periods found within each window, and keeps whichever fits best. The
@@ -131,7 +135,11 @@ model's phase.
 The light curve's shape is described in that fit by three harmonics, or as
 many as chosen — or, for auto, as the Bayesian information criterion asks
 for: one or two for a sinusoidal pulsator, a dozen and more for a detached
-eclipsing binary, whose narrow eclipses three harmonics put hours out. For an eclipsing binary seen often
+eclipsing binary, whose narrow eclipses three harmonics put hours out. Each
+survey's errors are scaled to its scatter about the fit and the fit made
+again, so that a few points with errors of millimagnitudes that no model
+follows — Gaia's, in years when little else was looking — do not outweigh the
+thousands that count the cycles; the summary names the surveys scaled most. For an eclipsing binary seen often
 enough, the space missions above all, the O−C can instead come from the
 eclipse minima: each eclipse timed on its own by a curve symmetric about its
 minimum, and the model fitted to those times — primaries at whole cycles,
