@@ -88,6 +88,12 @@ class Command(BaseCommand):
                  'have spectra if none are named.')
 
         parser.add_argument(
+            '--spherex', dest='spherex', nargs='*', default=None, metavar='GRID',
+            help="Write each grid's SPHEREx bins beside it, from its spectra, "
+                 'so that SPHEREx spectra can be fitted. All of them that have '
+                 'spectra if none are named.')
+
+        parser.add_argument(
             '--name', dest='name', default=None,
             help='What to call it (default: from the download directory)')
 
@@ -130,6 +136,9 @@ class Command(BaseCommand):
 
         if options['iue'] is not None:
             return self.bins(options, 'iue')
+
+        if options['spherex'] is not None:
+            return self.bins(options, 'spherex')
 
         if options['show'] or not options['split']:
             return self.show()
@@ -361,7 +370,7 @@ class Command(BaseCommand):
                 os.unlink(before)
 
     def bins(self, options, kind):
-        """Write the Gaia XP or IUE bins of each grid that has spectra to bin.
+        """Write the Gaia XP, IUE or SPHEREx bins of each grid that has spectra.
 
         This is what lets a spectrum be fitted rather than only looked at:
         with the bins in a cube the fit interpolates them at its own parameters,

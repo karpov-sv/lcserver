@@ -407,6 +407,8 @@ FIT_OPTIONS = {
     # Whether the IUE spectra are fitted. Nothing in the SED file is made from
     # them, so nothing leaves the list when they join it.
     'iue_fit': lambda v: bool(v),
+    # And SPHEREx, the same way
+    'spherex_fit': lambda v: bool(v),
 }
 
 # Priors arrive as ['uniform', low, high] and are rebuilt here rather than
@@ -685,11 +687,15 @@ def sed_points(request, id):
     # And the IUE spectra in their bins, on the same terms
     iue = sedfit.iue_points(target.path())
 
+    # And SPHEREx's, which may be measured as an excess instead of fitted
+    spherex = sedfit.spherex_points(target.path())
+
     return JsonResponse({
         'source': source,
         'points': points,
         'xp': xp,
         'iue': iue,
+        'spherex': spherex,
         # Which of the file's points the bins would replace, worked out where
         # the rule lives rather than restated in the page
         'xp_derived': sedfit.xp_derived(points),

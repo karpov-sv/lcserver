@@ -1766,6 +1766,232 @@ def iue_points(basepath, points=None, spectra=None):
     return rows
 
 
+# --------------------------------------------------------- SPHEREx spectrum
+
+# What the SPHEREx step leaves behind: one measurement per exposure, each at
+# the wavelength its pixel of the linear variable filter happened to sit at,
+# in erg/s/cm2/A. Not its binned spectrum, whose bins start wherever the data
+# happen to, where a cube needs bins fixed for good.
+SPHEREX_FILE = 'spherex.vot'
+
+# Bins of constant resolving power, 38 of them from 0.75 to 5 microns, so
+# about R = 20. Twice as wide as the instrument over the four blue detectors
+# and so, as for Gaia's, wide enough that what a bin holds hardly depends on
+# the shape of the instrument's response; narrow enough that the turn of a
+# photosphere into an infrared excess is drawn by a dozen of them.
+SPHEREX_RANGE_UM = (0.75, 5.0)
+SPHEREX_NBINS = 38
+
+# The resolving power of each detector, by where it starts, from the mission's
+# own description of them. The red two are three times finer than the rest.
+SPHEREX_DETECTORS = ((0.75, 39.0), (1.10, 41.0), (1.63, 41.0), (2.42, 35.0),
+                     (3.83, 112.0), (4.42, 128.0))
+
+# The calibration systematic, added to every bin. What our aperture photometry
+# of the images gets for the Cloverleaf agrees with 2MASS to three per cent,
+# and that is the scale this is known to; a star bright enough to need the
+# saturated filtering is known less well, which the scatter between its
+# exposures says for itself.
+SPHEREX_SYSTEMATIC = 0.03
+
+
+def spherex_bands():
+    """The pseudo-passbands SPHEREx is binned into, blue to red.
+
+    Fixed for the same reason the XP bins are: they are integrated into every
+    grid's file, and a cube built on one set of bins cannot be read with
+    another. Named apart from the SPHEREX_ filters of the passband library,
+    which are the mission's broad super-bands and nothing to do with these.
+    """
+    edges = np.geomspace(*SPHEREX_RANGE_UM, SPHEREX_NBINS + 1)
+
+    return [{'band': f'SPHEREX_BIN_{int(round(np.sqrt(a * b) * 1e3))}',
+             'lo_um': float(a), 'hi_um': float(b),
+             'wave_um': float(np.sqrt(a * b))}
+            for a, b in zip(edges[:-1], edges[1:])]
+
+
+def is_spherex(band):
+    """Whether a band is one of those bins rather than a real filter."""
+    return str(band or '').startswith('SPHEREX_BIN_')
+
+
+def spherex_resolution(wave_um):
+    """The instrument's resolving power at a wavelength."""
+    wave_um = np.atleast_1d(np.asarray(wave_um, dtype=float))
+    starts = np.array([_[0] for _ in SPHEREX_DETECTORS])
+    powers = np.array([_[1] for _ in SPHEREX_DETECTORS])
+
+    return powers[np.clip(np.searchsorted(starts, wave_um, side='right') - 1,
+                          0, len(powers) - 1)]
+
+
+def spherex_response(wave_um, band):
+    """What one bin makes of a spectrum, as a weight per wavelength.
+
+    The bin is a boxcar, and each exposure in it saw the spectrum through the
+    filter's own width - so what the mean of the exposures estimates is the
+    boxcar convolved with that width, which for a Gaussian is a difference of
+    two error functions. Its integral over wavelength is the width of the bin,
+    so a weighted integral of a spectrum divided by that is the bin's mean.
+    The width is the instrument's at the middle of the bin; a bin straddling
+    two detectors takes the one its middle falls on.
+    """
+    from scipy.special import erf
+
+    sigma = band['wave_um'] / float(spherex_resolution(band['wave_um'])[0]) / 2.3548
+    scale = np.sqrt(2.0) * sigma
+
+    return 0.5 * (erf((band['hi_um'] - wave_um) / scale)
+                  - erf((band['lo_um'] - wave_um) / scale))
+
+
+def read_spherex(basepath):
+    """The SPHEREx exposures, on the units the rest of this module works in.
+
+    Written per Angstrom by the SPHEREx step, as every spectrum on this site
+    is, and read per micron, as every flux here is.
+    """
+    from astropy.table import Table
+
+    path = os.path.join(basepath, SPHEREX_FILE)
+    if not os.path.exists(path):
+        return None
+
+    try:
+        table = Table.read(path)
+    except Exception:
+        return None
+
+    if not {'wavelength', 'flux', 'flux_error'} <= set(table.colnames):
+        return None
+
+    wave = np.asarray(table['wavelength'], dtype=float)
+    flux = np.asarray(table['flux'], dtype=float)
+    err = np.asarray(table['flux_error'], dtype=float)
+
+    good = np.isfinite(wave) & np.isfinite(flux) & np.isfinite(err) & (err > 0)
+    if not good.any():
+        return None
+
+    order = np.argsort(wave[good])
+
+    return {'wave_um': wave[good][order] * 1e-4,
+            'flux': flux[good][order] / PER_AA,
+            'err': err[good][order] / PER_AA}
+
+
+def spherex_binned(spherex):
+    """The exposures in those bins, with what each one is worth.
+
+    A bin holds a few exposures - one per visit that crossed it, typically -
+    and they sit wherever in it the filter put them rather than evenly, which
+    on a steep spectrum is worth some per cent: the mean of three exposures
+    from the blue half of a bin is not the mean over the bin. So each exposure
+    is moved to the middle of its bin along the local slope of the spectrum,
+    read off the bins either side, before the mean is taken.
+
+    Three terms in the error, as for IUE: the noise; the scatter of the
+    exposures about their mean, which on a bright star is the star changing
+    between visits and is usually the larger, the larger of the two being
+    taken since each already contains the other's share of the noise; and the
+    calibration.
+    """
+    wave = np.asarray(spherex['wave_um'], dtype=float)
+    flux = np.asarray(spherex['flux'], dtype=float)
+    err = np.asarray(spherex['err'], dtype=float)
+
+    bands = spherex_bands()
+    edges = np.array([bands[0]['lo_um']] + [b['hi_um'] for b in bands])
+    index = np.digitize(wave, edges) - 1
+
+    # First as they come: the mean of each bin at the mean wavelength of what
+    # it holds, which is what the slope is read from
+    raw = {}
+    for k in range(len(bands)):
+        here = index == k
+        if not here.any():
+            continue
+
+        weight = 1.0 / err[here] ** 2
+        mean = float(np.sum(flux[here] * weight) / np.sum(weight))
+        if mean > 0:
+            raw[k] = (float(np.exp(np.sum(np.log(wave[here]) * weight)
+                                   / np.sum(weight))), mean)
+
+    def slope(k):
+        """d ln F / d ln lambda about a bin, from its neighbours."""
+        near = [raw[j] for j in (k - 1, k, k + 1) if j in raw]
+        if len(near) < 2:
+            return 0.0
+
+        (w0, f0), (w1, f1) = near[0], near[-1]
+        return float(np.log(f1 / f0) / np.log(w1 / w0)) if w1 > w0 else 0.0
+
+    out = []
+    for k, band in enumerate(bands):
+        here = index == k
+        if k not in raw:
+            continue
+
+        # Each exposure as it would have read at the middle of the bin
+        moved = flux[here] * (band['wave_um'] / wave[here]) ** slope(k)
+        moved_err = err[here] * (band['wave_um'] / wave[here]) ** slope(k)
+
+        weight = 1.0 / moved_err ** 2
+        observed = float(np.sum(moved * weight) / np.sum(weight))
+        if not np.isfinite(observed) or observed <= 0:
+            continue
+
+        stat = float(np.sqrt(1.0 / np.sum(weight)))
+        count = int(here.sum())
+        spread = (float(np.std(moved, ddof=1) / np.sqrt(count))
+                  if count > 1 else 0.0)
+
+        out.append(dict(band, exposures=count, observed=observed,
+                        stat_err=stat, spread_err=spread,
+                        err=float(np.hypot(max(stat, spread),
+                                           SPHEREX_SYSTEMATIC * observed))))
+
+    return out
+
+
+def spherex_points(basepath, points=None, spherex=None):
+    """The SPHEREx spectrum as points, in the shape the SED files come in.
+
+    As xp_points() does for Gaia's, with one difference: these may stand for
+    an excess rather than for the photosphere. Gaia's bins and IUE's are the
+    star by construction, where five microns is as often a disc or a wind, so
+    a bin left out of the fit can be measured against it like any band of the
+    SED file - which takes nothing here but not saying otherwise.
+    """
+    spherex = spherex if spherex is not None else read_spherex(basepath)
+    if not spherex:
+        return []
+
+    points = set(points) if points is not None else None
+    rows = []
+
+    for entry in spherex_binned(spherex):
+        name = f"SPHEREx {entry['lo_um']:.3f}-{entry['hi_um']:.3f} um"
+        row = {'id': name, 'band': entry['band'], 'used': False,
+               'default': True, 'fittable': True, 'note': None, 'xp': False,
+               'spherex': True,
+               'wave_um': entry['wave_um'], 'wave_drawn_um': entry['wave_um'],
+               'flux': entry['observed'], 'err': entry['err'],
+               'excess': False}
+
+        row['used'] = row['default'] if points is None else name in points
+        if row['used'] and not row['default']:
+            row['note'] = 'chosen by hand'
+        elif not row['used'] and row['default']:
+            row['note'] = 'turned off'
+
+        rows.append(row)
+
+    return rows
+
+
 # ------------------------------------------------------------ our photometry
 
 # VizieR's designation for a band, as our SED step writes it in the second
@@ -1924,7 +2150,7 @@ def grid_registry():
         return out
 
     for name in sorted(glob.glob(os.path.join(path, '*.h5'))):
-        if name.endswith(('.spectra.h5', '.xp.h5', '.iue.h5')):
+        if name.endswith(('.spectra.h5', '.xp.h5', '.iue.h5', '.spherex.h5')):
             continue
 
         stem = os.path.splitext(os.path.basename(name))[0]
@@ -1981,6 +2207,10 @@ def grid_registry():
         bins = os.path.join(path, entry['name'] + '.iue.h5')
         entry['iue'] = bins if os.path.exists(bins) else None
 
+        # And the SPHEREx bins, for the near infrared
+        bins = os.path.join(path, entry['name'] + '.spherex.h5')
+        entry['spherex'] = bins if os.path.exists(bins) else None
+
         out[entry['name']] = entry
 
     return out
@@ -2009,6 +2239,7 @@ def offered_grids():
                     'has_spectra': has_spectra(grid['name']),
                     'has_xp': bool(grid.get('xp')),
                     'has_iue': bool(grid.get('iue')),
+                    'has_spherex': bool(grid.get('spherex')),
                     'axis_logg': grid.get('axis_logg') or 'logg'})
 
     return out
@@ -2275,19 +2506,20 @@ def has_xp(name):
     return bool((grid_registry().get(str(name).lower()) or {}).get('xp'))
 
 
-def load_grid(name, xp=False, iue=False):
+def load_grid(name, xp=False, iue=False, spherex=False):
     """One grid by name, from the directory or from astroARIADNE's own.
 
     With ``xp``, the Gaia XP bins are loaded alongside the filters and the two
     answer as one grid - which is all there is to fitting a spectrum here. With
-    ``iue``, the IUE bins are, in the same way.
+    ``iue`` and ``spherex``, the IUE and SPHEREx bins are, in the same way.
     """
     name = str(name).lower()
     entry = grid_registry().get(name)
     if entry:
         grid = Grid(entry['path'], name=name)
         extras = [Grid(entry[kind], name=f'{name}-{kind}')
-                  for kind, wanted in (('xp', xp), ('iue', iue))
+                  for kind, wanted in (('xp', xp), ('iue', iue),
+                                       ('spherex', spherex))
                   if wanted and entry.get(kind)]
         if extras:
             grid = CompositeGrid(grid, *extras)
@@ -2528,6 +2760,36 @@ def default_excess(rows):
     return out
 
 
+# Each kind of bin, what it is called, and the option of sedgrid writing it
+BIN_KINDS = ((is_xp, 'Gaia XP', 'xp'), (is_iue, 'IUE', 'iue'),
+             (is_spherex, 'SPHEREx', 'spherex'))
+
+
+def missing_bins_reason(missing, grid):
+    """Why a grid cannot answer for these bands, in words a reader can act on.
+
+    A grid can lack a kind of bin altogether - nobody wrote the cube - or have
+    it short of the reddest bins, its spectra stopping before five microns.
+    """
+    if any(not any(test(b) for test, _, _ in BIN_KINDS) for b in missing):
+        return f"no model flux for {', '.join(missing)}"
+
+    kinds = [(test, label, option) for test, label, option in BIN_KINDS
+             if any(test(b) for b in missing)]
+
+    absent = [(label, option) for test, label, option in kinds
+              if not any(test(b) for b in grid.covers)]
+
+    if absent:
+        return (f"no {' or '.join(label for label, _ in absent)} bins - "
+                + ' and '.join(f'"manage.py sedgrid --{option}"'
+                               for _, option in absent)
+                + (' write them' if len(absent) > 1 else ' writes them'))
+
+    return (f"its spectra do not reach {', '.join(missing)}, so its "
+            f"{' and '.join(label for _, label, _ in kinds)} bins stop short")
+
+
 def target_sed_fit(config, basepath='.', outpath=None, selection=None,
                    options=None, verbose=None):
     """Fit the photosphere, and write the run where it can be found again.
@@ -2600,6 +2862,19 @@ def target_sed_fit(config, basepath='.', outpath=None, selection=None,
         log("\nThe IUE spectra were asked for, but there are none to fit -"
             " only the low dispersion ones through the large aperture are")
 
+    # And SPHEREx, which replaces nothing either: no catalogue in the SED file
+    # is made from its images
+    spherex = read_spherex(basepath) if options.get('spherex_fit') else None
+    fit_spherex = bool(spherex)
+
+    if fit_spherex:
+        rows = rows + spherex_points(basepath, points=selection.get('points'),
+                                     spherex=spherex)
+        rows.sort(key=lambda r: (r['wave_um'] is None, r['wave_um'] or 0))
+    elif options.get('spherex_fit'):
+        log("\nThe SPHEREx spectrum was asked for, but there is none to fit -"
+            " the SPHEREx step has not written one")
+
     used = [r for r in rows if r['used']]
     log("\n---- Data points ----\n")
     log(f"{len(used)} of {len(rows)} points from {source}"
@@ -2607,7 +2882,9 @@ def target_sed_fit(config, basepath='.', outpath=None, selection=None,
            f" XP spectrum" if fit_xp else '')
         + (f" and {sum(1 for r in rows if is_iue(r['band']))} bins of"
            f" {len(iue)} IUE spectr{'um' if len(iue) == 1 else 'a'}"
-           if fit_iue else ''))
+           if fit_iue else '')
+        + (f" and {sum(1 for r in rows if is_spherex(r['band']))} bins of"
+           f" the SPHEREx spectrum" if fit_spherex else ''))
     for r in rows:
         mark = 'fit ' if r['used'] else '   -'
         log(f"  {mark} {r['id']:<34} {r['band'] or '':<18}"
@@ -2651,7 +2928,8 @@ def target_sed_fit(config, basepath='.', outpath=None, selection=None,
         step('loading', at)
         # The bins are loaded whether or not they are fitted: unfitted, they
         # are what the comparison is made against, and that needs the same cube
-        grid = load_grid(name, xp=xp is not None, iue=fit_iue)
+        grid = load_grid(name, xp=xp is not None, iue=fit_iue,
+                         spherex=fit_spherex)
         priors = default_priors(grid, distance, distance_err, av_max)
         # The temperature prior is deliberately the same whatever grid is
         # loaded, so that a grid's extent cannot become the answer
@@ -2670,15 +2948,7 @@ def target_sed_fit(config, basepath='.', outpath=None, selection=None,
 
         missing = sorted({b for b in bands if b not in grid.covers})
         if missing:
-            if all(is_xp(b) for b in missing):
-                reason = 'no Gaia XP bins - "manage.py sedgrid --xp" writes them'
-            elif all(is_iue(b) for b in missing):
-                reason = 'no IUE bins - "manage.py sedgrid --iue" writes them'
-            elif all(is_xp(b) or is_iue(b) for b in missing):
-                reason = ('no Gaia XP or IUE bins - "manage.py sedgrid --xp" and'
-                          ' "--iue" write them')
-            else:
-                reason = f"no model flux for {', '.join(missing)}"
+            reason = missing_bins_reason(missing, grid)
             log(f"\n{name}: {reason} - skipped")
             continue
 

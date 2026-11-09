@@ -235,6 +235,16 @@ exposure reaching into a bin contributing to it, and each bin carries a 5%
 calibration error besides its noise and the scatter between exposures. They
 are what pins the extinction of a hot star: the 2175 A bump is five bins wide.
 
+So is **SPHEREx**, in 38 bins of R = 20 from 0.75 to 5 µm, out of
+`<name>.spherex.h5` written by `sedgrid --spherex`. Each bin is the mean of the
+exposures in it, each moved to the middle of the bin along the local slope of
+the spectrum, against a model integrated through the bin and the filter's own
+width; it carries a 3% calibration error besides its noise and the scatter
+between visits. Unlike the other spectra its bins can be measured as an
+**excess** instead of fitted, one by one - five microns is as often a disc or
+a wind as it is the star. Grids whose spectra stop short of five microns get
+the bins they reach, and are skipped by a fit that asks for the rest.
+
 Two numbers come out beside the parameters and are worth as much as they are:
 the **jitter**, the fractional model inadequacy the fit needed, which says how
 far the photometry is from anything one photosphere explains; and the
@@ -433,7 +443,7 @@ python manage.py sedgrid --xp                 # or --xp tlusty bosz
 | `--ingest-btsettl` | BT-Settl's spectra from a nanometre to a millimetre, from the grid published for [pystellibs](https://github.com/mfouesneau/pystellibs) |
 | `--ingest-koester` | Koester's white-dwarf spectra, one file per model as SVO hands them out |
 | `--scatter` | a grid stored as a lattice rewritten as the models it actually holds, which gives back the band of parameter space a lattice with holes refuses - a sixth of it on BT-Settl |
-| `--xp`, `--iue` | each grid's Gaia XP bins (30 nm) or IUE bins (100 Å, 1250–3150 Å), from its spectra, for the fit to take as points |
+| `--xp`, `--iue`, `--spherex` | each grid's Gaia XP bins (30 nm), IUE bins (100 Å, 1250–3150 Å) or SPHEREx bins (R = 20, 0.75–5 µm), from its spectra, for the fit to take as points |
 
 A new grid is offered on the form as soon as it is written; there is nothing
 else to edit. What each ingest reads and why is in its module under
@@ -489,7 +499,8 @@ lcserver/
 │   ├── koester.py    white-dwarf models, one file each, as SVO hands them out
 │   ├── scatter.py    a lattice rewritten as the models it actually holds
 │   ├── xp.py         a grid's spectra binned as Gaia XP
-│   └── iue.py        a grid's spectra binned as IUE
+│   ├── iue.py        a grid's spectra binned as IUE
+│   └── spherex.py    a grid's spectra binned as SPHEREx
 ├── surveys.py      the registry - metadata, bands, form fields, layout
 ├── celery_tasks.py task generation, and the canvas a full run is built into
 ├── views.py        pages, file browser

@@ -242,6 +242,15 @@ Only the low dispersion spectra through the large aperture are used.">
             and the IUE spectra
           </label>
         </div>
+        <div class="form-check form-switch mb-0" id="fit-spherex-row" hidden>
+          <input class="form-check-input" type="checkbox" id="fit-spherex"
+                 onchange="applySpherexChoice()">
+          <label class="form-check-label control-label me-0" for="fit-spherex"
+                 title="Fit the SPHEREx spectrum in bins of R = 20 from 0.75 to 5 um, alongside the photometry.
+A bin left out of the fit can be measured as an excess instead, like any other point.">
+            and the SPHEREx spectrum
+          </label>
+        </div>
         <button class="btn btn-sm btn-outline-primary" onclick="selectAllPoints(true)">All</button>
         <button class="btn btn-sm btn-outline-primary" onclick="selectAllPoints(false)">None</button>
         <span class="spectrum-info" id="fit-point-count"></span>
@@ -867,6 +876,7 @@ Only the low dispersion spectra through the large aperture are used.">
  let fitXpPoints = [];
  let fitXpDerived = [];
  let fitIuePoints = [];
+ let fitSpherexPoints = [];
 
  // Points a restored run named that this file no longer has
  let fitMissing = [];
@@ -885,6 +895,7 @@ Only the low dispersion spectra through the large aperture are used.">
              fitXpPoints = data.xp || [];
              fitXpDerived = data.xp_derived || [];
              fitIuePoints = data.iue || [];
+             fitSpherexPoints = data.spherex || [];
              // Of the file that was open, and no use for this one
              fitXpDropped = [];
              fitBands = data.bands || [];
@@ -896,6 +907,8 @@ Only the low dispersion spectra through the large aperture are used.">
              if (!fitXpPoints.length) document.getElementById('fit-xp').checked = false;
              document.getElementById('fit-iue-row').hidden = !fitIuePoints.length;
              if (!fitIuePoints.length) document.getElementById('fit-iue').checked = false;
+             document.getElementById('fit-spherex-row').hidden = !fitSpherexPoints.length;
+             if (!fitSpherexPoints.length) document.getElementById('fit-spherex').checked = false;
 
              buildGridPicker();
              composePoints();
@@ -932,10 +945,16 @@ Only the low dispersion spectra through the large aperture are used.">
      return !!(box && !box.disabled && box.checked && fitIuePoints.length);
  }
 
+ function fittingSpherex() {
+     const box = document.getElementById('fit-spherex');
+     return !!(box && !box.disabled && box.checked && fitSpherexPoints.length);
+ }
+
  // One list, in wavelength, whether or not the bins are in it
  function composePoints() {
      const extra = (fittingXp() ? fitXpPoints : [])
-         .concat(fittingIue() ? fitIuePoints : []);
+         .concat(fittingIue() ? fitIuePoints : [])
+         .concat(fittingSpherex() ? fitSpherexPoints : []);
      fitPoints = extra.length
          ? fitBasePoints.concat(extra).sort(
              (a, b) => (a.wave_um || 0) - (b.wave_um || 0))
@@ -999,6 +1018,24 @@ Only the low dispersion spectra through the large aperture are used.">
      buildGridPicker();
  }
 
+ // And the SPHEREx bins, which replace nothing either. Off, they leave the
+ // excess as well as the fit: a bin is only on the page while the switch is.
+ function applySpherexChoice() {
+     composePoints();
+
+     if (fittingSpherex()) {
+         fitSpherexPoints.filter(p => p.default).forEach(p => fitOn.add(p.id));
+     } else {
+         fitSpherexPoints.forEach(p => {
+             fitOn.delete(p.id);
+             excessOn.delete(p.id);
+         });
+     }
+
+     buildPointList();
+     buildGridPicker();
+ }
+
  // What the reader of the file would measure an excess on: everything past the
  // reddest band it would fit. Set once, and the reader's from then on - moving
  // the boundary as points are turned off would take back what they said.
@@ -1023,8 +1060,28 @@ Only the low dispersion spectra through the large aperture are used.">
      return point.default ? 'turned off' : point.note;
  }
 
+ // Ticking the excess on a point says where the photosphere stops, and the
+ // excess analysis reads it that way: the free-free shape is defined only
+ // redward of the fit, and a point fitted beyond an excess would be the star
+ // in the middle of what is not. So everything redder that was being fitted
+ // leaves the fit and joins the excess with it - the bins of a spectrum that
+ // cannot be an excess only leave. What the reader had already set aside,
+ // neither fitted nor measured, stays aside: that was a choice about the
+ // point, and this one is about where the excess begins.
+ function startExcessAt(point) {
+     fitPoints.forEach(p => {
+         if (p.fittable === false || !p.wave_um || p.wave_um < point.wave_um) return;
+         if (p !== point && !pointIsOn(p)) return;
+
+         fitOn.delete(p.id);
+         if (!p.xp && !p.iue) excessOn.add(p.id);
+     });
+ }
+
  function buildPointList() {
      const host = document.getElementById('fit-points');
+     // Rebuilt in place, so the reader stays where they were in a long list
+     const scrolled = host.scrollTop;
      host.innerHTML = '';
 
      fitPoints.forEach((point, n) => {
@@ -1051,7 +1108,7 @@ Only the low dispersion spectra through the large aperture are used.">
              <input class="form-check-input" type="checkbox" id="exc-${n}"
                     ${excessIsOn(point) ? 'checked' : ''}>
              <label class="form-check-label spectrum-info me-0" for="exc-${n}"
-                    title="Measure an excess here instead of fitting it">excess</label>
+                    title="Measure an excess here instead of fitting it - and at every redder point being fitted">excess</label>
            </div>
            ${added ? '<button class="btn btn-sm btn-outline-danger py-0 px-1"' +
                      ' title="remove this point"><i class="fa fa-times"></i></button>' : ''}
@@ -1062,14 +1119,9 @@ Only the low dispersion spectra through the large aperture are used.">
              row.title = note;
          }
 
-         // The excess switch has nothing to say about a point that is being
-         // fitted, so it is there and hidden rather than there and wrong
+         // Shown on a fitted point too: ticking it there is the quickest way
+         // to say the excess starts here
          const excess = row.querySelector('.excess-check');
-         const showExcess = () => {
-             if (point.fittable !== false && !point.xp && !point.iue) {
-                 excess.hidden = pointIsOn(point);
-             }
-         };
 
          const box = row.querySelector('input[type="checkbox"]');
          if (box) {
@@ -1087,18 +1139,21 @@ Only the low dispersion spectra through the large aperture are used.">
                  row.title = pointNote(point);
                  row.querySelector('label').classList
                     .toggle('text-body-secondary', !pointIsOn(point));
-                 showExcess();
                  updatePointCount();
              });
          }
 
+         // On, the excess starts here and the list is redrawn with what moved;
+         // off, only this point leaves it
          excess.querySelector('input').addEventListener('change', e => {
-             if (e.target.checked) excessOn.add(point.id);
-             else excessOn.delete(point.id);
-             updatePointCount();
+             if (e.target.checked) {
+                 startExcessAt(point);
+                 buildPointList();
+             } else {
+                 excessOn.delete(point.id);
+                 updatePointCount();
+             }
          });
-
-         showExcess();
 
          const drop = row.querySelector('button');
          if (drop) {
@@ -1108,6 +1163,7 @@ Only the low dispersion spectra through the large aperture are used.">
          host.appendChild(row);
      });
 
+     host.scrollTop = scrolled;
      updatePointCount();
  }
 
@@ -1254,11 +1310,14 @@ Only the low dispersion spectra through the large aperture are used.">
      // log, which is read after the fit rather than before it.
      const withXp = fittingXp();
      const withIue = fittingIue();
+     const withSpherex = fittingSpherex();
 
      fitGrids.forEach((grid, n) => {
          const on = chosen.length ? chosen.includes(grid.name) : n === 0;
          const lacks = [withXp && !grid.has_xp ? 'XP' : '',
-                        withIue && !grid.has_iue ? 'IUE' : ''].filter(Boolean);
+                        withIue && !grid.has_iue ? 'IUE' : '',
+                        withSpherex && !grid.has_spherex ? 'SPHEREx' : '']
+             .filter(Boolean);
          const missing = lacks.length > 0;
          const note = [grid.note,
                        grid.has_spectra ? '' : 'no spectra, so no line',
@@ -1266,6 +1325,8 @@ Only the low dispersion spectra through the large aperture are used.">
                            : 'no Gaia XP bins - "manage.py sedgrid --xp" writes them',
                        grid.has_iue ? ''
                            : 'no IUE bins - "manage.py sedgrid --iue" writes them',
+                       grid.has_spherex ? ''
+                           : 'no SPHEREx bins - "manage.py sedgrid --spherex" writes them',
                        (grid.axis_logg && grid.axis_logg !== 'logg')
                            ? `second axis is ${grid.axis_logg}, not a gravity,`
                              + ' so the gravity prior is left off it'
@@ -1318,6 +1379,7 @@ Only the low dispersion spectra through the large aperture are used.">
              excess: Array.from(excessOn),
              xp_fit: fittingXp(),
              iue_fit: fittingIue(),
+             spherex_fit: fittingSpherex(),
              grids: grids,
              teff_prior: ['loguniform',
                           parseFloat(document.getElementById('fit-teff-lo').value),
@@ -1850,6 +1912,13 @@ Only the low dispersion spectra through the large aperture are used.">
      if (iueBox) {
          iueBox.checked = !!(result.options || {}).iue_fit
              || (selection.points || []).some(id => String(id).startsWith('IUE '));
+     }
+     // A run can have used SPHEREx for its excess alone, fitting none of it
+     const spherexBox = document.getElementById('fit-spherex');
+     if (spherexBox) {
+         spherexBox.checked = !!(result.options || {}).spherex_fit
+             || (selection.points || []).concat(selection.excess || [])
+                    .some(id => String(id).startsWith('SPHEREx '));
      }
 
      if (selection.points) {
