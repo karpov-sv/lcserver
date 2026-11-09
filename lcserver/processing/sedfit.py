@@ -348,6 +348,20 @@ def prior_outside_grid(priors, grid):
     return None
 
 
+def describe_prior(spec):
+    """A prior in a few words, for a log."""
+    kind = spec[0]
+    if kind == 'fixed':
+        return f'fixed at {spec[1]:g}'
+    if kind in ('uniform', 'loguniform'):
+        return f'{kind} from {spec[1]:g} to {spec[2]:g}'
+    if kind in ('normal', 'truncnorm'):
+        return f'{spec[1]:g} +/- {spec[2]:g}'
+    if kind == 'lognormal':
+        return f'free, {spec[1]:g} times e^(+/-{spec[2]:g})'
+    return str(kind)
+
+
 def make_prior(spec, limits=None):
     """One parameter's prior as an inverse CDF, from a short specification.
 
@@ -375,6 +389,10 @@ def make_prior(spec, limits=None):
         mu, sigma, lo, hi = spec[1:5]
         a, b = (lo - mu) / sigma, (hi - mu) / sigma
         return lambda u: stats.truncnorm.ppf(u, a, b, loc=mu, scale=sigma)
+    if kind == 'lognormal':
+        median, width = spec[1:3]
+        return lambda u: float(np.exp(stats.norm.ppf(u, loc=np.log(median),
+                                                     scale=width)))
     if kind == 'halfnormal':
         sigma = spec[1]
         return lambda u: stats.halfnorm.ppf(u, scale=sigma)
@@ -387,8 +405,227 @@ def make_prior(spec, limits=None):
 
 PARAMETERS = ('teff', 'logg', 'feh', 'dist', 'rad', 'Av', 'jitter')
 
+# What a run may fit beyond those, always after them so that the first seven
+# columns of the samples mean what they always have and a run from before
+# these existed reads as it was written. A run records which it fitted.
+#
+#   Rv            the ratio of total to selective extinction, where it is free.
+#                 Circumstellar dust is grey-er than the interstellar medium's
+#                 3.1 - five is usual around a Herbig star - and on a reddened
+#                 star with no ultraviolet the difference is a factor of two in
+#                 the luminosity.
+#   Tdust1/fdust1 a blackbody of dust fitted with the star rather than after
+#   Tdust2/fdust2 it: its temperature, and its luminosity as a fraction of the
+#                 star's. Fitted jointly because a disc does not wait for the
+#                 photosphere to end - at one micron a Herbig star's inner rim
+#                 is already a quarter of the light - and two of them because
+#                 a rim at the sublimation temperature and the cooler disc
+#                 behind it are both there, and one blackbody fits neither.
+RV_PARAMETER = 'Rv'
+DUST_PARAMETERS = (('Tdust1', 'fdust1'), ('Tdust2', 'fdust2'))
 
-def default_priors(grid, distance=None, distance_err=None, av_max=1.0):
+# And a scale per spectrum, where it is not taken as measured: the factor
+# that dataset's fluxes are multiplied by to put them on the scale of the
+# photometry the star is anchored to - so a SPHEREx spectrum twice as bright
+# as it should be has a scale of 0.5. The same number the spectral viewer's
+# own control multiplies the data by, so that what is set there by eye is what
+# the fit takes and what the fit finds is what the viewer then shows.
+#
+# The likelihood divides the model by it rather than multiplying the data,
+# which keeps each measurement with the error it was published with; every
+# table and figure the fit writes shows it the other way round, the data put
+# on the photometry's scale and the model as the star is.
+#
+# Two reasons for one and both are common. The star changed between the
+# epochs - Gaia's spectrum is the mean of 2014-17 and SPHEREx's of 2025-26,
+# and a Herbig star's extinction varies by more than half a magnitude in
+# between. Or the dataset measured more than the star - SPHEREx's pixels are
+# six arcseconds and its aperture nine, so a neighbour Gaia resolves can be
+# half the flux in it. The first is a scale exactly, the second only nearly
+# (the neighbour has its own colour), and the scale is what a fit can do about
+# either; the SPHEREx step says when the second is the likely one.
+#
+# The catalogue photometry is never scaled: it is what the radius is measured
+# against, and with every dataset free the scales and the radius would be one
+# degeneracy.
+SCALE_DATASETS = (('xp', 'Gaia XP'), ('spherex', 'SPHEREx'), ('iue', 'IUE'))
+
+# The width of a free scale's prior, in the natural log: a factor of 1.65 at
+# one sigma, so that the twice-too-bright of a blended SPHEREx spectrum is
+# reachable and a ten per cent offset between epochs costs nothing
+SCALE_WIDTH = 0.5
+
+
+def scale_parameter(dataset):
+    """The parameter that scales one dataset."""
+    return f'scale_{dataset}'
+
+
+def scale_dataset(band):
+    """Which scalable dataset a band belongs to, or None for photometry."""
+    if is_xp(band):
+        return 'xp'
+    if is_spherex(band):
+        return 'spherex'
+    if is_iue(band):
+        return 'iue'
+    return None
+
+# The R_V the extinction law takes when nothing says otherwise, and the range
+# a free one may take: Fitzpatrick's curve is defined from 2 to 6 or so, and
+# the table it is interpolated from runs over that in steps that change the
+# attenuation by well under the per cent the photometry is good to
+RV_DEFAULT = 3.1
+RV_AXIS = np.round(np.arange(2.0, 6.0001, 0.05), 3)
+
+# The temperatures the dust is allowed, one range per component and apart, so
+# that the sampler cannot swap the two and draw a posterior with both answers
+# in each column. The hot one is a rim near sublimation, the warm one anything
+# cooler; one alone takes the whole range.
+DUST_HOT = (600.0, 2000.0)
+DUST_WARM = (30.0, 600.0)
+DUST_ANY = (30.0, 2000.0)
+
+# The luminosity of a component as a fraction of the star's. An edge-on disc
+# can reprocess more of the star than reaches us directly, so the prior is
+# allowed past one.
+DUST_FRACTION = (1e-4, 10.0)
+
+
+def run_parameters(free_rv=False, dust=0, scaled=()):
+    """The parameters a run fits, in the order its samples hold them."""
+    out = PARAMETERS + ((RV_PARAMETER,) if free_rv else ())
+    for names in DUST_PARAMETERS[:int(dust)]:
+        out = out + names
+    for dataset, _ in SCALE_DATASETS:
+        if dataset in scaled:
+            out = out + (scale_parameter(dataset),)
+
+    return out
+
+
+def parameters_of(run):
+    """What a run fitted - the seven, for a run from before it was recorded."""
+    return tuple(run.get('parameters') or PARAMETERS)
+
+
+def dust_count(parameters):
+    """How many dust components a parameter list carries."""
+    return sum(1 for names in DUST_PARAMETERS if names[0] in parameters)
+
+
+def dust_flux(wave_um, teff, dilution, temperature, fraction):
+    """One dust component, as the flux it adds at each wavelength.
+
+    A blackbody whose luminosity is ``fraction`` of the star's: the star's
+    bolometric flux at the Earth is sigma Teff^4 (R/d)^2, and a blackbody's
+    surface flux pi B_lambda integrates to sigma T^4, so scaling one by the
+    ratio of the other puts exactly that fraction of the star into it. Not
+    modified as the excess analysis's is - the efficiency only departs from
+    one beyond 210 microns, where nothing fitted here reaches.
+
+    At a band's pivot wavelength rather than through its passband. On a
+    blackbody broad enough to be dust that is the same to a per cent or two
+    even in WISE's widest band, which the fit's error floor already covers.
+    """
+    return (fraction * dilution * (teff / temperature) ** 4
+            * np.pi * planck(wave_um, temperature))
+
+
+class BandModel:
+    """What a fit predicts in a set of bands, for one row of its parameters.
+
+    The photosphere out of the grid, diluted and reddened, and whatever dust
+    the run fitted on top of it - reddened the same, being behind the same
+    interstellar medium. One object per set of bands, because what is costly
+    is worked out once: which columns of the cube, and the extinction curve,
+    which for a free R_V is a table over R_V interpolated row by row.
+    """
+
+    def __init__(self, grid, bands, wave_um, parameters=PARAMETERS):
+        self.grid = grid
+        self.bands = list(bands)
+        self.wave = np.asarray(wave_um, dtype=float)
+        self.columns = np.array([grid.column[b] for b in self.bands], dtype=int)
+        self.parameters = tuple(parameters)
+        self.index = {p: i for i, p in enumerate(self.parameters)}
+
+        self.free_rv = RV_PARAMETER in self.index
+        if self.free_rv:
+            self.table = np.array([attenuation(self.wave, 1.0, rv=rv)
+                                   for rv in RV_AXIS])
+        else:
+            self.unit = attenuation(self.wave, 1.0)
+
+        self.dust = [(self.index[t], self.index[f])
+                     for t, f in DUST_PARAMETERS if t in self.index]
+
+        # Which bands each scaled dataset owns
+        self.scales = []
+        for dataset, _ in SCALE_DATASETS:
+            name = scale_parameter(dataset)
+            mine = np.array([scale_dataset(b) == dataset for b in self.bands])
+            if name in self.index and mine.any():
+                self.scales.append((self.index[name], mine))
+
+    def factor(self, theta):
+        """What each band's data are multiplied by to be on the photometry's
+        scale: one for photometry, the dataset's scale for a bin."""
+        out = np.ones(len(self.bands))
+        for i, mine in self.scales:
+            out[mine] = theta[i]
+        return out
+
+    def extinction(self, theta):
+        """The attenuation at Av = 1, at this row's R_V."""
+        if not self.free_rv:
+            return self.unit
+
+        rv = float(np.clip(theta[self.index[RV_PARAMETER]],
+                           RV_AXIS[0], RV_AXIS[-1]))
+        at = np.interp(rv, RV_AXIS, np.arange(len(RV_AXIS)))
+        i = min(int(at), len(RV_AXIS) - 2)
+        w = at - i
+
+        return (1 - w) * self.table[i] + w * self.table[i + 1]
+
+    def components(self, theta, scaled=True):
+        """The star and each dust component, observed, in these bands.
+
+        ``scaled``, as each dataset measured it - the model divided by its
+        scale, which is what the data are compared with; otherwise as the
+        star is, on the photometry's scale, which is what is drawn.
+        """
+        teff, logg, feh, dist, rad, av = theta[:6]
+
+        dilution = (rad * R_SUN / (dist * PARSEC)) ** 2
+        reddening = 10 ** (-0.4 * av * self.extinction(theta))
+
+        # As each dataset would see it: a bin of a scaled spectrum is the
+        # model times that spectrum's scale, so the data are compared as they
+        # were measured and keep the errors they came with
+        scale = (reddening / self.factor(theta) if self.scales and scaled
+                 else reddening)
+
+        out = [self.grid.flux(teff, logg, feh, self.columns) * dilution * scale]
+        for t, f in self.dust:
+            out.append(dust_flux(self.wave, teff, dilution, theta[t], theta[f])
+                       * scale)
+
+        return out
+
+    def __call__(self, theta, scaled=True):
+        """The total, which is what is fitted."""
+        parts = self.components(theta, scaled)
+        return parts[0] if len(parts) == 1 else np.sum(parts, axis=0)
+
+    def star(self, theta):
+        """The photosphere alone."""
+        return self.components(theta)[0]
+
+
+def default_priors(grid, distance=None, distance_err=None, av_max=1.0,
+                   rv=None, dust=0, scales=None):
     """Priors that say what is actually known, and no more.
 
     Teff, log g and [Fe/H] get the grid's own extent: a grid is a statement
@@ -417,6 +654,17 @@ def default_priors(grid, distance=None, distance_err=None, av_max=1.0):
                           max(1.0, distance - 10 * spread), distance + 10 * spread)
     else:
         priors['dist'] = ('loguniform', 1.0, 30000.0)
+
+    if rv is not None:
+        priors[RV_PARAMETER] = tuple(rv)
+
+    ranges = [DUST_ANY] if int(dust) == 1 else [DUST_HOT, DUST_WARM]
+    for (t, f), span in zip(DUST_PARAMETERS[:int(dust)], ranges):
+        priors[t] = ('loguniform',) + span
+        priors[f] = ('loguniform',) + DUST_FRACTION
+
+    for dataset, spec in (scales or {}).items():
+        priors[scale_parameter(dataset)] = tuple(spec)
 
     return priors
 
@@ -461,7 +709,7 @@ def log_likelihood(flux, flux_err, model, jitter):
 
 def fit(bands, wave_um, flux, flux_err, grid, priors,
         nlive=500, dlogz=0.5, seed=None, verbose=True, progress=None,
-        state=None):
+        state=None, parameters=PARAMETERS):
     """Sample the posterior for one grid. Returns whole rows, never marginals.
 
     The result carries ``samples`` as (n, 7) - equal-weight draws from the
@@ -476,19 +724,18 @@ def fit(bands, wave_um, flux, flux_err, grid, priors,
     if missing:
         raise ValueError(f'{grid.name} has no flux for {", ".join(missing)}')
 
-    columns = np.array([grid.column[b] for b in bands])
-    ext_unit = attenuation(wave_um, 1.0)
+    model_of = BandModel(grid, bands, wave_um, parameters)
     flux = np.asarray(flux, dtype=float)
     flux_err = np.asarray(flux_err, dtype=float)
 
     limits = grid.limits
-    transforms = [make_prior(priors[p], limits.get(p)) for p in PARAMETERS]
+    transforms = [make_prior(priors[p], limits.get(p)) for p in parameters]
 
     def prior_transform(u):
         return np.array([t(v) for t, v in zip(transforms, u)])
 
     def likelihood(theta):
-        model = model_flux(theta, columns, ext_unit, grid)
+        model = model_of(theta)
         if not np.all(np.isfinite(model)):
             return -1e300
 
@@ -535,7 +782,7 @@ def fit(bands, wave_um, flux, flux_err, grid, priors,
     announce.first = None
 
     sampler = dynesty.NestedSampler(
-        likelihood, prior_transform, len(PARAMETERS),
+        likelihood, prior_transform, len(parameters),
         nlive=nlive, bound='multi', sample='rwalk',
         rstate=np.random.default_rng(seed))
     sampler.run_nested(dlogz=dlogz,
@@ -555,8 +802,8 @@ def fit(bands, wave_um, flux, flux_err, grid, priors,
         'samples': samples,
         'logz': float(results.logz[-1]),
         'logz_err': float(results.logzerr[-1]),
-        'columns': columns,
-        'ext_unit': ext_unit,
+        'parameters': tuple(parameters),
+        'model': model_of,
     }
 
 
@@ -619,14 +866,16 @@ def summarise(result, grid=None):
     The two are different things and are not presented as if they were.
     """
     samples = result['samples']
-    out = {'logz': result.get('logz'), 'grid': result.get('grid')}
+    parameters = parameters_of(result)
+    out = {'logz': result.get('logz'), 'grid': result.get('grid'),
+           'parameters': list(parameters)}
 
     if grid is not None:
         best, chi2 = best_row(result, grid)
         if best is None:
             raise SourceError('no posterior sample has a model flux in every'
                               ' band - the prior hardly reaches the grid')
-        out['best'] = dict(zip(PARAMETERS, best))
+        out['best'] = dict(zip(parameters, best))
         out['chi2'] = chi2
 
         # The derived quantities of that same row, so the whole column
@@ -635,7 +884,7 @@ def summarise(result, grid=None):
         for name, values in derived(best[None, :]).items():
             out['best'][name] = float(values[0])
 
-    for i, name in enumerate(PARAMETERS):
+    for i, name in enumerate(parameters):
         out[name] = quantiles(samples[:, i])
 
     for name, values in derived(samples).items():
@@ -680,7 +929,9 @@ def log_parameters(summary, log):
 
     axis = summary.get('axis_logg') or 'logg'
 
-    for name in PARAMETERS + ('theta_mas', 'lum_lsun'):
+    parameters = tuple(summary.get('parameters') or PARAMETERS)
+
+    for name in parameters + ('theta_mas', 'lum_lsun'):
         row = summary.get(name)
         if not row:
             continue
@@ -710,12 +961,11 @@ def best_row(result, grid):
     has always been quoted as: with the jitter in it, it would come out near
     the number of points whatever the fit, being what the jitter is fitted to.
     """
-    columns = np.array([grid.column[b] for b in result['bands']])
-    ext_unit = attenuation(result['wave_um'], 1.0)
+    model_of = run_model(result, grid)
 
     best, best_like = None, -np.inf
     for row in result['samples']:
-        model = model_flux(row, columns, ext_unit, grid)
+        model = model_of(row)
         if not np.all(np.isfinite(model)):
             continue
         like = log_likelihood(result['flux'], result['flux_err'], model,
@@ -726,14 +976,54 @@ def best_row(result, grid):
     if best is None:
         return None, np.inf
 
-    model = model_flux(best, columns, ext_unit, grid)
+    model = model_of(best)
     return best, float(np.sum(((result['flux'] - model) / result['flux_err']) ** 2))
+
+
+def run_model(run, grid, bands=None, wave_um=None):
+    """The model of a run, in its own bands or in others.
+
+    A run sampled since BandModel existed carries one for its own bands; any
+    other set - the bands an excess is measured on, the XP bins - is made here
+    with the same parameters, so that it predicts them the way it was fitted.
+    """
+    if bands is None and isinstance(run.get('model'), BandModel):
+        return run['model']
+
+    return BandModel(grid, run['bands'] if bands is None else bands,
+                     run['wave_um'] if wave_um is None else wave_um,
+                     parameters_of(run))
+
+
+def band_factors(run, bands, theta=None):
+    """Each band's scale: at one row, or the run's median where none is given.
+
+    One for photometry and for a run that scaled nothing.
+    """
+    parameters = parameters_of(run)
+    out = np.ones(len(bands))
+
+    for dataset, _ in SCALE_DATASETS:
+        name = scale_parameter(dataset)
+        if name not in parameters:
+            continue
+
+        column = parameters.index(name)
+        value = (theta[column] if theta is not None
+                 else float(np.median(run['samples'][:, column])))
+        out[[scale_dataset(b) == dataset for b in bands]] = value
+
+    return out
+
+
+def best_theta(run, summary):
+    """The row a run is drawn at, as an array in the run's own order."""
+    return np.array([summary['best'][p] for p in parameters_of(run)])
 
 
 def residuals(result, theta, grid):
     """Observed minus model, in units of the catalogue error."""
-    columns = np.array([grid.column[b] for b in result['bands']])
-    model = model_flux(theta, columns, attenuation(result['wave_um'], 1.0), grid)
+    model = run_model(result, grid)(theta)
 
     return (result['flux'] - model) / result['flux_err'], model
 
@@ -819,7 +1109,7 @@ def dust_ceiling(temperature):
                     / (np.log10(1500.0) - np.log10(500.0)))
 
 
-def predict_bands(run, grid, bands, wave_um, ndraw=400, seed=0):
+def predict_bands(run, grid, bands, wave_um, ndraw=400, seed=0, scaled=True):
     """The photosphere in each band, as the posterior predicts it.
 
     The mean and spread over posterior rows, not the model at one row: a band
@@ -827,15 +1117,14 @@ def predict_bands(run, grid, bands, wave_um, ndraw=400, seed=0):
     significant means comparing with the width of what was predicted as well
     as with the error on what was measured.
     """
-    columns = np.array([grid.column[b] for b in bands])
-    ext_unit = attenuation(wave_um, 1.0)
+    model_of = run_model(run, grid, bands, wave_um)
 
     samples = run['samples']
     if len(samples) > ndraw:
         samples = samples[np.random.default_rng(seed).choice(len(samples),
                                                              ndraw, replace=False)]
 
-    drawn = np.array([model_flux(row, columns, ext_unit, grid) for row in samples])
+    drawn = np.array([model_of(row, scaled) for row in samples])
     good = np.isfinite(drawn).all(axis=1)
     if not good.any():
         return (np.full(len(bands), np.nan), np.full(len(bands), np.nan))
@@ -932,16 +1221,24 @@ def quantify_excess(rows, run, grid):
     if quantified:
         bands = [r['band'] for r in quantified]
         waves = np.array([r['wave_um'] for r in quantified])
-        predicted, spread = predict_bands(run, grid, bands, waves)
+        predicted, spread = predict_bands(run, grid, bands, waves, scaled=False)
         model = dict(zip(bands, predicted))
         model_err = dict(zip(bands, spread))
 
+    # A bin of a scaled spectrum is put on the photometry's scale, as the
+    # model it is measured against is
+    factors = dict(zip([r['band'] for r in rows],
+                       band_factors(run, [r['band'] for r in rows])))
+
     for row in rows:
+        k = float(factors.get(row['band'], 1.0))
+        flux, err = float(row['flux']) * k, float(row['err']) * k
+
         entry = {'id': row['id'], 'band': row['band'],
                  'wave_um': float(row['wave_um']),
                  'wave_drawn_um': float(row['wave_drawn_um']
                                         or row['wave_um']),
-                 'observed': float(row['flux']), 'observed_err': float(row['err']),
+                 'observed': flux, 'observed_err': err, 'scale': k,
                  'quantified': bool(row['quantified']),
                  'model': None, 'model_err': None,
                  'excess': None, 'ratio': None, 'sigma': None}
@@ -951,9 +1248,9 @@ def quantify_excess(rows, run, grid):
             me = float(model_err[row['band']])
             entry['model'] = float(m)
             entry['model_err'] = me
-            entry['excess'] = float(row['flux'] - m)
-            entry['ratio'] = float(row['flux'] / m)
-            entry['sigma'] = float((row['flux'] - m) / np.hypot(row['err'], me))
+            entry['excess'] = float(flux - m)
+            entry['ratio'] = float(flux / m)
+            entry['sigma'] = float((flux - m) / np.hypot(err, me))
         else:
             entry['quantified'] = False
 
@@ -1009,9 +1306,10 @@ def compare_excess(table, run, grid, summary):
 
     # What each shape would add to the bands the photosphere was fitted on
     fit_wave = np.asarray(run['wave_um'], dtype=float)
-    fit_model = np.array([summary['best'][p] for p in PARAMETERS])
-    fit_model = model_flux(fit_model, run['columns'], run['ext_unit'], grid)
-    fit_sigma = np.hypot(run['flux_err'], summary['jitter']['median'] * fit_model)
+    theta = best_theta(run, summary)
+    fit_model = run_model(run, grid)(theta, scaled=False)
+    fit_sigma = np.hypot(run['flux_err'] * band_factors(run, run['bands'], theta),
+                         summary['jitter']['median'] * fit_model)
     fit_inv2 = 1.0 / fit_sigma ** 2
 
     amplitude = np.geomspace(AMPLITUDE_RANGE[0] * scale,
@@ -1187,9 +1485,11 @@ def add_excess_residuals(table, models):
         entry['fit_sigma'] = float((entry['observed'] - total) / sigma)
 
 
-def log_excess(table, models, log):
+def log_excess(table, models, log, dust=False):
     """The excess as a table, and what shape it came out as."""
-    log('\ninfrared excess, against the photosphere the fit predicts')
+    log('\ninfrared excess, against '
+        + ('the photosphere and dust the fit predicts' if dust
+           else 'the photosphere the fit predicts'))
     # Two significances, and they answer different questions: how far the
     # point is from the photosphere, which is whether there is an excess at
     # all, and how far it is from the photosphere and the fitted excess
@@ -1243,6 +1543,50 @@ def log_excess(table, models, log):
     if bb.get('above_ceiling'):
         log('      - which is more than any debris disc is seen to have'
             ' at that temperature')
+
+
+# ------------------------------------------------------- emission lines
+
+# The lines strong enough in an emission-line star - a Be or Herbig star, a
+# symbiotic, a young star accreting - to lift a whole bin of a spectrum: on
+# Hen 2-446 the XP bin with H-alpha in it is three times its neighbours, and
+# the SPHEREx ones with Paschen beta and alpha are lifted by a third and a
+# sixth. No model here has emission lines, so a bin holding one is a point
+# the photosphere cannot reach; and in absorption, which the models do have,
+# leaving it out costs one point of twenty. In microns.
+#
+# The third field says whether a line is strong enough to spill into the bin
+# beside it through the instrument's own width. Only the three that do on
+# Hen 2-446 are marked: the XP bin next to H-alpha is a fifth high with it,
+# where the bins beside H-beta and He I show nothing - and marking every
+# line's neighbours would leave out half of Gaia's spectrum.
+EMISSION_LINES = (
+    ('H-delta', 0.4102, False), ('H-gamma', 0.4341, False),
+    ('H-beta', 0.4861, False), ('He I 5876', 0.5876, False),
+    ('H-alpha', 0.6563, True), ('O I 8446', 0.8446, False),
+    ('Ca II 8498', 0.8498, False), ('Ca II 8542', 0.8542, False),
+    ('Ca II 8662', 0.8662, False), ('Pa-delta', 1.0049, False),
+    ('He I 10830', 1.0830, False), ('Pa-gamma', 1.0938, False),
+    ('Pa-beta', 1.2818, True), ('Pa-alpha', 1.8751, True),
+    ('Br-gamma', 2.1655, False), ('Br-beta', 2.6252, False),
+    ('Br-alpha', 4.0512, False),
+)
+
+
+def lines_in(lo_um, hi_um, margin_um=0.0):
+    """The emission lines a bin holds, by name - and for the strongest, half
+    the instrument's width beyond its edges, which is how far they spill."""
+    return [name for name, wave, spills in EMISSION_LINES
+            if lo_um - (margin_um if spills else 0) <= wave
+            <= hi_um + (margin_um if spills else 0)]
+
+
+def mark_line(row, names, mask):
+    """Say which lines a bin holds, and leave it out by default if asked to."""
+    row['line'] = ', '.join(names) if names else None
+    if names and mask:
+        row['default'] = False
+        row['note'] = f"holds {row['line']}"
 
 
 # --------------------------------------------------- the Gaia XP spectrum
@@ -1447,10 +1791,9 @@ def compare_xp(xp, run, grid, theta, ndraw=400, seed=0):
         raise SourceError('no usable bins in the XP spectrum')
 
     wave = np.array([b['wave_um'] for b in binned])
-    columns = np.array([grid.column[b['band']] for b in binned])
-    ext_unit = attenuation(wave, 1.0)
+    model_of = run_model(run, grid, [b['band'] for b in binned], wave)
 
-    model = model_flux(theta, columns, ext_unit, grid)
+    model = model_of(theta)
 
     # What the rest of the posterior would have predicted here, which is what
     # makes a deviation in a bin the fit barely constrains worth what it is
@@ -1458,7 +1801,7 @@ def compare_xp(xp, run, grid, theta, ndraw=400, seed=0):
     if len(samples) > ndraw:
         samples = samples[np.random.default_rng(seed).choice(len(samples),
                                                              ndraw, replace=False)]
-    cloud = np.array([model_flux(row, columns, ext_unit, grid) for row in samples])
+    cloud = np.array([model_of(row) for row in samples])
     good = np.isfinite(cloud).all(axis=1)
     model_err = (cloud[good].std(axis=0) if good.any()
                  else np.zeros(len(binned)))
@@ -1956,7 +2299,7 @@ def spherex_binned(spherex):
     return out
 
 
-def spherex_points(basepath, points=None, spherex=None):
+def spherex_points(basepath, points=None, spherex=None, mask_lines=False):
     """The SPHEREx spectrum as points, in the shape the SED files come in.
 
     As xp_points() does for Gaia's, with one difference: these may stand for
@@ -1980,6 +2323,10 @@ def spherex_points(basepath, points=None, spherex=None):
                'wave_um': entry['wave_um'], 'wave_drawn_um': entry['wave_um'],
                'flux': entry['observed'], 'err': entry['err'],
                'excess': False}
+        mark_line(row, lines_in(entry['lo_um'], entry['hi_um'],
+                                0.5 * entry['wave_um']
+                                / float(spherex_resolution(entry['wave_um'])[0])),
+                  mask_lines)
 
         row['used'] = row['default'] if points is None else name in points
         if row['used'] and not row['default']:
@@ -2495,9 +2842,19 @@ def observed_spectrum(name, theta, grid=None):
         spectrum['correction'] = float(np.median(scale[np.isfinite(scale)]))
 
     dilution = (values['rad'] * R_SUN / (values['dist'] * PARSEC)) ** 2
-    reddening = 10 ** (-0.4 * attenuation(spectrum['wave_um'], values['Av']))
+    reddening = 10 ** (-0.4 * attenuation(spectrum['wave_um'], values['Av'],
+                                          rv=values.get(RV_PARAMETER, RV_DEFAULT)))
 
-    spectrum['observed'] = flux * dilution * reddening
+    star = flux * dilution * reddening
+
+    # And the dust the run fitted, on the spectrum's own wavelengths - drawn
+    # with the star it is a fraction of, and reddened the same
+    spectrum['dust'] = [dust_flux(spectrum['wave_um'], values['teff'], dilution,
+                                  values[t], values[f]) * reddening
+                        for t, f in DUST_PARAMETERS if t in values]
+
+    spectrum['star'] = star
+    spectrum['observed'] = star + sum(spectrum['dust']) if spectrum['dust'] else star
     return spectrum
 
 
@@ -2649,7 +3006,7 @@ def read_sed_points(path, points=None, extra=None,
     return rows
 
 
-def xp_points(basepath, points=None, xp=None):
+def xp_points(basepath, points=None, xp=None, mask_lines=False):
     """The Gaia XP spectrum as points, in the shape the SED files come in.
 
     A bin is a band, so a bin is a row: the same keys, the same meaning of
@@ -2675,6 +3032,8 @@ def xp_points(basepath, points=None, xp=None):
                'wave_um': entry['wave_um'], 'wave_drawn_um': entry['wave_um'],
                'flux': entry['observed'], 'err': entry['err'],
                'excess': False}
+        mark_line(row, lines_in(entry['lo_nm'] * 1e-3, entry['hi_nm'] * 1e-3,
+                                0.5 * XP_LSF_NM * 1e-3), mask_lines)
 
         row['used'] = row['default'] if points is None else name in points
         if row['used'] and not row['default']:
@@ -2846,7 +3205,8 @@ def target_sed_fit(config, basepath='.', outpath=None, selection=None,
                 for each in kept:
                     log(f'    {each}')
 
-        rows = rows + xp_points(basepath, points=selection.get('points'), xp=xp)
+        rows = rows + xp_points(basepath, points=selection.get('points'), xp=xp,
+                                mask_lines=bool(options.get('mask_lines')))
         rows.sort(key=lambda r: (r['wave_um'] is None, r['wave_um'] or 0))
 
     # The IUE spectra, the same way. Nothing in the SED file is made from them,
@@ -2869,7 +3229,8 @@ def target_sed_fit(config, basepath='.', outpath=None, selection=None,
 
     if fit_spherex:
         rows = rows + spherex_points(basepath, points=selection.get('points'),
-                                     spherex=spherex)
+                                     spherex=spherex,
+                                     mask_lines=bool(options.get('mask_lines')))
         rows.sort(key=lambda r: (r['wave_um'] is None, r['wave_um'] or 0))
     elif options.get('spherex_fit'):
         log("\nThe SPHEREx spectrum was asked for, but there is none to fit -"
@@ -2914,6 +3275,46 @@ def target_sed_fit(config, basepath='.', outpath=None, selection=None,
             f" {xp['wave_um'][0] * 1e3:.0f} to {xp['wave_um'][-1] * 1e3:.0f} nm."
             f" It is compared with each fit and fitted by none of them")
 
+    # What is fitted besides the star. R_V is a parameter only where it is
+    # not the interstellar 3.1 held fixed, so that a run asking nothing new
+    # samples exactly the seven it always did.
+    rv_prior = tuple(options.get('rv_prior') or ('fixed', RV_DEFAULT))
+    free_rv = not (rv_prior[0] == 'fixed' and float(rv_prior[1]) == RV_DEFAULT)
+    dust = int(np.clip(int(options.get('dust') or 0), 0, len(DUST_PARAMETERS)))
+
+    # A dataset is scaled only where it is fitted and its scale is not one
+    fitted_sets = {scale_dataset(r['band']) for r in rows if r['used']} - {None}
+    scales = {}
+    for dataset, spec in (options.get('scales') or {}).items():
+        spec = tuple(spec)
+        if dataset not in fitted_sets or spec[0] not in ('fixed', 'lognormal'):
+            continue
+        if spec[0] == 'fixed' and float(spec[1]) == 1.0:
+            continue
+        scales[dataset] = spec
+
+    # Something has to stay as measured, or the radius has nothing to be
+    # measured against and every free scale trades with it
+    anchored = any(r['used'] and scale_dataset(r['band']) not in
+                   {d for d, spec in scales.items() if spec[0] == 'lognormal'}
+                   for r in rows)
+    if not anchored:
+        raise SourceError('every fitted point belongs to a dataset with a free'
+                          ' scale - something has to be taken as measured,'
+                          ' or the scales and the radius are one degeneracy')
+
+    parameters = run_parameters(free_rv, dust, scaled=tuple(scales))
+
+    if free_rv or dust or scales:
+        log("\nFitted besides the photosphere: "
+            + ', '.join(([f"R_V {describe_prior(rv_prior)}"] if free_rv else [])
+                        + ([f"{dust} dust component{'s' if dust > 1 else ''},"
+                            " each a blackbody whose luminosity is a fraction"
+                            " of the star's"] if dust else [])
+                        + [f"{dict(SCALE_DATASETS)[d]} scale"
+                           f" {describe_prior(spec)}"
+                           for d, spec in scales.items()]))
+
     # Where the fit has got to, for the page that started it: which grid of
     # how many, and what that grid is doing
     names = list(options.get('grids') or ['btsettl'])
@@ -2930,7 +3331,9 @@ def target_sed_fit(config, basepath='.', outpath=None, selection=None,
         # are what the comparison is made against, and that needs the same cube
         grid = load_grid(name, xp=xp is not None, iue=fit_iue,
                          spherex=fit_spherex)
-        priors = default_priors(grid, distance, distance_err, av_max)
+        priors = default_priors(grid, distance, distance_err, av_max,
+                                rv=rv_prior if free_rv else None, dust=dust,
+                                scales=scales)
         # The temperature prior is deliberately the same whatever grid is
         # loaded, so that a grid's extent cannot become the answer
         priors['teff'] = tuple(options.get('teff_prior')
@@ -2960,7 +3363,7 @@ def target_sed_fit(config, basepath='.', outpath=None, selection=None,
         log(f"\n---- Fitting {name} ----\n")
         log(f"Teff {grid.teff.min():.0f}-{grid.teff.max():.0f} K,"
             f" {len(grid.teff)} models")
-        run = fit(bands, wave, flux, err, grid, priors,
+        run = fit(bands, wave, flux, err, grid, priors, parameters=parameters,
                   nlive=options.get('nlive', 500), seed=options.get('seed', 0),
                   verbose=False, progress=log,
                   state=lambda fields: step('sampling', at, **fields))
@@ -2998,7 +3401,8 @@ def target_sed_fit(config, basepath='.', outpath=None, selection=None,
                         summary['excess'], run, grid, summary)
                     add_excess_residuals(summary['excess'],
                                          summary['excess_models'])
-                    log_excess(summary['excess'], summary['excess_models'], log)
+                    log_excess(summary['excess'], summary['excess_models'], log,
+                               dust=bool(dust))
 
                 # What was left out of both, for the figure to show. Measured
                 # the same way, so that a point set aside can be seen to have
@@ -3045,8 +3449,7 @@ def target_sed_fit(config, basepath='.', outpath=None, selection=None,
         # fitted parameters like any other.
         if xp is not None:
             try:
-                theta = np.array([summaries[grid.name]['best'][p]
-                                  for p in PARAMETERS])
+                theta = best_theta(run, summaries[grid.name])
                 summaries[grid.name]['xp'] = compare_xp(xp, run, grid, theta)
                 log_xp(summaries[grid.name]['xp'], log)
             except SourceError as e:
@@ -3074,8 +3477,12 @@ def target_sed_fit(config, basepath='.', outpath=None, selection=None,
             continue
 
         model = os.path.join(outpath, f'model_{grid.name}.npy')
-        np.save(model, np.vstack([spectrum['wave_um'],
-                                  spectrum['observed']]).astype('float32'))
+        # The total first, as the viewer reads it, and where dust was fitted
+        # the photosphere and each component after it
+        rows = [spectrum['wave_um'], spectrum['observed']]
+        if spectrum.get('dust'):
+            rows += [spectrum['star']] + list(spectrum['dust'])
+        np.save(model, np.vstack(rows).astype('float32'))
         log(f"\n{grid.name} spectrum: nearest node is"
             f" {spectrum['teff']:.0f} K,"
             f" log g {spectrum['logg']:.1f}, [Fe/H] {spectrum['feh']:+.1f}")
@@ -3145,6 +3552,10 @@ def shrinkage(result, teff_prior):
     elif kind in ('uniform', 'grid'):
         lo, hi = teff_prior[1:3]
         prior_sd = np.log(hi / lo) / np.sqrt(12)
+    elif kind in ('normal', 'truncnorm'):
+        # In the log, as the posterior's spread is measured: a Gaussian of
+        # width sigma about mu is a spread of sigma / mu there
+        prior_sd = teff_prior[2] / teff_prior[1]
     else:
         return float('nan')
 
@@ -3161,24 +3572,31 @@ def residual_table(result, summary, grid):
     a residual there is worth fewer sigma than the same residual in a band the
     fit is pinned to - which dividing by the catalogue error alone will not say.
     """
-    theta = np.array([summary['best'][p] for p in PARAMETERS])
-    _, model = residuals(result, theta, grid)
+    theta = best_theta(result, summary)
+    model = run_model(result, grid)(theta, scaled=False)
     _, model_err = predict_bands(result, grid, result['bands'],
-                                 result['wave_um'])
+                                 result['wave_um'], scaled=False)
 
     drawn = result.get('wave_drawn_um')
     if drawn is None:
         drawn = result['wave_um']
 
-    sigma = np.hypot(result['flux_err'], np.nan_to_num(model_err))
-    res = (result['flux'] - model) / sigma
+    # On the photometry's scale, the data and their errors both: the same
+    # residual in sigma as comparing the data with the scaled model, and what
+    # the viewer, which multiplies the spectra by the same scale, draws
+    factor = band_factors(result, result['bands'], theta)
+    flux = result['flux'] * factor
+    error = result['flux_err'] * factor
+
+    sigma = np.hypot(error, np.nan_to_num(model_err))
+    res = (flux - model) / sigma
 
     return [{'band': b, 'wave_um': float(w), 'wave_drawn_um': float(d),
              'observed': float(f), 'model': float(m), 'model_err': float(me),
-             'residual': float(r)}
-            for b, w, d, f, m, me, r in zip(result['bands'], result['wave_um'],
-                                            drawn, result['flux'], model,
-                                            model_err, res)]
+             'residual': float(r), 'scale': float(k)}
+            for b, w, d, f, m, me, r, k in zip(result['bands'], result['wave_um'],
+                                               drawn, flux, model, model_err,
+                                               res, factor)]
 
 
 def _grid_spread(summaries):
@@ -3355,6 +3773,14 @@ LABELS = {
     'rad': (r'Radius, $R_\odot$', '{:.2f}'),
     'Av': (r'$A_V$, mag', '{:.2f}'),
     'jitter': ('Jitter', '{:.3f}'),
+    'Rv': (r'$R_V$', '{:.2f}'),
+    'Tdust1': (r'$T_{\rm dust,1}$, K', '{:.0f}'),
+    'fdust1': (r'$L_{\rm dust,1}/L_\star$', '{:.3g}'),
+    'Tdust2': (r'$T_{\rm dust,2}$, K', '{:.0f}'),
+    'fdust2': (r'$L_{\rm dust,2}/L_\star$', '{:.3g}'),
+    'scale_xp': ('Gaia XP scale', '{:.3f}'),
+    'scale_spherex': ('SPHEREx scale', '{:.3f}'),
+    'scale_iue': ('IUE scale', '{:.3f}'),
     'theta_mas': (r'$\theta$, mas', '{:.4f}'),
     'lum_lsun': (r'Luminosity, $L_\odot$', '{:.3g}'),
 }
@@ -3417,14 +3843,19 @@ def draw_sed(run, grid, summary, path, name=None, colour=GRID_COLOURS[0],
     """
     from stdpipe import plots
 
-    theta = np.array([summary['best'][p] for p in PARAMETERS])
+    theta = best_theta(run, summary)
+    model_of = run_model(run, grid)
 
     order = np.argsort(np.asarray(run['wave_um']))
     wave = np.asarray(run['wave_um'])[order]
     bands = [run['bands'][i] for i in order]
-    flux = run['flux'][order] * PER_AA
-    err = run['flux_err'][order] * PER_AA
-    model = model_flux(theta, run['columns'], run['ext_unit'], grid)[order] * PER_AA
+    # On the photometry's scale throughout, as the residual table is and as
+    # the viewer draws it: a scaled spectrum's points multiplied by its scale,
+    # the model as the star is
+    factor = band_factors(run, run['bands'], theta)[order]
+    flux = run['flux'][order] * factor * PER_AA
+    err = run['flux_err'][order] * factor * PER_AA
+    model = model_of(theta, scaled=False)[order] * PER_AA
 
     jitter = float(theta[PARAMETERS.index('jitter')])
     widened = np.hypot(err, jitter * model)
@@ -3441,7 +3872,7 @@ def draw_sed(run, grid, summary, path, name=None, colour=GRID_COLOURS[0],
     if len(draws) > 200:
         draws = draws[np.random.default_rng(0).choice(len(draws), 200,
                                                       replace=False)]
-    cloud = np.array([model_flux(row, run['columns'], run['ext_unit'], grid)[order]
+    cloud = np.array([model_of(row, scaled=False)[order]
                       for row in draws]) * PER_AA
     lo, hi = np.nanpercentile(cloud, [16, 84], axis=0)
 
@@ -3464,10 +3895,12 @@ def draw_sed(run, grid, summary, path, name=None, colour=GRID_COLOURS[0],
 
     filename = os.path.join(path, f'sed_{name or run["grid"]}.png')
 
-    with plots.figure_saver(filename, figsize=(8, 6), tight_layout=False) as fig:
+    # Larger than the other figures: the model, its parts, the spectra and
+    # a point per band of three datasets are a great deal for one panel
+    with plots.figure_saver(filename, figsize=(12, 8.5), tight_layout=False) as fig:
         top, low = fig.subplots(2, 1, sharex=True,
                                 gridspec_kw={'height_ratios': [3, 1],
-                                             'hspace': 0.06})
+                                             'hspace': 0.16})
 
         # What Gaia measured over the optical, behind everything: it is the
         # one curve on this figure that is neither a model nor something the
@@ -3483,7 +3916,10 @@ def draw_sed(run, grid, summary, path, name=None, colour=GRID_COLOURS[0],
                 quoted = checked.get('offset_within') or checked['offset']
                 label += f", {100 * (quoted - 1):+.0f}% on the model"
 
-            top.plot(xp['wave_um'][drawable], xp['flux'][drawable] * PER_AA,
+            # Gaia's spectrum on the same scale as its bins
+            xp_scale = band_factors(run, ['GAIA_XP_365'], theta)[0]
+            top.plot(xp['wave_um'][drawable],
+                     xp['flux'][drawable] * xp_scale * PER_AA,
                      '-', lw=1.0, color=XP_COLOUR, alpha=0.85, zorder=0.5,
                      label=label)
 
@@ -3503,7 +3939,23 @@ def draw_sed(run, grid, summary, path, name=None, colour=GRID_COLOURS[0],
                     & (spectrum[0] <= 1.5 * red))
             top.plot(spectrum[0][near], spectrum[1][near] * PER_AA, '-',
                      lw=0.6, color=colour, alpha=0.5, zorder=0,
-                     label=f'{run["grid"]} spectrum, node put on the fit')
+                     label=f'{run["grid"]} spectrum, node put on the fit'
+                           + (' - star and dust' if len(spectrum) > 2 else ''))
+
+            # Where dust was fitted, the parts of that line, so that how much
+            # of each band is the star can be seen rather than worked out
+            for row, (what, style) in zip(spectrum[2:], (('photosphere', '--'),
+                                                         ('hot dust', ':'),
+                                                         ('warm dust', '-.'))):
+                if len(spectrum) == 4 and what == 'hot dust':
+                    what = 'dust'
+                # Only where it is something: a blackbody's Wien side falls
+                # forty decades across the optical, and drawn there it takes
+                # the axis with it
+                seen = near & (row > 1e-3 * spectrum[1])
+                top.plot(spectrum[0][seen], row[seen] * PER_AA, style,
+                         lw=0.8, color=colour, alpha=0.6, zorder=0,
+                         label=what)
 
         # Per band rather than a shaded curve across them: what the fit
         # produced is a flux in each filter, and a band drawn between them
@@ -3574,7 +4026,12 @@ def draw_sed(run, grid, summary, path, name=None, colour=GRID_COLOURS[0],
         top.set_title(f"{run['grid']}: "
                       rf"$T_{{\rm eff}}$ = {theta[0]:.0f} K, "
                       rf"$A_V$ = {theta[5]:.2f}, "
-                      rf"$\chi^2$ = {summary['chi2']:.1f} on {len(bands)} bands",
+                      rf"$\chi^2$ = {summary['chi2']:.1f} on {len(bands)} bands"
+                      # A scaled dataset's diamonds are the model times its
+                      # scale, which is why they sit off the line by that much
+                      + ''.join(f", {label} x{summary['best'][scale_parameter(d)]:.2f}"
+                                for d, label in SCALE_DATASETS
+                                if scale_parameter(d) in summary.get('best', {})),
                       fontsize=10)
         top.legend(fontsize=8.5, frameon=False)
         top.grid(alpha=0.15)
@@ -3665,7 +4122,12 @@ def draw_sed(run, grid, summary, path, name=None, colour=GRID_COLOURS[0],
 
         # Along the bottom, which is the one strip of this panel that is
         # reliably empty - the residuals it draws cluster about zero
-        low.legend(fontsize=7.5, frameon=False, loc='lower center', ncol=3)
+        # In the gap above the panel rather than inside it: the names of the
+        # worst bands are written at the foot of it, and a legend there sat on
+        # them. The gap is widened to hold it, so it does not climb into the
+        # panel above when there is an excess to explain as well.
+        low.legend(fontsize=7.5, frameon=False, loc='lower center', ncol=4,
+                   bbox_to_anchor=(0.5, 0.98), borderaxespad=0.1)
 
         low.set_xlabel(r'Wavelength, $\mu$m')
         low.set_ylabel(r'Residual, $\sigma$', fontsize=9)
@@ -3698,13 +4160,14 @@ def draw_corner(run, path, name=None):
 
     from stdpipe import plots
 
-    columns = [i for i, _ in enumerate(PARAMETERS) if _spread(run['samples'], i)]
+    parameters = parameters_of(run)
+    columns = [i for i, _ in enumerate(parameters) if _spread(run['samples'], i)]
     if len(columns) < 2:
         return None
 
     axis = run.get('axis_logg') or 'logg'
-    labels = [(axis if PARAMETERS[i] == 'logg' and axis != 'logg'
-               else LABELS[PARAMETERS[i]][0]) for i in columns]
+    labels = [(axis if parameters[i] == 'logg' and axis != 'logg'
+               else LABELS[parameters[i]][0]) for i in columns]
     data = run['samples'][:, columns]
 
     filename = os.path.join(path, f'corner_{name or run["grid"]}.png')
@@ -3736,7 +4199,11 @@ def draw_histograms(runs, path, name='histograms.png'):
     from matplotlib.ticker import MaxNLocator
     from stdpipe import plots
 
-    shown = [p for p in PARAMETERS + ('theta_mas', 'lum_lsun')
+    every = []
+    for run in runs:
+        every += [p for p in parameters_of(run) if p not in every]
+
+    shown = [p for p in tuple(every) + ('theta_mas', 'lum_lsun')
              if any(_parameter_values(run, p) is not None for run in runs)]
     if not shown:
         return None
@@ -3839,8 +4306,9 @@ def _quantile_title(median, lo, hi, fmt, grid=None):
 
 def _parameter_values(run, parameter):
     """One parameter's samples, sampled or derived, or None if it has none."""
-    if parameter in PARAMETERS:
-        column = PARAMETERS.index(parameter)
+    parameters = parameters_of(run)
+    if parameter in parameters:
+        column = parameters.index(parameter)
         return run['samples'][:, column] if _spread(run['samples'], column) else None
 
     values = derived(run['samples']).get(parameter)

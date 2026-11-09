@@ -245,6 +245,26 @@ between visits. Unlike the other spectra its bins can be measured as an
 a wind as it is the star. Grids whose spectra stop short of five microns get
 the bins they reach, and are skipped by a fit that asks for the rest.
 
+A star with a disc needs more than a photosphere, and three options give it.
+**Dust** - one blackbody, or a hot one (600–2000 K) and a warm one (30–600 K) -
+is fitted *with* the star rather than measured after it, each component's
+luminosity a fraction of the star's; at one micron a Herbig star's inner rim is
+already a quarter of the light, so the two cannot be fitted one after the
+other. **R<sub>V</sub>** can be 3.1, 5, or free between 2 and 6, circumstellar
+dust being greyer than the interstellar medium. And the bins of the spectra
+holding a strong **emission line** - H-alpha, the Paschen and Brackett lines,
+O I and the Ca II triplet - can be left out with one switch. Where nothing
+pins the temperature down, a Gaussian prior on it can be taken from Gaia.
+
+Each spectrum - Gaia XP, SPHEREx, IUE - can also be **scaled**: multiplied by
+the factor that puts it on the scale of the catalogue photometry, which is
+never scaled. The factor is set in that spectrum's row of the viewer, where it
+moves the data on the plot, and the fit either takes it as it is or finds its
+own - which the plot then takes up, so that the plot shows what the fit did. A star that changed between
+epochs needs one, and so does a SPHEREx spectrum with a neighbour in it: its
+aperture is nine arcseconds, and the SPHEREx step says, from Gaia, how much of
+the aperture's flux is other stars.
+
 Two numbers come out beside the parameters and are worth as much as they are:
 the **jitter**, the fractional model inadequacy the fit needed, which says how
 far the photometry is from anything one photosphere explains; and the

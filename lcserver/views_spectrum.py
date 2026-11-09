@@ -111,6 +111,19 @@ def is_calibrated(path):
     return bool(unit and unit.group(1).strip())
 
 
+def fit_dataset(source_id, path):
+    """The SED fit's name for the dataset a spectrum file is, or None.
+
+    The ones a fit can scale: Gaia XP, which the info step writes beside much
+    else, and every file of the SPHEREx and IUE steps.
+    """
+    if os.path.basename(path).startswith('gaia_xp'):
+        return 'xp'
+    if source_id in ('spherex', 'iue'):
+        return source_id
+    return None
+
+
 def load_spectrum_data(basepath, calibrated=None):
     """Every spectrum written for a target.
 
@@ -260,6 +273,9 @@ def load_spectrum_data(basepath, calibrated=None):
                 spectra.append({
                     'source_id': source_id,
                     'label': label,
+                    # Which of the fit's scalable datasets this is, so that the
+                    # scale the viewer draws it at is the one the fit takes
+                    'fit_dataset': fit_dataset(source_id, path),
                     'draw': kind,
                     'file': os.path.basename(path),
                     'color': palette[number % len(palette)],
@@ -409,6 +425,14 @@ FIT_OPTIONS = {
     'iue_fit': lambda v: bool(v),
     # And SPHEREx, the same way
     'spherex_fit': lambda v: bool(v),
+    # The extinction law's R_V: fixed, or free over a range
+    'rv_prior': lambda v: _rv_prior(v),
+    # How many dust blackbodies are fitted with the star
+    'dust': lambda v: int(np.clip(int(v), 0, 2)),
+    # Whether the bins holding an emission line are left out by default
+    'mask_lines': lambda v: bool(v),
+    # A scale per spectrum: {'spherex': ['fixed', 0.55]} or ['lognormal', 1, w]
+    'scales': lambda v: _scales(v),
 }
 
 # Priors arrive as ['uniform', low, high] and are rebuilt here rather than
@@ -422,6 +446,44 @@ def _prior(value):
     if kind not in PRIOR_KINDS:
         raise ValueError(f'unknown prior {kind}')
     return [kind] + [float(_) for _ in value[1:]]
+
+
+def _scales(value):
+    """Each spectrum's scale, as one the fit can take: a value held fixed, or
+    a log-normal about one of a stated width. Nothing else, and in bounds."""
+    from .processing import sedfit
+
+    known = {dataset for dataset, _ in sedfit.SCALE_DATASETS}
+    out = {}
+    for dataset, spec in dict(value).items():
+        if dataset not in known:
+            raise ValueError(f'no dataset {dataset} to scale')
+        kind = str(spec[0])
+        if kind == 'fixed':
+            out[dataset] = ['fixed', float(np.clip(float(spec[1]), 0.01, 100.0))]
+        elif kind == 'lognormal':
+            width = float(spec[2]) if len(spec) > 2 else sedfit.SCALE_WIDTH
+            out[dataset] = ['lognormal', 1.0, float(np.clip(width, 0.01, 3.0))]
+        else:
+            raise ValueError(f'a scale is fixed or lognormal, not {kind}')
+
+    return out
+
+
+def _rv_prior(value):
+    """R_V's prior, held inside the range the extinction table covers."""
+    from .processing import sedfit
+
+    prior = _prior(value)
+    lo, hi = float(sedfit.RV_AXIS[0]), float(sedfit.RV_AXIS[-1])
+    if prior[0] == 'fixed':
+        prior[1] = float(np.clip(prior[1], lo, hi))
+    elif prior[0] in ('uniform', 'loguniform'):
+        prior[1:3] = [float(np.clip(_, lo, hi)) for _ in prior[1:3]]
+    else:
+        raise ValueError('R_V takes a fixed value or a range')
+
+    return prior
 
 
 @login_required
@@ -521,6 +583,8 @@ def _run_spectra(path):
         spectra[grid] = {
             'wave_um': [float(f'{_:.6g}') for _ in data[0]],
             'flux': [float(f'{_:.4g}') for _ in data[1]],
+            # Where dust was fitted, the photosphere and each component
+            'components': [[float(f'{_:.4g}') for _ in row] for row in data[2:]],
         }
 
     return spectra
@@ -690,9 +754,15 @@ def sed_points(request, id):
     # And SPHEREx's, which may be measured as an excess instead of fitted
     spherex = sedfit.spherex_points(target.path())
 
+    # Gaia's own temperature, for the prior's button
+    config = target.config or {}
+    gaia_teff = ([config.get('gaia_teff'), config.get('gaia_teff_lo'),
+                  config.get('gaia_teff_hi')] if config.get('gaia_teff') else None)
+
     return JsonResponse({
         'source': source,
         'points': points,
+        'gaia_teff': gaia_teff,
         'xp': xp,
         'iue': iue,
         'spherex': spherex,

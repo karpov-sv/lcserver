@@ -235,6 +235,19 @@ SPHEREX_TO_ANGSTROM = 1e4
 # One FITS block
 BLOCK = 2880
 
+# The pixel, in arcsec, for turning an offset on the sky into one on the
+# detector when nothing else is to hand
+SPHEREX_PIXEL = 6.2
+
+# How far out Gaia is asked for neighbours: far enough that a bright star's
+# PSF wing reaching into the aperture is counted, the aperture being a few
+# pixels and the PSF's wing a few more
+SPHEREX_NEIGHBOUR_RADIUS = 30.0
+
+# How much of the aperture's flux may be other stars before it is said loudly.
+# Below it the neighbours are a few per cent, which is inside the calibration.
+SPHEREX_BLEND_WARNING = 0.1
+
 
 def _detector_and_version(url):
     """Which detector took an exposure, and what processed it.
@@ -1090,6 +1103,107 @@ def _extract(url, ra, dec, group, quality, aperture):
     }
 
 
+def _blending(ra, dec, aperture, enclosed, basepath, log, refresh):
+    """How much of the aperture is stars other than the target, by Gaia.
+
+    Gaia resolves what a six-arcsecond pixel does not, so the neighbours it
+    lists, each weighted by how much of its light the PSF puts inside the
+    target's aperture, are what the aperture sum holds besides the target.
+    The PSF is taken as the Gaussian that puts the measured fraction of a point
+    source into this aperture - near enough for a weight, and nothing more is
+    asked of it.
+
+    In Gaia's RP, as the band nearest SPHEREx's blue end. A neighbour of a
+    different colour contributes a different share in the infrared, so this is
+    a statement about the size of the problem and not a correction for it.
+    Returns the fraction of the aperture's flux that is the neighbours, or
+    None where Gaia could not be asked or has nothing at the position.
+    """
+    from . import cds
+
+    cache_name = f"gaia_neighbours_{ra:.4f}_{dec:.4f}.vot"
+
+    with cached_votable_query(cache_name, basepath, log, 'Gaia neighbours',
+                              refresh=refresh) as cache:
+        if not cache.hit:
+            try:
+                cat = cds.vizier_cat(ra, dec, SPHEREX_NEIGHBOUR_RADIUS,
+                                     'I/355/gaiadr3', get_distance=True, log=log)
+            except Exception as e:
+                log(f"Gaia could not be asked for neighbours: {e}")
+                return None
+
+            if cat is not None and len(cat):
+                cache.save(cat)
+            else:
+                cache.save_empty()
+
+        cat = cache.data
+
+    if cat is None or not len(cat) or 'RPmag' not in cat.colnames:
+        return None
+
+    # A star Gaia has no RP for comes back masked, not as a NaN
+    def column(name):
+        return np.ma.filled(np.ma.asarray(cat[name], dtype=float), np.nan)
+
+    sep = column('_r') * 3600.0 / SPHEREX_PIXEL
+    rp = column('RPmag')
+    gmag = column('Gmag')
+
+    known = np.isfinite(rp)
+    if not known.any():
+        return None
+
+    # The target is the nearest, and has to be close to be anyone at all
+    target = int(np.argmin(np.where(known, sep, np.inf)))
+    if sep[target] * SPHEREX_PIXEL > 2.0:
+        return None
+
+    # A neighbour with no RP is left out rather than allowed to make the sum
+    # a NaN - which it would, weighted by nothing
+    flux = np.where(known, 10 ** (-0.4 * (rp - rp[target])), 0.0)
+
+    # The Gaussian putting `enclosed` of a centred source inside the aperture
+    enclosed = float(np.clip(enclosed, 0.5, 0.999))
+    sigma = aperture / np.sqrt(-2 * np.log(1 - enclosed))
+
+    # How much of a source at each offset falls inside it, on a fine grid
+    step = 0.05
+    axis = np.arange(-aperture, aperture + step / 2, step)
+    yy, xx = np.meshgrid(axis, axis, indexing='ij')
+    inside = np.hypot(xx, yy) <= aperture
+
+    def fraction(offset):
+        weight = np.exp(-((xx[inside] - offset) ** 2 + yy[inside] ** 2)
+                        / (2 * sigma ** 2))
+        return float(np.sum(weight) * step ** 2 / (2 * np.pi * sigma ** 2))
+
+    share = np.array([fraction(_) if ok and i != target else 0.0
+                      for i, (_, ok) in enumerate(zip(sep, known))])
+    others = share * flux
+
+    blend = float(np.sum(others) / (np.sum(others) + enclosed))
+
+    worst = int(np.argmax(others))
+    log(f"\nGaia neighbours: {int(np.sum(others > 0.001 * enclosed))} within"
+        f" {SPHEREX_NEIGHBOUR_RADIUS:.0f} arcsec put {100 * blend:.0f}% of the"
+        f" aperture's flux in RP into it")
+
+    if others[worst] > 0:
+        log(f"  the most, G = {gmag[worst]:.1f} at"
+            f" {sep[worst] * SPHEREX_PIXEL:.1f} arcsec:"
+            f" {100 * others[worst] / (np.sum(others) + enclosed):.0f}%")
+
+    if blend > SPHEREX_BLEND_WARNING:
+        log(f"Warning: the spectrum is {100 * blend:.0f}% other stars in the red,"
+            " and a different share in the infrared, where their colours"
+            " differ from the target's - fitted beside resolved photometry, its"
+            " scale wants to be free")
+
+    return blend
+
+
 def _query_images(ra, dec, basepath, log, refresh):
     """The spectral images covering a position, over every release, cached.
 
@@ -1777,6 +1891,15 @@ def target_spherex(config, basepath=None, verbose=True, show=False):
         sky = np.asarray(table['background'], dtype=float)
         log(f"Sky taken off, per pixel: {np.median(sky):.0f} uJy typically,"
             f" up to {np.max(sky):.0f} at the red end")
+
+    # What else is in the aperture, which at six arcseconds a pixel is often
+    # a star Gaia resolves and SPHEREx does not
+    blend = _blending(ra, dec, aperture, float(np.median(inside)), basepath,
+                      log, refresh_cache)
+    if blend is not None:
+        config['spherex_blend'] = blend
+    else:
+        config.pop('spherex_blend', None)
 
     wavelength = np.asarray(table['wavelength'], dtype=float)
     mjd = np.asarray(table['mjd'], dtype=float)

@@ -215,23 +215,31 @@
     </span> -->
 
     <div>
-      <div class="d-flex flex-wrap align-items-center gap-3 mb-2">
+      <div class="d-flex flex-wrap align-items-center column-gap-2 row-gap-1 mb-2">
         <div>
           <label class="control-label" for="fit-source">Points from</label>
           <select id="fit-source" class="form-select form-select-sm d-inline-block w-auto"
-                  onchange="loadPoints()">
-            <option value="sed.vot">sed.vot &mdash; one catalogue per band</option>
-            <option value="sed_all.vot">sed_all.vot &mdash; every catalogue at the position</option>
+                  onchange="loadPoints()"
+                  title="sed.vot holds one catalogue per band; sed_all.vot every catalogue VizieR has at the position">
+            <option value="sed.vot">sed.vot</option>
+            <option value="sed_all.vot">sed_all.vot</option>
           </select>
         </div>
         <div class="form-check form-switch mb-0" id="fit-xp-row" hidden>
           <input class="form-check-input" type="checkbox" id="fit-xp"
                  onchange="applyXpChoice(true)">
           <label class="form-check-label control-label me-0" for="fit-xp"
-                 title="Fit Gaia's spectrum in 30 nm bins, alongside the photometry.
+                 title="Fit the Gaia XP spectrum in 30 nm bins, alongside the photometry.
 The synthetic photometry made from the same spectra leaves the fit, being the same measurement.">
-            and the Gaia XP spectrum
+            Gaia XP
           </label>
+          <select id="fit-scale-xp" class="form-select form-select-sm d-inline-block w-auto ms-1 py-0"
+                  title="fixed scale: fitted at the scale the plot above draws it at, set by hand in its row there (1 is as measured).
+scale free: the fit finds one, log-normal about one, and the plot then takes it up.
+For a star that changed between epochs, or a spectrum with a neighbour blended into it. The catalogue photometry is never scaled - the radius is measured against it.">
+            <option value="plot">fixed scale</option>
+            <option value="free">scale free</option>
+          </select>
         </div>
         <div class="form-check form-switch mb-0" id="fit-iue-row" hidden>
           <input class="form-check-input" type="checkbox" id="fit-iue"
@@ -239,8 +247,15 @@ The synthetic photometry made from the same spectra leaves the fit, being the sa
           <label class="form-check-label control-label me-0" for="fit-iue"
                  title="Fit the IUE ultraviolet spectra in 100 A bins, alongside the photometry.
 Only the low dispersion spectra through the large aperture are used.">
-            and the IUE spectra
+            IUE
           </label>
+          <select id="fit-scale-iue" class="form-select form-select-sm d-inline-block w-auto ms-1 py-0"
+                  title="fixed scale: fitted at the scale the plot above draws it at, set by hand in its row there (1 is as measured).
+scale free: the fit finds one, log-normal about one, and the plot then takes it up.
+For a star that changed between epochs, or a spectrum with a neighbour blended into it. The catalogue photometry is never scaled - the radius is measured against it.">
+            <option value="plot">fixed scale</option>
+            <option value="free">scale free</option>
+          </select>
         </div>
         <div class="form-check form-switch mb-0" id="fit-spherex-row" hidden>
           <input class="form-check-input" type="checkbox" id="fit-spherex"
@@ -248,13 +263,30 @@ Only the low dispersion spectra through the large aperture are used.">
           <label class="form-check-label control-label me-0" for="fit-spherex"
                  title="Fit the SPHEREx spectrum in bins of R = 20 from 0.75 to 5 um, alongside the photometry.
 A bin left out of the fit can be measured as an excess instead, like any other point.">
-            and the SPHEREx spectrum
+            SPHEREx
+          </label>
+          <select id="fit-scale-spherex" class="form-select form-select-sm d-inline-block w-auto ms-1 py-0"
+                  title="fixed scale: fitted at the scale the plot above draws it at, set by hand in its row there (1 is as measured).
+scale free: the fit finds one, log-normal about one, and the plot then takes it up.
+For a star that changed between epochs, or a spectrum with a neighbour blended into it. The catalogue photometry is never scaled - the radius is measured against it.">
+            <option value="plot">fixed scale</option>
+            <option value="free">scale free</option>
+          </select>
+        </div>
+        <div class="form-check form-switch mb-0" id="fit-lines-row" hidden>
+          <input class="form-check-input" type="checkbox" id="fit-lines"
+                 onchange="applyLineChoice()">
+          <label class="form-check-label control-label me-0" for="fit-lines"
+                 title="Without emission-line bins: leave out the bins of the spectra that hold a strong emission line - H-alpha, the Paschen and Brackett lines, O I and the Ca II triplet. No model has emission lines, so in an emission-line star those bins are points the photosphere cannot reach.">
+            exclude lines
           </label>
         </div>
-        <button class="btn btn-sm btn-outline-primary" onclick="selectAllPoints(true)">All</button>
+        <button class="btn btn-sm btn-outline-primary ms-auto" onclick="selectAllPoints(true)">All</button>
         <button class="btn btn-sm btn-outline-primary" onclick="selectAllPoints(false)">None</button>
-        <span class="spectrum-info" id="fit-point-count"></span>
       </div>
+      <!-- What the choices above come to - said, not chosen, so on a line of
+           its own rather than among the controls -->
+      <div class="spectrum-info mb-2" id="fit-point-count"></div>
 
       <div id="fit-points" style="max-height: 340px; overflow-y: auto;"></div>
 
@@ -307,9 +339,36 @@ A bin left out of the fit can be measured as an excess instead, like any other p
       <div class="d-flex flex-wrap align-items-end gap-2 mb-2">
         <div class="me-2">
           <label class="control-label" for="fit-teff-lo">Teff prior, K</label><br>
+          <select id="fit-teff-kind" class="form-select form-select-sm d-inline-block w-auto"
+                  onchange="teffKindChanged()"
+                  title="A range the temperature is anywhere in, log-uniformly - or a Gaussian, for a temperature known from a spectral type or from Gaia">
+            <option value="range">range</option>
+            <option value="gauss">Gaussian</option>
+          </select>
           <input type="number" id="fit-teff-lo" class="form-control form-control-sm d-inline-block number-plain w-auto" style="max-width:6rem" value="2000">
-          &mldr;
+          <span id="fit-teff-sep">&mldr;</span>
           <input type="number" id="fit-teff-hi" class="form-control form-control-sm d-inline-block number-plain w-auto" style="max-width:6rem" value="70000">
+          <button class="btn btn-sm btn-outline-primary py-0 px-1" id="fit-teff-gaia" hidden
+                  onclick="teffFromGaia()"
+                  title="Gaia DR3 GSP-Phot's temperature, with ten per cent or its own interval, whichever is wider - GSP-Phot assumes a bare photosphere, so on a star with dust or emission lines it is a guide and not a measurement">Gaia</button>
+        </div>
+        <div class="me-2">
+          <label class="control-label" for="fit-rv"
+                 title="The extinction law's ratio of total to selective extinction. 3.1 is the interstellar medium's; circumstellar dust is usually grey-er, around 5">R<sub>V</sub></label><br>
+          <select id="fit-rv" class="form-select form-select-sm d-inline-block w-auto">
+            <option value="3.1">3.1</option>
+            <option value="5.0">5.0</option>
+            <option value="free">free, 2&ndash;6</option>
+          </select>
+        </div>
+        <div class="me-2">
+          <label class="control-label" for="fit-dust"
+                 title="Blackbodies of dust fitted together with the star rather than measured after it - a hot one near the sublimation temperature and a warmer-than-debris one behind it, each with its luminosity as a fraction of the star's">dust</label><br>
+          <select id="fit-dust" class="form-select form-select-sm d-inline-block w-auto">
+            <option value="0">none</option>
+            <option value="1">one blackbody</option>
+            <option value="2">hot + warm</option>
+          </select>
         </div>
         <div class="me-2">
           <label class="control-label" for="fit-logg-lo">log g</label><br>
@@ -318,7 +377,7 @@ A bin left out of the fit can be measured as an excess instead, like any other p
           <input type="number" step="0.1" id="fit-logg-hi" class="form-control form-control-sm d-inline-block" style="width:65px" value="5.5">
         </div>
         <div class="me-2">
-          <label class="control-label" for="fit-nlive">live points</label><br>
+          <label class="control-label" for="fit-nlive" title="Live points of the nested sampler: more is slower and a smoother posterior">nlive</label><br>
           <input type="number" step="500" id="fit-nlive" class="form-control form-control-sm d-inline-block" style="width:75px" value="500">
         </div>
 
@@ -326,11 +385,15 @@ A bin left out of the fit can be measured as an excess instead, like any other p
           <button class="btn btn-sm btn-primary" id="fit-run" onclick="runFit()">
             <i class="fa fa-play"></i> Fit
           </button>
-          <div class="d-flex flex-column gap-1">
-            <span id="fit-progress" class="gap-1" style="display: none;"></span>
-            <span id="fit-status" class="spectrum-info"></span>
-          </div>
         </div>
+      </div>
+      <!-- Under the controls rather than beside the button: what the sampler
+           is doing runs to a line of its own, and beside the button it pushed
+           the row past the width of the panel. The bars and the words about
+           them together, so the one can be read against the other. -->
+      <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+        <span id="fit-progress" class="gap-1" style="display: none;"></span>
+        <span id="fit-status" class="spectrum-info" style="white-space: normal"></span>
       </div>
     </div>
   </div>
@@ -419,6 +482,16 @@ A bin left out of the fit can be measured as an excess instead, like any other p
  // real comparison and not a coincidence of scales. Dividing by the median is
  // still offered, brightness alone being enough to flatten the fainter of two
  // spectra against the axis.
+ // What each of the fit's scalable datasets is multiplied by on the plot, to
+ // put it on the scale of the catalogue photometry: set by hand in its row,
+ // or by a fit that found it. One per dataset rather than per series, so
+ // SPHEREx's measurements and the curve binned from them move together.
+ let displayScale = {xp: 1, spherex: 1, iue: 1};
+
+ function datasetScale(spectrum) {
+     return spectrum.fit_dataset ? (displayScale[spectrum.fit_dataset] || 1) : 1;
+ }
+
  function values(spectrum, offset) {
      const normalised = scaling === 'normalised' && spectrum.median;
      // The size of the median, not the median: a spectrum of a target too
@@ -426,7 +499,8 @@ A bin left out of the fit can be measured as an excess instead, like any other p
      // noise the right way up and show a non-detection as a spectrum
      const scale = normalised ? Math.abs(spectrum.median) : 1;
 
-     const y = spectrum.flux.map(f => f / scale + offset);
+     const factor = datasetScale(spectrum);
+     const y = spectrum.flux.map(f => f * factor / scale + offset);
 
      // A null tells Plotly to lift the pen: the segments of a spectrum are
      // separate measurements and nothing was observed between them
@@ -444,7 +518,8 @@ A bin left out of the fit can be measured as an excess instead, like any other p
      const normalised = scaling === 'normalised' && spectrum.median;
      const scale = normalised ? Math.abs(spectrum.median) : 1;
 
-     return spectrum.flux_error.map(e => (e === null ? 0 : e / scale));
+     const factor = datasetScale(spectrum);
+     return spectrum.flux_error.map(e => (e === null ? 0 : e * factor / scale));
  }
 
  // How far each point reaches along the wavelength axis. Nothing scales this:
@@ -703,6 +778,12 @@ A bin left out of the fit can be measured as an excess instead, like any other p
            <label class="spectrum-label" for="vis-${i}">${spectrum.label}</label>
            <span class="spectrum-info">${spectrum.n_points} points</span>
            <span class="spectrum-info">${spectrum.wavelength_min.toFixed(0)} - ${spectrum.wavelength_max.toFixed(0)} A</span>
+           ${spectrum.fit_dataset ? `
+           <span class="control-label"
+                 title="What this dataset is multiplied by, to put it on the scale of the catalogue photometry - for a star that changed between epochs, or a spectrum with a neighbour blended into it. The SED fit takes the same number, and a fit that finds one sets it here.">Scale:</span>
+           <input type="number" class="form-control form-control-sm size-control scale-control"
+                  data-dataset="${spectrum.fit_dataset}" id="scale-${i}"
+                  value="${displayScale[spectrum.fit_dataset]}" step="0.01" min="0.01">` : ''}
            <span class="control-label">${weight.label}:</span>
            <input type="number" class="form-control form-control-sm size-control"
                   id="weight-${i}" value="${state[i].weight}"
@@ -718,6 +799,17 @@ A bin left out of the fit can be measured as an excess instead, like any other p
              state[i].visible = e.target.checked;
              redraw();
          });
+
+         const scaleBox = row.querySelector(`#scale-${i}`);
+         if (scaleBox) {
+             scaleBox.addEventListener('change', e => {
+                 const value = parseFloat(e.target.value);
+                 displayScale[spectrum.fit_dataset] =
+                     Number.isFinite(value) && value > 0 ? value : 1;
+                 updateScaleControls();
+                 redraw();
+             });
+         }
 
          row.querySelector(`#weight-${i}`).addEventListener('change', e => {
              state[i].weight = parseFloat(e.target.value) || weight.value;
@@ -743,7 +835,17 @@ A bin left out of the fit can be measured as an excess instead, like any other p
  //
  // The rows are rebuilt rather than each control set back one by one, there
  // being no state in them beyond what has just been restored.
+ // Every row of a dataset shows its one scale
+ function updateScaleControls() {
+     document.querySelectorAll('.scale-control').forEach(box => {
+         const value = displayScale[box.dataset.dataset];
+         box.value = Number.isFinite(value) ? +value.toFixed(3) : 1;
+     });
+ }
+
  function resetControls() {
+     Object.keys(displayScale).forEach(dataset => { displayScale[dataset] = 1; });
+
      spectra.forEach((spectrum, i) => {
          state[i].visible = spectrum.default_visible !== false;
          state[i].weight = (WEIGHT[spectrum.draw] || WEIGHT.line).value;
@@ -878,6 +980,9 @@ A bin left out of the fit can be measured as an excess instead, like any other p
  let fitIuePoints = [];
  let fitSpherexPoints = [];
 
+ // Gaia's temperature, for the prior's button: [value, low, high], or null
+ let fitGaiaTeff = null;
+
  // Points a restored run named that this file no longer has
  let fitMissing = [];
 
@@ -896,6 +1001,9 @@ A bin left out of the fit can be measured as an excess instead, like any other p
              fitXpDerived = data.xp_derived || [];
              fitIuePoints = data.iue || [];
              fitSpherexPoints = data.spherex || [];
+             fitGaiaTeff = data.gaia_teff || null;
+             document.getElementById('fit-teff-gaia').hidden =
+                 !(fitGaiaTeff && document.getElementById('fit-teff-kind').value === 'gauss');
              // Of the file that was open, and no use for this one
              fitXpDropped = [];
              fitBands = data.bands || [];
@@ -909,6 +1017,8 @@ A bin left out of the fit can be measured as an excess instead, like any other p
              if (!fitIuePoints.length) document.getElementById('fit-iue').checked = false;
              document.getElementById('fit-spherex-row').hidden = !fitSpherexPoints.length;
              if (!fitSpherexPoints.length) document.getElementById('fit-spherex').checked = false;
+             document.getElementById('fit-lines-row').hidden =
+                 !fitXpPoints.concat(fitSpherexPoints).some(p => p.line);
 
              buildGridPicker();
              composePoints();
@@ -972,7 +1082,100 @@ A bin left out of the fit can be measured as an excess instead, like any other p
  function defaultFitPoints() {
      const on = defaultPoints();
      if (fittingXp()) fitXpDerived.forEach(id => on.delete(id));
+     if (maskingLines()) fitPoints.filter(p => p.line).forEach(p => on.delete(p.id));
      return on;
+ }
+
+ function maskingLines() {
+     const box = document.getElementById('fit-lines');
+     return !!(box && box.checked);
+ }
+
+ // The bins holding an emission line leave the fit, or come back to it - and
+ // the excess, since a line is not dust either. Only the bins: what else the
+ // reader chose stays as it was.
+ function applyLineChoice() {
+     const lined = fitPoints.filter(p => p.line);
+
+     if (maskingLines()) {
+         lined.forEach(p => { fitOn.delete(p.id); excessOn.delete(p.id); });
+     } else {
+         lined.filter(p => p.default).forEach(p => fitOn.add(p.id));
+     }
+
+     buildPointList();
+ }
+
+ // The two boxes are a range, or a mean and a width, by the kind chosen
+ function teffKindChanged() {
+     const gauss = document.getElementById('fit-teff-kind').value === 'gauss';
+     document.getElementById('fit-teff-sep').innerHTML = gauss ? '&plusmn;' : '&mldr;';
+     document.getElementById('fit-teff-gaia').hidden = !(gauss && fitGaiaTeff);
+
+     const lo = document.getElementById('fit-teff-lo');
+     const hi = document.getElementById('fit-teff-hi');
+     if (gauss && fitGaiaTeff) {
+         teffFromGaia();
+     } else if (gauss) {
+         lo.value = 10000; hi.value = 2000;
+     } else {
+         lo.value = 2000; hi.value = 70000;
+     }
+ }
+
+ function teffFromGaia() {
+     if (!fitGaiaTeff) return;
+     const [value, low, high] = fitGaiaTeff;
+     const width = Math.max(0.1 * value, 0.5 * ((high || value) - (low || value)));
+     document.getElementById('fit-teff-lo').value = Math.round(value);
+     document.getElementById('fit-teff-hi').value = Math.round(width);
+ }
+
+ // As the fitter takes it: a log-uniform range, or a Gaussian cut five
+ // widths either side and never below a thousand kelvin
+ function teffPrior() {
+     const a = parseFloat(document.getElementById('fit-teff-lo').value);
+     const b = parseFloat(document.getElementById('fit-teff-hi').value);
+     if (document.getElementById('fit-teff-kind').value === 'gauss') {
+         return ['truncnorm', a, b, Math.max(1000, a - 5 * b), a + 5 * b];
+     }
+     return ['loguniform', a, b];
+ }
+
+ // Each spectrum's scale, as the fitter takes it. Only for a spectrum being
+ // fitted, and only where it is not one: the plot's own, held fixed, or one
+ // the fit is to find.
+ const SCALED = {xp: fittingXp, iue: fittingIue, spherex: fittingSpherex};
+
+ function scalesOption() {
+     const out = {};
+     Object.entries(SCALED).forEach(([dataset, fitting]) => {
+         if (!fitting()) return;
+         const kind = document.getElementById(`fit-scale-${dataset}`).value;
+         const value = displayScale[dataset];
+         if (kind === 'free') out[dataset] = ['lognormal', 1.0, 0.5];
+         else if (value !== 1) out[dataset] = ['fixed', value];
+     });
+     return out;
+ }
+
+ // The scale a run fitted each dataset at, onto the plot: its own where it
+ // found one, the one it was given where it was held. The first grid's, a
+ // run of several drawing them all against one set of data.
+ function applyRunScales(result) {
+     const summary = Object.values(result.grids || {})[0];
+     if (!summary) return;
+
+     Object.keys(displayScale).forEach(dataset => {
+         const value = (summary.best || {})[`scale_${dataset}`];
+         displayScale[dataset] = Number.isFinite(value) ? value : 1;
+     });
+     updateScaleControls();
+ }
+
+ function rvPrior() {
+     const value = document.getElementById('fit-rv').value;
+     return value === 'free' ? ['uniform', 2.0, 6.0] : ['fixed', parseFloat(value)];
  }
 
  // What the switch turned off when it was turned on, so that turning it off
@@ -992,7 +1195,8 @@ A bin left out of the fit can be measured as an excess instead, like any other p
      if (on) {
          fitXpDropped = fitXpDerived.filter(id => fitOn.has(id));
          fitXpDropped.forEach(id => fitOn.delete(id));
-         fitXpPoints.filter(p => p.default).forEach(p => fitOn.add(p.id));
+         fitXpPoints.filter(p => p.default && !(maskingLines() && p.line))
+                    .forEach(p => fitOn.add(p.id));
      } else {
          fitXpPoints.forEach(p => fitOn.delete(p.id));
          fitXpDropped.forEach(id => fitOn.add(id));
@@ -1024,7 +1228,8 @@ A bin left out of the fit can be measured as an excess instead, like any other p
      composePoints();
 
      if (fittingSpherex()) {
-         fitSpherexPoints.filter(p => p.default).forEach(p => fitOn.add(p.id));
+         fitSpherexPoints.filter(p => p.default && !(maskingLines() && p.line))
+                         .forEach(p => fitOn.add(p.id));
      } else {
          fitSpherexPoints.forEach(p => {
              fitOn.delete(p.id);
@@ -1055,6 +1260,7 @@ A bin left out of the fit can be measured as an excess instead, like any other p
  // left it alone, and the reader's where they have not.
  function pointNote(point) {
      if (point.fittable === false) return point.note;
+     if (point.line && maskingLines() && !pointIsOn(point)) return `holds ${point.line}`;
      if (pointIsOn(point)) return point.default ? '' : 'chosen by hand';
 
      return point.default ? 'turned off' : point.note;
@@ -1381,9 +1587,11 @@ A bin left out of the fit can be measured as an excess instead, like any other p
              iue_fit: fittingIue(),
              spherex_fit: fittingSpherex(),
              grids: grids,
-             teff_prior: ['loguniform',
-                          parseFloat(document.getElementById('fit-teff-lo').value),
-                          parseFloat(document.getElementById('fit-teff-hi').value)],
+             teff_prior: teffPrior(),
+             rv_prior: rvPrior(),
+             dust: parseInt(document.getElementById('fit-dust').value, 10),
+             mask_lines: maskingLines(),
+             scales: scalesOption(),
              logg_prior: ['uniform',
                           parseFloat(document.getElementById('fit-logg-lo').value),
                           parseFloat(document.getElementById('fit-logg-hi').value)],
@@ -1596,6 +1804,19 @@ A bin left out of the fit can be measured as an excess instead, like any other p
  function showFitResult(result) {
      const rows = [];
 
+     // R_V and the dust only where a grid of this run fitted them
+     const summaries = Object.values(result.grids);
+     const withRv = summaries.some(s => s.Rv);
+     const withDust = summaries.some(s => s.Tdust1);
+     const SCALE_NAMES = {scale_xp: 'XP', scale_spherex: 'SPHEREx', scale_iue: 'IUE'};
+     const withScale = Object.keys(SCALE_NAMES).filter(k => summaries.some(s => s[k]));
+     const scaleCell = (s, k) => !s[k] ? '1'
+         : s[k].hi - s[k].lo < 1e-9 ? s[k].median.toFixed(3) + ' <span class="text-body-secondary">fixed</span>'
+         : `${s[k].median.toFixed(3)} <span class="text-body-secondary">+${(s[k].hi - s[k].median).toFixed(3)}/-${(s[k].median - s[k].lo).toFixed(3)}</span>`;
+     const dustCell = (s, k) => s[`Tdust${k}`]
+         ? `${s[`Tdust${k}`].median.toFixed(0)} K, ${s[`fdust${k}`].median.toPrecision(2)}`
+         : '';
+
      Object.entries(result.grids).forEach(([grid, summary]) => {
          const T = summary.teff, A = summary.Av, th = summary.theta_mas;
          // Below about ninety per cent the temperature is largely the prior
@@ -1607,6 +1828,9 @@ A bin left out of the fit can be measured as an excess instead, like any other p
              <td>${T.median.toFixed(0)} <span class="text-body-secondary">+${(T.hi-T.median).toFixed(0)}/-${(T.median-T.lo).toFixed(0)}</span></td>
              <td>${A.median.toFixed(2)}  <span class="text-body-secondary">+${(A.hi-A.median).toFixed(2)}/-${(A.median-A.lo).toFixed(2)}</span></td>
              <td>${th.median.toFixed(4)}</td>
+             ${withRv ? `<td>${summary.Rv ? summary.Rv.median.toFixed(2) + ' <span class="text-body-secondary">+' + (summary.Rv.hi - summary.Rv.median).toFixed(2) + '/-' + (summary.Rv.median - summary.Rv.lo).toFixed(2) + '</span>' : '3.1'}</td>` : ''}
+             ${withDust ? `<td>${[dustCell(summary, 1), dustCell(summary, 2)].filter(Boolean).join('<br>')}</td>` : ''}
+             ${withScale.map(k => `<td>${scaleCell(summary, k)}</td>`).join('')}
              <td>${summary.jitter.median.toFixed(3)}</td>
              <td class="${weak ? 'text-warning' : ''}"
                  title="How much narrower the temperature posterior is than its prior">
@@ -1623,6 +1847,9 @@ A bin left out of the fit can be measured as an excess instead, like any other p
        <table class="table table-sm mb-0 w-100">
          <thead><tr>
            <th>grid</th><th>Teff, K</th><th>Av</th><th>&theta;, mas</th>
+           ${withRv ? '<th>R<sub>V</sub></th>' : ''}
+           ${withDust ? '<th title="Each component\'s temperature, and its luminosity as a fraction of the star\'s">dust, T and L/L<sub>*</sub></th>' : ''}
+           ${withScale.map(k => `<th title="How much brighter this dataset is than the photometry the star is anchored to">${SCALE_NAMES[k]} scale</th>`).join('')}
            <th title="The fractional model inadequacy the fit needed">jitter</th>
            <th title="How much of the answer is the data rather than the prior">shrink</th>
          </tr></thead>
@@ -1672,6 +1899,28 @@ A bin left out of the fit can be measured as an excess instead, like any other p
                  opacity: 0.5,
                  hovertemplate: '%{x:.0f} A<br>%{y:.3e}'
                                 + '<extra>' + grid + ' spectrum</extra>',
+             });
+
+             // Where dust was fitted, the star and each component under it
+             const parts = spectrum.components || [];
+             const names = parts.length === 2 ? ['photosphere', 'dust']
+                                              : ['photosphere', 'hot dust', 'warm dust'];
+             parts.forEach((flux, k) => {
+                 const kept = spectrum.wave_um.map((w, i) => [w, flux[i]])
+                     // Only where it is a thousandth of the total or more: a
+                     // blackbody's Wien side would take the log axis with it
+                     .filter(([w, f], i) => !(w < blue) && f > 1e-3 * spectrum.flux[i]);
+                 traces.push({
+                     x: kept.map(([w]) => w * 1e4),
+                     y: kept.map(([, f]) => f * 1e-4),
+                     mode: 'lines',
+                     type: 'scatter',
+                     name: `${grid} ${names[k]}`,
+                     line: {color: colour, width: 1, dash: ['dash', 'dot', 'dashdot'][k]},
+                     opacity: 0.6,
+                     hovertemplate: '%{x:.0f} A<br>%{y:.3e}'
+                                    + '<extra>' + grid + ' ' + names[k] + '</extra>',
+                 });
              });
          }
 
@@ -1831,6 +2080,7 @@ A bin left out of the fit can be measured as an excess instead, like any other p
                  fitResult = run.result;
                  setFitStatus('');
                  showFitResult(run.result);
+                 applyRunScales(run.result);
                  // Redrawn once the points are in: an old run records no
                  // wavelength to draw its model at, and the point list is
                  // what answers for it
@@ -1882,8 +2132,28 @@ A bin left out of the fit can be measured as an excess instead, like any other p
          if (Number.isFinite(spec[2])) document.getElementById(hi).value = spec[2];
      };
 
-     prior(options.teff_prior, 'fit-teff-lo', 'fit-teff-hi');
+     // A Gaussian is recorded as [truncnorm, mean, width, low, high], and
+     // its boxes are the mean and the width
+     const teff = options.teff_prior;
+     const gauss = Array.isArray(teff) && ['normal', 'truncnorm'].includes(teff[0]);
+     document.getElementById('fit-teff-kind').value = gauss ? 'gauss' : 'range';
+     document.getElementById('fit-teff-sep').innerHTML = gauss ? '&plusmn;' : '&mldr;';
+     document.getElementById('fit-teff-gaia').hidden = !(gauss && fitGaiaTeff);
+     prior(teff, 'fit-teff-lo', 'fit-teff-hi');
      prior(options.logg_prior, 'fit-logg-lo', 'fit-logg-hi');
+
+     const rv = options.rv_prior;
+     document.getElementById('fit-rv').value =
+         !rv ? '3.1' : rv[0] === 'fixed' ? Number(rv[1]).toFixed(1) : 'free';
+     if (!document.getElementById('fit-rv').value) document.getElementById('fit-rv').value = 'free';
+     document.getElementById('fit-dust').value = String(options.dust || 0);
+     document.getElementById('fit-lines').checked = !!options.mask_lines;
+
+     Object.keys(SCALED).forEach(dataset => {
+         const spec = (options.scales || {})[dataset];
+         document.getElementById(`fit-scale-${dataset}`).value =
+             spec && spec[0] === 'lognormal' ? 'free' : 'plot';
+     });
 
      if (Number.isFinite(options.nlive)) {
          document.getElementById('fit-nlive').value = options.nlive;
