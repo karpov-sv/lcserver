@@ -262,8 +262,12 @@ never scaled. The factor is set in that spectrum's row of the viewer, where it
 moves the data on the plot, and the fit either takes it as it is or finds its
 own - which the plot then takes up, so that the plot shows what the fit did. A star that changed between
 epochs needs one, and so does a SPHEREx spectrum with a neighbour in it: its
-aperture is nine arcseconds, and the SPHEREx step says, from Gaia, how much of
-the aperture's flux is other stars.
+aperture is nine arcseconds. The SPHEREx step names the stars Gaia resolves
+near it, and can fit them out: each exposure's neighbours are fitted with the
+target, each as the PSF in the file at its own position, and their share of the
+aperture taken off - which is a function of wavelength, a neighbour of another
+colour being a different share at one micron and at five, and so a correction
+no single scale makes.
 
 Two numbers come out beside the parameters and are worth as much as they are:
 the **jitter**, the fractional model inadequacy the fit needed, which says how

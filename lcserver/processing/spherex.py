@@ -248,6 +248,29 @@ SPHEREX_NEIGHBOUR_RADIUS = 30.0
 # Below it the neighbours are a few per cent, which is inside the calibration.
 SPHEREX_BLEND_WARNING = 0.1
 
+# Which Gaia neighbours are worth fitting out: a hundredth of the target in RP
+# or more, near enough for their PSF to reach the aperture - the stamp's half
+# width plus the PSF's own reach
+SPHEREX_DEBLEND_FAINTEST = 0.01
+SPHEREX_DEBLEND_REACH = 10.0
+
+# Closer than this, in pixels, a neighbour and the target are one blur that no
+# fit can share out, and it is left in the target's flux and said to be
+SPHEREX_DEBLEND_MIN_SEP = 0.7
+
+# The pixels the fit is made on: about the target, and about each neighbour
+SPHEREX_DEBLEND_RADIUS = 3.5
+SPHEREX_DEBLEND_NEIGHBOUR_RADIUS = 2.0
+
+# What the PSF in the files is worth as a shape, as a fraction of each pixel:
+# it misses a single exposure by ten to twenty per cent on bright stars, and
+# without this the brightest pixels would decide every fit
+SPHEREX_DEBLEND_FLOOR = 0.02
+
+# And as a share of the correction it makes, added to the error of each
+# exposure deblended: the fitted fluxes are only as good as that shape
+SPHEREX_DEBLEND_SYSTEMATIC = 0.15
+
 
 def _detector_and_version(url):
     """Which detector took an exposure, and what processed it.
@@ -776,15 +799,22 @@ def _psf_stamp(image, psf, x, y):
 
     Where the source actually fell rather than at the centre of a pixel, which
     is what _enclosed_energy can assume and a comparison pixel by pixel cannot.
-    Integrated over each pixel by sampling the oversampled image at its own
-    spacing, so that each sample is the share of the flux one oversampled
-    pixel carries. Zero beyond the reach of the image.
+    """
+    return _psf_at(image, psf, x - round(x), y - round(y))
+
+
+def _psf_at(image, psf, fx, fy):
+    """The PSF of a source anywhere on the stamp, per detector pixel.
+
+    ``fx``, ``fy`` are where it is from the stamp's middle pixel. Integrated
+    over each pixel by sampling the oversampled image at its own spacing, so
+    that each sample is the share of the flux one oversampled pixel carries.
+    Zero beyond the reach of the image, which is what a neighbour off the edge
+    of the stamp contributes to it.
     """
     step = int(psf['oversample'])
     half = image.shape[0] // 2
     side = 2 * SPHEREX_STAMP + 1
-
-    fx, fy = x - round(x), y - round(y)
 
     # Every sample of every pixel at once, a pixel being step by step of them
     offsets = (np.arange(-SPHEREX_STAMP, SPHEREX_STAMP + 1)[:, None]
@@ -947,7 +977,7 @@ def _background(pixels):
     return median, scatter
 
 
-def _extract(url, ra, dec, group, quality, aperture):
+def _extract(url, ra, dec, group, quality, aperture, neighbours=None):
     """One exposure's measurement of the target, and its stamp.
 
     Four byte ranges - five where the mask is compressed - the front of the
@@ -1072,6 +1102,15 @@ def _extract(url, ra, dec, group, quality, aperture):
     world = wcs.all_pix2world(xx.ravel().astype(float),
                               yy.ravel().astype(float), 0)
 
+    # Where Gaia's neighbours fall on this stamp, from its middle pixel
+    if neighbours:
+        nx, ny = wcs.all_world2pix([_['ra'] for _ in neighbours],
+                                   [_['dec'] for _ in neighbours], 0)
+        placed = np.column_stack([np.asarray(nx, dtype=float) - xi,
+                                  np.asarray(ny, dtype=float) - yi])
+    else:
+        placed = np.zeros((0, 2))
+
     # The stamp is kept with its own sky already taken off, so that the
     # preview stacks exposures whose zodiacal foreground differs - and between
     # a detector at one micron and one at five it differs by a great deal
@@ -1094,6 +1133,11 @@ def _extract(url, ra, dec, group, quality, aperture):
             (flags[inside & bad] & condemned).astype(np.int64))),
         # The pixels kept only because the saturated level forgives them
         'rescued': rescued,
+        # What the deblending needs and nothing else does, so none of it is
+        # cached: the neighbours on this stamp, its noise, and its pixel
+        'neighbour_xy': placed,
+        'variance': np.where(bad, np.nan, variance),
+        'pixel_area': pixel_area * 1e12,
         'psf_index': _psf_index(group['psf'], x, y) if group['psf'] else 0,
         'stamp': stamp,
         # Offsets from the target, in arcsec, east positive
@@ -1103,21 +1147,13 @@ def _extract(url, ra, dec, group, quality, aperture):
     }
 
 
-def _blending(ra, dec, aperture, enclosed, basepath, log, refresh):
-    """How much of the aperture is stars other than the target, by Gaia.
+def _gaia_neighbours(ra, dec, basepath, log, refresh):
+    """The stars Gaia resolves around the target that SPHEREx may not.
 
-    Gaia resolves what a six-arcsecond pixel does not, so the neighbours it
-    lists, each weighted by how much of its light the PSF puts inside the
-    target's aperture, are what the aperture sum holds besides the target.
-    The PSF is taken as the Gaussian that puts the measured fraction of a point
-    source into this aperture - near enough for a weight, and nothing more is
-    asked of it.
-
-    In Gaia's RP, as the band nearest SPHEREx's blue end. A neighbour of a
-    different colour contributes a different share in the infrared, so this is
-    a statement about the size of the problem and not a correction for it.
-    Returns the fraction of the aperture's flux that is the neighbours, or
-    None where Gaia could not be asked or has nothing at the position.
+    Those near enough for their PSF to reach the aperture and bright enough to
+    matter - a hundredth of the target in RP or more - each with where it is
+    and how bright beside the target. The target itself is the nearest source,
+    and is left out. None where Gaia could not be asked, or has no target here.
     """
     from . import cds
 
@@ -1144,64 +1180,178 @@ def _blending(ra, dec, aperture, enclosed, basepath, log, refresh):
         return None
 
     # A star Gaia has no RP for comes back masked, not as a NaN
-    def column(name):
+    def column(*names):
+        name = next((_ for _ in names if _ in cat.colnames), None)
+        if name is None:
+            return np.full(len(cat), np.nan)
         return np.ma.filled(np.ma.asarray(cat[name], dtype=float), np.nan)
 
-    sep = column('_r') * 3600.0 / SPHEREX_PIXEL
+    sep = column('_r') * 3600.0
     rp = column('RPmag')
     gmag = column('Gmag')
+    cra = column('RAJ2000', '_RAJ2000', 'RA_ICRS')
+    cdec = column('DEJ2000', '_DEJ2000', 'DE_ICRS')
 
-    known = np.isfinite(rp)
+    known = np.isfinite(rp) & np.isfinite(cra) & np.isfinite(cdec)
     if not known.any():
         return None
 
     # The target is the nearest, and has to be close to be anyone at all
     target = int(np.argmin(np.where(known, sep, np.inf)))
-    if sep[target] * SPHEREX_PIXEL > 2.0:
+    if sep[target] > 2.0:
         return None
 
-    # A neighbour with no RP is left out rather than allowed to make the sum
-    # a NaN - which it would, weighted by nothing
-    flux = np.where(known, 10 ** (-0.4 * (rp - rp[target])), 0.0)
+    out = []
+    for i in np.flatnonzero(known):
+        relative = 10 ** (-0.4 * (rp[i] - rp[target]))
+        if (i == target or relative < SPHEREX_DEBLEND_FAINTEST
+                or sep[i] > SPHEREX_DEBLEND_REACH * SPHEREX_PIXEL):
+            continue
+        out.append({'ra': float(cra[i]), 'dec': float(cdec[i]),
+                    'sep': float(sep[i]), 'relative': float(relative),
+                    'gmag': float(gmag[i])})
 
-    # The Gaussian putting `enclosed` of a centred source inside the aperture
-    enclosed = float(np.clip(enclosed, 0.5, 0.999))
-    sigma = aperture / np.sqrt(-2 * np.log(1 - enclosed))
+    return sorted(out, key=lambda _: _['sep'])
 
-    # How much of a source at each offset falls inside it, on a fine grid
-    step = 0.05
-    axis = np.arange(-aperture, aperture + step / 2, step)
-    yy, xx = np.meshgrid(axis, axis, indexing='ij')
-    inside = np.hypot(xx, yy) <= aperture
 
-    def fraction(offset):
-        weight = np.exp(-((xx[inside] - offset) ** 2 + yy[inside] ** 2)
-                        / (2 * sigma ** 2))
-        return float(np.sum(weight) * step ** 2 / (2 * np.pi * sigma ** 2))
+def _note_neighbours(neighbours, aperture, log):
+    """What Gaia lists near the aperture, where nothing was done about it.
 
-    share = np.array([fraction(_) if ok and i != target else 0.0
-                      for i, (_, ok) in enumerate(zip(sep, known))])
-    others = share * flux
+    Named rather than reckoned: how much of the aperture they are depends on
+    the PSF and on their colours in the infrared, and the only number worth
+    quoting is the one the deblending measures.
+    """
+    reach = (aperture + 2.0) * SPHEREX_PIXEL
+    near = [_ for _ in neighbours if _['sep'] <= reach]
+    if not near:
+        return
 
-    blend = float(np.sum(others) / (np.sum(others) + enclosed))
+    brightest = max(near, key=lambda _: _['relative'])
+    log(f"\nGaia lists {len(near)} star(s) within {reach:.0f} arcsec, the"
+        f" brightest G = {brightest['gmag']:.1f} at {brightest['sep']:.1f} arcsec"
+        f" and {100 * brightest['relative']:.0f}% of the target in RP. They are"
+        " in the aperture as measured - choosing to fit the neighbours out"
+        " measures how much of it they are")
 
-    worst = int(np.argmax(others))
-    log(f"\nGaia neighbours: {int(np.sum(others > 0.001 * enclosed))} within"
-        f" {SPHEREX_NEIGHBOUR_RADIUS:.0f} arcsec put {100 * blend:.0f}% of the"
-        f" aperture's flux in RP into it")
 
-    if others[worst] > 0:
-        log(f"  the most, G = {gmag[worst]:.1f} at"
-            f" {sep[worst] * SPHEREX_PIXEL:.1f} arcsec:"
-            f" {100 * others[worst] / (np.sum(others) + enclosed):.0f}%")
+def _deblend(row, image, psf, aperture):
+    """Take the Gaia neighbours out of one exposure's aperture sum.
 
-    if blend > SPHEREX_BLEND_WARNING:
-        log(f"Warning: the spectrum is {100 * blend:.0f}% other stars in the red,"
-            " and a different share in the infrared, where their colours"
-            " differ from the target's - fitted beside resolved photometry, its"
-            " scale wants to be free")
+    The target and each neighbour Gaia resolves are fitted together to the
+    pixels about them, each as the file's PSF at its own position, with a
+    constant for whatever sky the annulus left; the neighbours' fitted fluxes
+    are held at zero or more. What each puts inside the aperture is then
+    taken off the aperture sum. The target's own measurement stays the
+    aperture sum rather than its PSF flux - that PSF misses a single exposure
+    by a tenth or more, which would be the whole measurement's error rather
+    than only the correction's.
 
-    return blend
+    A neighbour closer than SPHEREX_DEBLEND_MIN_SEP cannot be told from the
+    target and is left in it. Returns the flux taken off, in uJy, and how many
+    were left in; the row's flux and error are changed in place.
+    """
+    from scipy.optimize import lsq_linear
+
+    side = 2 * SPHEREX_STAMP + 1
+    yy, xx = np.mgrid[-SPHEREX_STAMP:SPHEREX_STAMP + 1,
+                      -SPHEREX_STAMP:SPHEREX_STAMP + 1]
+
+    fx, fy = row['x'] - round(row['x']), row['y'] - round(row['y'])
+    placed = np.asarray(row.get('neighbour_xy', np.zeros((0, 2))), dtype=float)
+    if not len(placed):
+        return 0.0, 0
+
+    apart = np.hypot(placed[:, 0] - fx, placed[:, 1] - fy)
+    close = int(np.sum(apart < SPHEREX_DEBLEND_MIN_SEP))
+    placed = placed[apart >= SPHEREX_DEBLEND_MIN_SEP]
+
+    parts = [np.asarray(row['psf'], dtype=float).reshape(side, side)]
+    where = []
+    for ox, oy in placed:
+        shape = _psf_at(image, psf, ox, oy)
+        # A neighbour whose light does not reach the stamp has nothing to fit
+        if np.sum(shape) > 0.01:
+            parts.append(shape)
+            where.append((ox, oy))
+
+    if len(parts) == 1:
+        return 0.0, close
+
+    stamp = np.asarray(row['stamp'], dtype=float)
+    variance = np.asarray(row['variance'], dtype=float)
+
+    region = np.hypot(xx - fx, yy - fy) <= SPHEREX_DEBLEND_RADIUS
+    for ox, oy in where:
+        region |= np.hypot(xx - ox, yy - oy) <= SPHEREX_DEBLEND_NEIGHBOUR_RADIUS
+
+    fit = (region & np.isfinite(stamp) & np.isfinite(variance) & (variance > 0))
+    if np.sum(fit) <= len(parts) + 1:
+        return 0.0, close
+
+    design = np.column_stack([_[fit] for _ in parts] + [np.ones(np.sum(fit))])
+    weight = 1.0 / np.sqrt(variance[fit]
+                           + (SPHEREX_DEBLEND_FLOOR * np.abs(stamp[fit])) ** 2)
+
+    lower = np.r_[-np.inf, np.zeros(len(parts) - 1), -np.inf]
+    upper = np.full(len(parts) + 1, np.inf)
+    solution = lsq_linear(design * weight[:, None], stamp[fit] * weight,
+                          bounds=(lower, upper))
+    if not solution.success:
+        return 0.0, close
+
+    fluxes = solution.x[1:-1]
+
+    # What each neighbour puts inside the aperture
+    inside = np.hypot(xx - fx, yy - fy) <= aperture
+    shares = np.array([_[inside].sum() for _ in parts[1:]])
+    taken = float(np.sum(fluxes * shares)) * row['pixel_area']
+
+    # And how well that is known: the fit's own covariance, and the PSF's
+    try:
+        normal = (design * weight[:, None] ** 2).T @ design
+        covariance = np.linalg.inv(normal)[1:-1, 1:-1]
+        noise = float(np.sqrt(max(shares @ covariance @ shares, 0.0))) \
+            * row['pixel_area']
+    except np.linalg.LinAlgError:
+        noise = 0.0
+
+    row['flux'] = row['flux'] - taken
+    row['flux_err'] = float(np.sqrt(row['flux_err'] ** 2 + noise ** 2
+                                    + (SPHEREX_DEBLEND_SYSTEMATIC * taken) ** 2))
+
+    return taken, close
+
+
+def _log_deblending(table, log):
+    """What fitting the neighbours out took off, detector by detector.
+
+    Per detector because it is a function of wavelength: a neighbour of
+    another colour than the target's is a different share at one micron and
+    at five, which is the reason it cannot be a single scale.
+    """
+    share = np.asarray(table['deblended'], dtype=float)
+    detector = np.asarray(table['detector'], dtype=int)
+
+    if not np.isfinite(share).any():
+        return
+
+    log("\nNeighbours fitted out, as a share of the aperture's flux:")
+    for d in sorted(set(detector)):
+        here = (detector == d) & np.isfinite(share)
+        if here.any():
+            log(f"  D{d}: {100 * np.median(share[here]):5.1f}%"
+                f"  ({int(here.sum())} exposures)")
+
+    close = int(np.max(np.asarray(table['unresolved'], dtype=int))) \
+        if 'unresolved' in table.colnames else 0
+    if close:
+        log(f"  {close} neighbour(s) closer than"
+            f" {SPHEREX_DEBLEND_MIN_SEP * SPHEREX_PIXEL:.0f} arcsec cannot be"
+            " told from the target, and are still in its flux")
+
+    if np.nanmedian(share) > SPHEREX_BLEND_WARNING:
+        log(f"Warning: {100 * np.nanmedian(share):.0f}% of the aperture was"
+            " other stars; it has been taken off, to the accuracy of the PSF")
 
 
 def _query_images(ra, dec, basepath, log, refresh):
@@ -1243,7 +1393,7 @@ def _query_images(ra, dec, basepath, log, refresh):
     return cache.data
 
 
-def _measure(images, ra, dec, quality, aperture, log):
+def _measure(images, ra, dec, quality, aperture, log, neighbours=None):
     """Every exposure measured, grouped so that each layout is learned once.
 
     Three passes, each of them run across the whole set at once rather than a
@@ -1287,7 +1437,8 @@ def _measure(images, ra, dec, quality, aperture, log):
     def one(job):
         key, url = job
         try:
-            row = _extract(url, ra, dec, layouts[key], quality, aperture)
+            row = _extract(url, ra, dec, layouts[key], quality, aperture,
+                           neighbours=neighbours)
         except Exception as e:
             log(f"  {os.path.basename(url)}: {e}")
             failed.append(url)
@@ -1356,6 +1507,17 @@ def _measure(images, ra, dec, quality, aperture, log):
         row['psf'] = (_psf_stamp(image, layouts[row['group']]['psf'],
                                  row['x'], row['y'])
                       if image is not None else np.full((side, side), np.nan))
+
+        # The neighbours fitted out, where asked for and where there is a PSF
+        # to fit them with. An exposure with no PSF keeps them, and says so by
+        # carrying no deblending at all rather than a deblending of nothing.
+        row['deblended'] = np.nan
+        if neighbours is not None and image is not None:
+            before = row['flux']
+            taken, close = _deblend(row, image, layouts[row['group']]['psf'],
+                                    aperture)
+            row['deblended'] = taken / before if before > 0 else np.nan
+            row['unresolved'] = close
 
     for key, urls in sorted(groups.items()):
         found = sum(1 for _ in results if _['group'] == key)
@@ -1708,6 +1870,14 @@ def _preview(results, basepath, name, show, log):
             'initial': SPHEREX_APERTURE,
             'required': False,
         },
+        'spherex_neighbours': {
+            'type': 'choice',
+            'label': 'Neighbours',
+            'choices': [('keep', 'As measured'),
+                        ('deblend', 'Fitted out (Gaia)')],
+            'initial': 'keep',
+            'required': False,
+        },
         'spherex_quality': quality_field({
             QUALITY_STANDARD: 'Any pixel the file flags, anywhere in the aperture',
             QUALITY_SATURATED: 'As standard, but keeping the saturated core '
@@ -1811,16 +1981,31 @@ def target_spherex(config, basepath=None, verbose=True, show=False):
         log(f"\n{len(images)} exposures cover this position, thinned to "
             f"{len(urls)} spread evenly over the survey")
 
+    # The neighbours Gaia resolves, wanted either way: to fit them out where
+    # that was asked for, and to name them where it was not
+    deblend = config.get('spherex_neighbours') == 'deblend'
+    neighbours = _gaia_neighbours(ra, dec, basepath, log, refresh_cache)
+
+    if deblend and neighbours is None:
+        # Not measured as though it had been, and not cached under that name
+        log("\nWarning: Gaia could not be asked for the neighbours, so they"
+            " are left in the aperture this time")
+        deblend = False
+
     cache_name = (f"spherex_{ra:.4f}_{dec:.4f}_{aperture:.1f}_{quality}"
-                  f"_v{SPHEREX_EXTRACTION}.vot")
+                  + ("_deblended" if deblend else "")
+                  + f"_v{SPHEREX_EXTRACTION}.vot")
 
     with cached_votable_query(cache_name, basepath, log,
                               'SPHEREx spectrophotometry',
                               refresh=refresh_cache) as cache:
         if not cache.hit:
             log(f"aperture radius {aperture:.1f} px"
-                f" ({aperture * 6.2:.1f} arcsec), {quality} filtering")
-            results = _measure(urls, ra, dec, quality, aperture, log)
+                f" ({aperture * 6.2:.1f} arcsec), {quality} filtering"
+                + (f", {len(neighbours)} Gaia neighbour(s) fitted out"
+                   if deblend else ""))
+            results = _measure(urls, ra, dec, quality, aperture, log,
+                               neighbours=neighbours if deblend else None)
 
             if not results:
                 # Every exposure was read, and the source landed on none of
@@ -1857,6 +2042,10 @@ def target_spherex(config, basepath=None, verbose=True, show=False):
                                          for _ in results]).astype(np.int16),
                     'dra': np.array([_['dra'].ravel() for _ in results]),
                     'ddec': np.array([_['ddec'].ravel() for _ in results]),
+                    # What fitting the neighbours out took off each exposure,
+                    # as a share of its aperture sum; NaN where nothing was
+                    'deblended': [_.get('deblended', np.nan) for _ in results],
+                    'unresolved': [_.get('unresolved', 0) for _ in results],
                 }))
 
         table = cache.data
@@ -1893,13 +2082,16 @@ def target_spherex(config, basepath=None, verbose=True, show=False):
             f" up to {np.max(sky):.0f} at the red end")
 
     # What else is in the aperture, which at six arcseconds a pixel is often
-    # a star Gaia resolves and SPHEREx does not
-    blend = _blending(ra, dec, aperture, float(np.median(inside)), basepath,
-                      log, refresh_cache)
-    if blend is not None:
-        config['spherex_blend'] = blend
-    else:
-        config.pop('spherex_blend', None)
+    # a star Gaia resolves and SPHEREx does not: measured where it was fitted
+    # out, and named where it was not
+    config.pop('spherex_blend', None)
+    if deblend and 'deblended' in table.colnames:
+        _log_deblending(table, log)
+        share = np.asarray(table['deblended'], dtype=float)
+        if np.isfinite(share).any():
+            config['spherex_blend'] = float(np.nanmedian(share))
+    elif neighbours:
+        _note_neighbours(neighbours, aperture, log)
 
     wavelength = np.asarray(table['wavelength'], dtype=float)
     mjd = np.asarray(table['mjd'], dtype=float)
