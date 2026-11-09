@@ -28,6 +28,16 @@ QUALITY_PUBLISHED = 'published'  # nothing judged, the data as they arrive
 
 QUALITY_LEVELS = [QUALITY_STANDARD, QUALITY_RELAXED, QUALITY_PUBLISHED]
 
+# A level only one source can tell apart from the others, and so not one a
+# whole run can be set to: SPHEREx, where a star too bright for the detector
+# still has values in its saturated pixels that are worth keeping. A source
+# offering it names it to quality_level; everywhere else it is the standard.
+QUALITY_SATURATED = 'saturated'
+
+# The order the levels are offered in, strictest first
+QUALITY_ORDER = [QUALITY_STANDARD, QUALITY_SATURATED, QUALITY_RELAXED,
+                 QUALITY_PUBLISHED]
+
 # How far above what its own kind achieved at the same brightness a point may
 # sit before it is dropped: a single ruined frame, rather than a survey that
 # is simply less precise than another
@@ -141,22 +151,25 @@ def quality_field(labels, label='Quality filtering'):
         'type': 'choice',
         'label': label,
         'choices': [(level, labels[level])
-                    for level in QUALITY_LEVELS if level in labels],
+                    for level in QUALITY_ORDER if level in labels],
         'initial': QUALITY_STANDARD,
         'required': False,
     }
 
 
-def quality_level(config, source_id):
+def quality_level(config, source_id, own=()):
     """How hard this source was asked to filter.
 
-    What was asked of it, or of the run as a whole, or the standard.
+    What was asked of it, or of the run as a whole, or the standard. A level
+    of the source's own, outside the shared ones, counts only where the source
+    names it in `own`.
     """
     level = (config.get(f'{source_id}_quality')
              or config.get('quality')
              or QUALITY_STANDARD)
 
-    return level if level in QUALITY_LEVELS else QUALITY_STANDARD
+    return (level if level in QUALITY_LEVELS or level in own
+            else QUALITY_STANDARD)
 
 
 def typical_error(mag, err, nbins=CLIP_BINS):

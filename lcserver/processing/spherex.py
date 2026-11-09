@@ -63,6 +63,8 @@ from astropy.wcs.utils import proj_plane_pixel_area
 from astropy.table import Table
 from astropy.time import Time
 
+from scipy.ndimage import binary_dilation, map_coordinates
+
 # STDPipe
 from stdpipe import plots
 
@@ -70,7 +72,8 @@ from ..surveys import survey_source, get_output_files, KIND_SPECTROSCOPY
 from .utils import (SourceError, cleanup_paths, cached_votable_query,
                     fetch_votable, quality_field, quality_level,
                     flambda_from_fnu, write_spectrum,
-                    QUALITY_STANDARD, QUALITY_RELAXED, QUALITY_PUBLISHED)
+                    QUALITY_STANDARD, QUALITY_SATURATED, QUALITY_RELAXED,
+                    QUALITY_PUBLISHED)
 
 
 # Where the spectral images are listed. TAP rather than the SIA service the
@@ -159,6 +162,37 @@ SPHEREX_FLAGS_KEPT = {'FULLSAMPLE', 'SOURCE'}
 # REFERENCE is a QR2 name and PHANTOM went with it; a name no release uses
 # costs nothing, where leaving one out would quietly stop masking it.
 SPHEREX_FLAGS_FATAL = {'NONFUNC', 'MISSING_DATA', 'REFERENCE'}
+
+# What the saturated level keeps of a star too bright for the detector. The
+# overflowed pixels still hold values - the onboard fit of the ramp is made
+# from the reads before the pixel filled - and on Hen 2-446 they agree with
+# what the PSF of the unsaturated pixels predicts for them to a few per cent,
+# where leaving them out loses everything from 1.8 to 3.8 microns.
+SPHEREX_FLAGS_SATURATION = {'OVERFLOW'}
+
+# And these, but only on a pixel next to an overflowed one. Around a saturated
+# core they are the shoulders of the same star - its ramp curving, the charge
+# spilling over - rather than a cosmic ray or a bad fit, which is what they
+# mean anywhere else and why they are not kept anywhere else.
+SPHEREX_FLAGS_SHOULDER = {'TRANSIENT', 'SUR_ERROR', 'BLOOM'}
+
+# How far from the source the saturated pixels are checked against the rest:
+# the pixels whose flux the PSF is fitted to, which a radius of three would
+# carry past the 3.3 pixels the QR3 PSF reaches
+SPHEREX_CHECK_RADIUS = 2.5
+
+# How far the saturated pixels may sit from what the PSF predicts of them,
+# relative to the same prediction on the target's own unsaturated exposures,
+# before they are called off. The prediction itself scatters by 10-25 per cent
+# an exposure, the PSF in the files being a mean the exposures each depart
+# from, so this is a statement about the median of a detector's exposures and
+# not about any one of them.
+SPHEREX_CHECK_TOLERANCE = 0.15
+
+# The fewest unsaturated exposures a detector needs to calibrate the check
+# with, and how far above their noise they must stand to be any use for it
+SPHEREX_CHECK_MIN_CONTROLS = 3
+SPHEREX_CHECK_MIN_SNR = 30.0
 
 # What the bits are called, for saying why exposures were dropped. The masking
 # itself reads the bits out of each file's own FLAGS header, so a bit this does
@@ -639,12 +673,50 @@ def _bad_flag_mask(flag_bits, quality):
     wanted = (SPHEREX_FLAGS_FATAL if quality == QUALITY_RELAXED
               else set(flag_bits) - SPHEREX_FLAGS_KEPT)
 
+    # The saturation flags go here, and come back in _condemned_pixels for the
+    # pixels they are not to be forgiven on, that being a question of where a
+    # pixel is and not only of its bits
+    if quality == QUALITY_SATURATED:
+        wanted = wanted - SPHEREX_FLAGS_SATURATION - SPHEREX_FLAGS_SHOULDER
+
     mask = 0
     for name, bit in flag_bits.items():
         if name in wanted:
             mask |= 1 << bit
 
     return mask
+
+
+def _bits(flag_bits, names):
+    """The mask of the named flags, those this file knows of."""
+    mask = 0
+    for name in names:
+        if name in flag_bits:
+            mask |= 1 << flag_bits[name]
+
+    return mask
+
+
+def _condemned_pixels(flags, flag_bits, quality):
+    """Which pixels of a stamp are not measurements, and which were rescued.
+
+    The second being the pixels the saturated level keeps that the standard
+    one would not - an overflowed core and its shoulders - which the check in
+    _saturation_check is then made on. Empty at every other level.
+    """
+    bad = (flags & _bad_flag_mask(flag_bits, quality)) != 0
+    rescued = np.zeros(flags.shape, dtype=bool)
+
+    if quality == QUALITY_SATURATED:
+        overflow = (flags & _bits(flag_bits, SPHEREX_FLAGS_SATURATION)) != 0
+        shoulder = (flags & _bits(flag_bits, SPHEREX_FLAGS_SHOULDER)) != 0
+
+        near = binary_dilation(overflow, structure=np.ones((3, 3), dtype=bool))
+
+        bad |= shoulder & ~near
+        rescued = (overflow | shoulder) & ~bad
+
+    return bad, rescued
 
 
 def _interpolate_grid(grid, plane, x, y):
@@ -675,7 +747,45 @@ def _psf_index(psf, x, y):
     return min(known, key=lambda _: (_[1] - x) ** 2 + (_[2] - y) ** 2)[0]
 
 
-def _enclosed_energy(ranges, psf, index, radius):
+def _psf_image(ranges, psf, index):
+    """One of the file's PSFs, oversampled and normalised to one."""
+    ny, nx = psf['shape']
+    itemsize = np.dtype(psf['dtype']).itemsize
+
+    start = psf['offset'] + index * psf['stride'] + psf['skip']
+
+    return np.frombuffer(ranges.get(start, start + ny * nx * itemsize - 1),
+                         dtype=psf['dtype']).reshape(ny, nx).astype(float)
+
+
+def _psf_stamp(image, psf, x, y):
+    """The PSF as the stamp of an exposure sees it: per detector pixel.
+
+    Where the source actually fell rather than at the centre of a pixel, which
+    is what _enclosed_energy can assume and a comparison pixel by pixel cannot.
+    Integrated over each pixel by sampling the oversampled image at its own
+    spacing, so that each sample is the share of the flux one oversampled
+    pixel carries. Zero beyond the reach of the image.
+    """
+    step = int(psf['oversample'])
+    half = image.shape[0] // 2
+    side = 2 * SPHEREX_STAMP + 1
+
+    fx, fy = x - round(x), y - round(y)
+
+    # Every sample of every pixel at once, a pixel being step by step of them
+    offsets = (np.arange(-SPHEREX_STAMP, SPHEREX_STAMP + 1)[:, None]
+               + (np.arange(step) + 0.5)[None, :] / step - 0.5).ravel()
+
+    yy, xx = np.meshgrid(half + (offsets - fy) * step,
+                         half + (offsets - fx) * step, indexing='ij')
+
+    samples = map_coordinates(image, [yy, xx], order=1, cval=0.0)
+
+    return samples.reshape(side, step, side, step).sum(axis=(1, 3))
+
+
+def _enclosed_energy(image, psf, radius):
     """What fraction of a point source the aperture holds.
 
     The files carry their own PSF, normalised to one and oversampled - tenfold
@@ -694,11 +804,6 @@ def _enclosed_energy(ranges, psf, index, radius):
     as a quietly low correction, so it is refused.
     """
     ny, nx = psf['shape']
-    itemsize = np.dtype(psf['dtype']).itemsize
-
-    start = psf['offset'] + index * psf['stride'] + psf['skip']
-    image = np.frombuffer(ranges.get(start, start + ny * nx * itemsize - 1),
-                          dtype=psf['dtype']).reshape(ny, nx).astype(float)
 
     # The PSF onto the detector's own grid, the source at the centre of its
     # pixel - which is where it is on average, over exposures that dither
@@ -905,8 +1010,14 @@ def _extract(url, ra, dec, group, quality, aperture):
         raise SourceError(f"the VARIANCE plane of {os.path.basename(url)} "
                           "does not read as one")
 
+    bad, rescued = _condemned_pixels(flags, group['flag_bits'], quality)
+
+    # What a pixel can be condemned for, so that the reason is reported: the
+    # shoulder flags are not in the mask at the saturated level, and are still
+    # the reason a shoulder away from any saturation is dropped
     condemned = _bad_flag_mask(group['flag_bits'], quality)
-    bad = (flags & condemned) != 0
+    if quality == QUALITY_SATURATED:
+        condemned |= _bits(group['flag_bits'], SPHEREX_FLAGS_SHOULDER)
 
     # The aperture, as a circle about where the source actually falls rather
     # than about the pixel it was rounded to
@@ -967,7 +1078,9 @@ def _extract(url, ra, dec, group, quality, aperture):
         # carries the flag saying a known source falls on it, which is the
         # target and not a complaint.
         'flags': int(np.bitwise_or.reduce(
-            (flags[inside] & condemned).astype(np.int64))),
+            (flags[inside & bad] & condemned).astype(np.int64))),
+        # The pixels kept only because the saturated level forgives them
+        'rescued': rescued,
         'psf_index': _psf_index(group['psf'], x, y) if group['psf'] else 0,
         'stamp': stamp,
         # Offsets from the target, in arcsec, east positive
@@ -1092,10 +1205,11 @@ def _measure(images, ra, dec, quality, aperture, log):
         # was learned from - which memoising across targets makes a different
         # file from this target's first one
         ranges = _Ranges(layouts[key]['url'])
+        image = None
 
         try:
-            value = _enclosed_energy(ranges, layouts[key]['psf'], index,
-                                     aperture)
+            image = _psf_image(ranges, layouts[key]['psf'], index)
+            value = _enclosed_energy(image, layouts[key]['psf'], aperture)
         except Exception as e:
             # Said rather than fallen back on: the exposures of this group are
             # then aperture flux where the rest are total flux, which is a
@@ -1104,19 +1218,30 @@ def _measure(images, ra, dec, quality, aperture, log):
                 " correction")
             value = None
 
-        return item, value, ranges.nbytes
+        return item, value, image, ranges.nbytes
 
     with ThreadPoolExecutor(SPHEREX_WORKERS) as pool:
         measured = list(pool.map(correction, wanted))
 
-    corrections = {item: value for item, value, _ in measured
+    corrections = {item: value for item, value, _, _ in measured
                    if value is not None}
-    nbytes += sum(read for _, _value, read in measured)
+    images = {item: image for item, _, image, _ in measured
+              if image is not None}
+    nbytes += sum(read for _, _, _, read in measured)
+
+    side = 2 * SPHEREX_STAMP + 1
 
     for row in results:
         detector = row['group'][0]
         row['detector'] = int(detector) if detector.isdigit() else 0
         row['enclosed'] = corrections.get((row['group'], row['psf_index']), 1.0)
+
+        # The PSF where this exposure put the source, kept beside its stamp so
+        # that saturated pixels can be checked against it from the cache
+        image = images.get((row['group'], row['psf_index']))
+        row['psf'] = (_psf_stamp(image, layouts[row['group']]['psf'],
+                                 row['x'], row['y'])
+                      if image is not None else np.full((side, side), np.nan))
 
     for key, urls in sorted(groups.items()):
         found = sum(1 for _ in results if _['group'] == key)
@@ -1134,6 +1259,156 @@ def _measure(images, ra, dec, quality, aperture, log):
                           "read at all")
 
     return results
+
+
+def _saturation_ratio(stamp, psf, kept, rescued, region):
+    """What the rescued pixels hold, over what the PSF of the rest predicts.
+
+    The flux of the unrescued pixels near the source, scaled by the share of
+    the PSF they carry to the share the rescued ones carry. A ratio estimate
+    rather than a fit, which on unsaturated exposures with their cores set
+    aside came out less scattered than fitting the PSF to the same pixels.
+    """
+    rest = region & kept & ~rescued
+    core = region & rescued
+
+    if not np.any(rest) or not np.any(core):
+        return np.nan
+
+    share = float(np.sum(psf[rest]))
+    predicted = float(np.sum(stamp[rest])) / share * float(np.sum(psf[core])) \
+        if share > 0 else np.nan
+
+    return float(np.sum(stamp[core])) / predicted if predicted > 0 else np.nan
+
+
+def _saturation_check(table, log):
+    """Whether the saturated pixels the saturated level keeps hold real flux.
+
+    Against the PSF: what the unsaturated pixels around the core say the core
+    should hold, against what it does. The PSF in the files is not good enough
+    to judge an exposure by - with its core set aside, an unsaturated exposure
+    is predicted to 10-25 per cent, and with a bias that differs from one
+    detector to the next and from one target to the next. So the check is
+    relative, detector by detector: the same prediction is made for the
+    target's own unsaturated exposures, setting aside as many of their
+    brightest pixels as the saturated ones lost, and it is the medians of the
+    two that are compared. A core that the detector clipped comes out short of
+    its unsaturated twin; one that holds its flux comes out level with it.
+
+    A detector with no unsaturated exposure of the target bright enough to
+    calibrate on cannot be checked at all, and is said to be unchecked rather
+    than given the uncalibrated number as if it meant something.
+    """
+    side = 2 * SPHEREX_STAMP + 1
+    yy, xx = np.mgrid[-SPHEREX_STAMP:SPHEREX_STAMP + 1,
+                      -SPHEREX_STAMP:SPHEREX_STAMP + 1]
+
+    saturated = collections.defaultdict(list)
+    controls = collections.defaultdict(list)
+    lost = collections.defaultdict(list)
+
+    rows = []
+
+    for row in table:
+        stamp = np.asarray(row['stamp'], dtype=float).reshape(side, side)
+        psf = np.asarray(row['psf'], dtype=float).reshape(side, side)
+        rescued = np.asarray(row['rescued']).reshape(side, side).astype(bool)
+
+        if not np.all(np.isfinite(psf)):
+            continue
+
+        region = np.hypot(xx - (row['x'] - round(row['x'])),
+                          yy - (row['y'] - round(row['y']))) <= SPHEREX_CHECK_RADIUS
+        kept = np.isfinite(stamp)
+
+        rows.append((row, stamp, psf, rescued, region, kept))
+
+        if np.any(rescued & region):
+            lost[int(row['detector'])].append(int(np.sum(rescued & region)))
+
+    for row, stamp, psf, rescued, region, kept in rows:
+        detector = int(row['detector'])
+
+        if np.any(rescued & region):
+            if row['complete']:
+                saturated[detector].append(
+                    _saturation_ratio(stamp, psf, kept, rescued, region))
+            continue
+
+        # An unsaturated exposure calibrates only if nothing near the source
+        # is missing from it, and it is bright enough for its wings to say
+        # something, and there is a saturated exposure on its detector to
+        # calibrate. Its brightest pixels stand in for the core the saturated
+        # ones lost - as many as they typically lost.
+        if (detector not in lost or not row['complete']
+                or not np.all(kept[region])
+                or not row['flux'] > SPHEREX_CHECK_MIN_SNR * row['flux_err']):
+            continue
+
+        count = int(np.median(lost[detector]))
+        order = np.argsort(np.where(region, stamp, -np.inf), axis=None)[::-1]
+
+        core = np.zeros(side * side, dtype=bool)
+        core[order[:count]] = True
+
+        controls[detector].append(_saturation_ratio(
+            stamp, psf, kept, core.reshape(side, side), region))
+
+    if not saturated:
+        return
+
+    def finite(values):
+        values = np.asarray(values, dtype=float)
+        return values[np.isfinite(values)]
+
+    log("\nThe saturated pixels against what the PSF of the rest predicts "
+        "for them, relative to the target's own unsaturated exposures:")
+
+    for detector in sorted(saturated):
+        held_values = finite(saturated[detector])
+        twin_values = finite(controls[detector])
+        nheld, ntwin = len(held_values), len(twin_values)
+
+        if not nheld:
+            continue
+
+        where = (f"  D{detector}: {nheld} saturated exposures,"
+                 f" {int(np.median(lost[detector]))} pixel(s) each")
+
+        if ntwin < SPHEREX_CHECK_MIN_CONTROLS:
+            log(f"{where} - unchecked, with {ntwin} unsaturated exposure(s) "
+                "to calibrate against")
+            continue
+
+        held = float(np.median(held_values))
+        twin = float(np.median(twin_values))
+
+        # How far one exposure's prediction strays, taken from both samples
+        # together: it is the same PSF failing in the same way on both, and a
+        # handful of unsaturated exposures - which is what a star bright
+        # enough to need this level typically has - can cluster by chance and
+        # claim a precision the PSF does not have
+        deviations = np.concatenate([held_values / held, twin_values / twin]) - 1
+        spread = 1.4826 * float(np.median(np.abs(deviations)))
+
+        # The standard error of a median, a quarter again that of a mean
+        ratio = held / twin
+        error = ratio * 1.2533 * spread * np.sqrt(1 / nheld + 1 / ntwin)
+
+        off = (abs(ratio - 1) > SPHEREX_CHECK_TOLERANCE
+               and abs(ratio - 1) > 3 * error)
+
+        log(f"{where} hold {ratio:.2f} +/- {error:.2f} of what"
+            f" {ntwin} unsaturated ones say they should"
+            + (" - consistent" if not off else ""))
+
+        if off:
+            log(f"Warning: the saturated pixels of D{detector} are "
+                f"{'short' if ratio < 1 else 'over'} by "
+                f"{abs(ratio - 1) * 100:.0f} per cent - its saturated "
+                "exposures are not to be trusted, and standard filtering "
+                "leaves them out")
 
 
 def _bin_spectrum(measurements, log):
@@ -1321,6 +1596,8 @@ def _preview(results, basepath, name, show, log):
         },
         'spherex_quality': quality_field({
             QUALITY_STANDARD: 'Any pixel the file flags, anywhere in the aperture',
+            QUALITY_SATURATED: 'As standard, but keeping the saturated core '
+                               'of a star too bright for SPHEREx',
             QUALITY_RELAXED: 'Dead, missing and reference pixels only',
             QUALITY_PUBLISHED: 'None - every exposure as measured',
         }),
@@ -1397,7 +1674,7 @@ def target_spherex(config, basepath=None, verbose=True, show=False):
     dec = config.get('target_dec')
 
     aperture = float(config.get('spherex_aperture') or SPHEREX_APERTURE)
-    quality = quality_level(config, 'spherex')
+    quality = quality_level(config, 'spherex', own=(QUALITY_SATURATED,))
 
     images = _query_images(ra, dec, basepath, log, refresh_cache)
 
@@ -1461,6 +1738,9 @@ def target_spherex(config, basepath=None, verbose=True, show=False):
                     'x': [_['x'] for _ in results],
                     'y': [_['y'] for _ in results],
                     'stamp': np.array([_['stamp'].ravel() for _ in results]),
+                    'psf': np.array([_['psf'].ravel() for _ in results]),
+                    'rescued': np.array([_['rescued'].ravel()
+                                         for _ in results]).astype(np.int16),
                     'dra': np.array([_['dra'].ravel() for _ in results]),
                     'ddec': np.array([_['ddec'].ravel() for _ in results]),
                 }))
@@ -1533,6 +1813,18 @@ def target_spherex(config, basepath=None, verbose=True, show=False):
             for count, bit in counts[:5]:
                 if count:
                     log(f"    {count:5d}  {SPHEREX_FLAG_NAMES.get(bit, f'bit {bit}')}")
+
+            overflow = int(np.sum((raised >> 1) & 1))
+
+            if quality == QUALITY_STANDARD and overflow > len(good) / 4:
+                log("Saturated filtering keeps the saturated core of a star "
+                    "this bright, and checks it against the rest")
+
+    # Whether what the saturated level kept deserved keeping. Only where it
+    # was asked for, and only from a cache that carries the PSF of each stamp.
+    if (quality == QUALITY_SATURATED
+            and {'psf', 'rescued'} <= set(table.colnames)):
+        _saturation_check(table, log)
 
     if not np.any(good):
         log("\nWarning: nothing survived the filtering")

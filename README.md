@@ -258,6 +258,12 @@ offers only the levels it can actually tell apart — DASCH has a rejection
 bitfield to appeal to, KWS only the scatter of its own measurements. Whichever
 was applied is written into that source's log along with what it came to.
 
+SPHEREx offers one more, `saturated`: the standard filtering, but keeping the
+saturated core of a star too bright for the detector, which still holds usable
+values. Its log then says, detector by detector, whether those pixels hold what
+the PSF of the unsaturated ones around them predicts, relative to the same
+prediction for the target's own unsaturated exposures.
+
 ## What the info step collects
 
 Before any survey is queried, `info` resolves the target and gathers what is
