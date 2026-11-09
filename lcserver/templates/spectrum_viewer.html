@@ -486,10 +486,21 @@ For a star that changed between epochs, or a spectrum with a neighbour blended i
  // put it on the scale of the catalogue photometry: set by hand in its row,
  // or by a fit that found it. One per dataset rather than per series, so
  // SPHEREx's measurements and the curve binned from them move together.
+ //
+ // Every other series has one of its own, for looking at and nothing else -
+ // an APOGEE spectrum laid over the rest - except the catalogue photometry,
+ // which is what everything is scaled to.
  let displayScale = {xp: 1, spherex: 1, iue: 1};
 
+ // Which scale a series takes: its dataset's, its own, or none
+ function scaleKey(spectrum, i) {
+     if (spectrum.fit_dataset) return spectrum.fit_dataset;
+     if (spectrum.source_id === 'sed') return null;
+     return `series-${i}`;
+ }
+
  function datasetScale(spectrum) {
-     return spectrum.fit_dataset ? (displayScale[spectrum.fit_dataset] || 1) : 1;
+     return spectrum.scale_key ? (displayScale[spectrum.scale_key] || 1) : 1;
  }
 
  function values(spectrum, offset) {
@@ -605,7 +616,10 @@ For a star that changed between epochs, or a spectrum with a neighbour blended i
              y: values(spectrum, offset),
              type: 'scattergl',
              mode: points ? 'markers' : 'lines',
-             name: spectrum.label + (offset ? ` (+${offset})` : ''),
+             // A scaled series says so, so that it is not read as measured
+             name: spectrum.label + (offset ? ` (+${offset})` : '')
+                   + (datasetScale(spectrum) !== 1
+                      ? ` \u00d7${+datasetScale(spectrum).toFixed(3)}` : ''),
              hovertemplate: '%{x:.1f} A<br>%{y:.4g}'
                             + (spectrum.comment ? '<br>%{customdata}' : '')
                             + '<extra>' + spectrum.label + '</extra>',
@@ -778,12 +792,14 @@ For a star that changed between epochs, or a spectrum with a neighbour blended i
            <label class="spectrum-label" for="vis-${i}">${spectrum.label}</label>
            <span class="spectrum-info">${spectrum.n_points} points</span>
            <span class="spectrum-info">${spectrum.wavelength_min.toFixed(0)} - ${spectrum.wavelength_max.toFixed(0)} A</span>
-           ${spectrum.fit_dataset ? `
+           ${spectrum.scale_key ? `
            <span class="control-label"
-                 title="What this dataset is multiplied by, to put it on the scale of the catalogue photometry - for a star that changed between epochs, or a spectrum with a neighbour blended into it. The SED fit takes the same number, and a fit that finds one sets it here.">Scale:</span>
+                 title="${spectrum.fit_dataset
+                     ? 'What this dataset is multiplied by, to put it on the scale of the catalogue photometry - for a star that changed between epochs, or a spectrum with a neighbour blended into it. The SED fit takes the same number, and a fit that finds one sets it here.'
+                     : 'What this series is multiplied by on the plot, to lay it over the rest by eye. Only the plot: nothing is fitted to it.'}">Scale:</span>
            <input type="number" class="form-control form-control-sm size-control scale-control"
-                  data-dataset="${spectrum.fit_dataset}" id="scale-${i}"
-                  value="${displayScale[spectrum.fit_dataset]}" step="0.01" min="0.01">` : ''}
+                  data-dataset="${spectrum.scale_key}" id="scale-${i}"
+                  value="${displayScale[spectrum.scale_key] || 1}" step="0.01" min="0.01">` : ''}
            <span class="control-label">${weight.label}:</span>
            <input type="number" class="form-control form-control-sm size-control"
                   id="weight-${i}" value="${state[i].weight}"
@@ -804,7 +820,7 @@ For a star that changed between epochs, or a spectrum with a neighbour blended i
          if (scaleBox) {
              scaleBox.addEventListener('change', e => {
                  const value = parseFloat(e.target.value);
-                 displayScale[spectrum.fit_dataset] =
+                 displayScale[spectrum.scale_key] =
                      Number.isFinite(value) && value > 0 ? value : 1;
                  updateScaleControls();
                  redraw();
@@ -881,6 +897,7 @@ For a star that changed between epochs, or a spectrum with a neighbour blended i
          document.getElementById('loading-indicator').style.display = 'none';
 
          spectra = data.spectra || [];
+         spectra.forEach((spectrum, i) => { spectrum.scale_key = scaleKey(spectrum, i); });
          lines = data.lines || [];
          telluric = data.telluric || [];
 
@@ -1166,7 +1183,8 @@ For a star that changed between epochs, or a spectrum with a neighbour blended i
      const summary = Object.values(result.grids || {})[0];
      if (!summary) return;
 
-     Object.keys(displayScale).forEach(dataset => {
+     // Only the fit's own datasets: a series scaled by eye keeps its scale
+     Object.keys(SCALED).forEach(dataset => {
          const value = (summary.best || {})[`scale_${dataset}`];
          displayScale[dataset] = Number.isFinite(value) ? value : 1;
      });
