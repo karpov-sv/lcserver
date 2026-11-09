@@ -46,6 +46,18 @@ from .utils import (SourceError, cleanup_paths, cached_votable_query,
 # whichever VizieR server is answering
 SED_PATH = 'viz-bin/sed'
 
+# How long to wait for its reply, in seconds, per attempt. Strasbourg answers
+# in seconds, but IDIA's mirror computes a position it has not seen for minutes
+# - whole replies have taken from 1.5 to over 6 - and the default of
+# fetch_votable cut off ones that would have come. Not more: fetch_votable asks
+# up to three times, and three of these have to fit in a task's time limit.
+#
+# A longer wait does not help with what IDIA does more often, which is answer
+# 502 or 504 partway through while it goes on computing. What it computed is
+# then served at once to the same URL, so the step run again in a few minutes
+# usually gets it.
+SED_TIMEOUT = 420
+
 # How far out to accept a catalogue's source, in arcsec. The service takes a
 # radius of its own but barely honours it - asking for two arcsec against five
 # changed a reply of 448 rows by nine - so the cut that matters is this one,
@@ -272,14 +284,37 @@ def _query(ra, dec, sr, basepath, log, refresh):
         if not cache.hit:
             log(f"within {sr:.1f} arcsec")
 
-            # This endpoint is the reason fetch_votable checks for a closing
-            # tag: it answers 200 with a half-written table often enough, and
-            # then serves that same half from its cache until the URL changes
-            table = cds.ask(cds.VIZIER_SERVERS, lambda server: fetch_votable(
-                f"{server}/{SED_PATH}",
-                params={'-c': f'{ra} {dec:+f}', '-c.rs': sr},
-                service='the SED service', log=log).to_table(),
-                'VizieR SED', log=log, key=SED_PATH)
+            def reply(server):
+                # This endpoint is the reason fetch_votable checks for a
+                # closing tag: it answers 200 with a half-written table often
+                # enough, and then serves that same half from its cache until
+                # the URL changes
+                table = fetch_votable(
+                    f"{server}/{SED_PATH}",
+                    params={'-c': f'{ra} {dec:+f}', '-c.rs': sr},
+                    timeout=SED_TIMEOUT, service='the SED service',
+                    log=log).to_table()
+
+                # A mirror's SED service can lack the very catalogues the SED
+                # is built from - CfA's has answered without any of them, from
+                # secondary tables only, for a bright star that is in all but
+                # GALEX. That reply is whole and well-formed, so nothing else
+                # catches it, and cached it would stand in for the real one.
+                # So on a mirror a reply holding none of them is refused, and
+                # the next server asked. Strasbourg's is taken as it comes, as
+                # a position none of them covers is then really one
+                if server != cds.VIZIER_SERVERS[0] and len(table):
+                    present = set(str(_) for _ in _column(table, '_tabname'))
+
+                    if not any(_['table'] in present for _ in SED_CATALOGUES):
+                        raise cds.Refused(
+                            "its SED reply has none of "
+                            + ', '.join(_['name'] for _ in SED_CATALOGUES))
+
+                return table
+
+            table = cds.ask(cds.VIZIER_SERVERS, reply, 'VizieR SED', log=log,
+                            key=SED_PATH)
 
             if len(table):
                 cache.save(table)
