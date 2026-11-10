@@ -23,6 +23,7 @@ is being passed over for fails at once, rather than waiting through all of them
 again.
 """
 
+import html
 import re
 import time
 from urllib.parse import urlparse
@@ -194,6 +195,32 @@ def _refusal(content):
         text = ' '.join(dict.fromkeys(errors + [text for _, text in status]))
         return ' '.join(text.split())[:300] or 'ERROR'
 
+    return _garbled(content)
+
+
+def _garbled(content):
+    """Why a VizieR reply with no rows is not an answer of none, or None.
+
+    VizieR's own programs mark what they could not handle with a leading +++,
+    and say it in a Warning rather than an Error. CfA has been seen to find the
+    stars of Gaia DR3 and then fail to format every one of them - "+++Input has
+    too many (>59) fields" a row - returning an empty RESOURCE that looks just
+    like a search that found nothing. Only where no row came through, as that
+    is the reply that would be cached as an empty sky; the ordinary warnings,
+    of a column unknown in some table, carry no +++.
+    """
+    if re.search(rb'<TR\b', content):
+        return None
+
+    warnings = [value.strip() for value, _ in _info(content, b'Warning')
+                if value.lstrip().startswith('+++')]
+
+    if warnings:
+        # The first, without the row it quotes
+        text = ' '.join(html.unescape(warnings[0]).split('<')[0].split())[:200]
+
+        return text + (f" (and {len(warnings) - 1} more)" if len(warnings) > 1 else '')
+
 
 # VizieR
 
@@ -311,6 +338,13 @@ def vizier_post(path, data, timeout=TIMEOUT, log=None):
     def call(server):
         res = requests.post(f"{server}/{path}", data=data, timeout=timeout)
         res.raise_for_status()
+
+        # Its errors are its callers' to read, as one catalogue of many
+        # failing is no reason to pass a server over; but a reply of nothing
+        # that only failed to come through is one
+        reason = _garbled(res.content)
+        if reason:
+            raise Refused(reason)
 
         return res.content, server
 
