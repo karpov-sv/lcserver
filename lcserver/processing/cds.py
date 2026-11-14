@@ -11,7 +11,10 @@ the largest catalogues - Pan-STARRS, Gaia DR2 and EDR3, ATLAS-RefCat2 - and
 says so only in an INFO of an error inside an otherwise ordinary empty table,
 which astroquery reads as no rows. That is caught here and taken as the
 server failing, so that a catalogue a mirror does not hold is never mistaken
-for one with nothing at the position and cached as such.
+for one with nothing at the position and cached as such. And a reply with no
+table in it at all - which is how CfA has been seen to answer a search whose
+rows it then failed to write out - is asked again for every column, which it
+does write out.
 
 What failed is remembered, so that the dozen queries of one step - and the
 steps of the targets after it, in the same worker - do not each wait out the
@@ -231,6 +234,20 @@ def _vizier(columns, row_limit, column_filters):
                   column_filters=column_filters or {})
 
 
+def _every_column(payload):
+    """A query astroquery has written, asking for every column rather than the
+    ones it names - and for the J2000 position VizieR computes, which a
+    catalogue that does not have its own under that name returns only when
+    named. Or None if it already asks for every column."""
+    lines = payload.split('\n')
+
+    if '-out=**' in lines:
+        return None
+
+    return '\n'.join([line for line in lines if not line.startswith('-out=')]
+                     + ['-out=**', '-out.add=_RAJ,_DEJ'])
+
+
 def _vizier_tables(vizier, server, payload):
     """The tables a server returns for a query astroquery has written, or an
     exception saying it returned none.
@@ -247,6 +264,26 @@ def _vizier_tables(vizier, server, payload):
     reason = _refusal(response.content)
     if reason:
         raise Refused(reason)
+
+    # CfA has been seen to find the rows of a search and then return nothing
+    # of them at all - two empty RESOURCEs, without a TABLE, an error or a
+    # warning - when the columns are named rather than '**'. Which is, byte
+    # for byte, how both it and IDIA answer a search that found nothing, once
+    # astroquery's formatting options are given; so the reply cannot tell the
+    # two apart, and the same search is made for every column instead. Its
+    # rows hold the ones asked for, among the rest; and if it has none either,
+    # there were none to find.
+    retry = (_every_column(payload)
+             if not re.search(rb'<TABLE\b', response.content) else None)
+
+    if retry:
+        response = requests.post(f"{server}/viz-bin/votable", data=retry,
+                                 timeout=TIMEOUT)
+        response.raise_for_status()
+
+        reason = _refusal(response.content)
+        if reason:
+            raise Refused(reason)
 
     tables = vizier._parse_result(response)
 

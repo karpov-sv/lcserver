@@ -635,6 +635,16 @@ def target_info(config, basepath=None, verbose=True, show=False):
     # Cleanup stale plots
     cleanup_paths(get_all_output_files(), basepath=basepath)
 
+    # And what an earlier run said about the star, which is written below only
+    # where something is found - so that a catalogue with nothing at the
+    # position, or a target renamed to another star, does not leave the last
+    # one's VSX type or Gaia parameters standing. Not the (B - V) and (g - r),
+    # which the info form takes by hand, and which this step never overwrites.
+    for key in list(config):
+        if (key.startswith(('vsx_', 'gaia_', 'ebv_'))
+            or key in ('BP_minus_RP', 'av_3d', 'dust_3d_map')):
+            config.pop(key)
+
     log(f"Acquiring the info on {config['target_name']}")
 
     # Resolve. Cached, as the name resolvers are the one service every step of

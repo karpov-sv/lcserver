@@ -604,6 +604,12 @@ def targets(request, id=None):
                         if source_id == 'info':
                             if 'name' in form.changed_data and form.cleaned_data.get('name'):
                                 target.name = form.cleaned_data.get('name')
+
+                                # Another star, so the colours of the last one
+                                # are not to be kept - unless given anew here
+                                for key in ('B_minus_V', 'g_minus_r'):
+                                    if key not in form.changed_data:
+                                        target.config.pop(key, None)
                             if 'title' in form.changed_data:
                                 target.title = form.cleaned_data.get('title')
                             target.save()
