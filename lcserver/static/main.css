@@ -189,6 +189,13 @@ span.asteriskField {
   scroll-margin-top: 5rem;
 }
 
+/* Above the contents rail and its button, so that the navbar's dropdowns -
+   the user menu - open over the rail rather than beneath it */
+.navbar {
+  position: relative;
+  z-index: 1030;
+}
+
 .toc {
   position: fixed;
   top: 50%;
