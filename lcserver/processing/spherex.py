@@ -31,14 +31,17 @@ exposures than in others, within one detector and version, so where the data
 starts is taken from each file itself. See _survey_file for what reusing it
 instead does, which is to measure a patch of empty sky and call it the target.
 
-Two releases are read, and both are needed: QR3 does not supersede QR2 but
-continues it, beginning where QR2 stops in July 2026, so a spectrum reaching
-the present is made of the two together. They are not the same files. QR3
-compresses the mask, replaces the cube of PSFs with a table of them, and writes
-what the mask bits mean under different keywords - and each of those three,
-left unhandled, is a silent wrong answer rather than a failure: no masking at
-all, no aperture correction, a plane of variance read out of the wrong place.
-Which is why what the code does not recognise, here, it refuses.
+Two releases are read, and both are needed: DR1, which reprocesses the first
+year of survey that QR2 held and supersedes it, and QR3, which continues it
+from May 2026 on - so a spectrum reaching the present is made of the two
+together. They are the same pipeline and the same files. QR2, which they
+replaced, was not: DR1 and QR3 compress the mask, replace the cube of PSFs
+with a table of them, and write what the mask bits mean under different
+keywords - and each of those three, left unhandled, is a silent wrong answer
+rather than a failure: no masking at all, no aperture correction, a plane of
+variance read out of the wrong place. QR2 is still read, for a target whose
+image list was cached before DR1 replaced it, and that is why what the code
+does not recognise, here, it refuses.
 
 The photometry works in the units the images come in - microns, and uJy, which
 is what an aperture sum of MJy/sr naturally is - and the two tables that leave
@@ -76,21 +79,20 @@ from .utils import (SourceError, cleanup_paths, cached_votable_query,
                     QUALITY_PUBLISHED)
 
 
-# Where the spectral images are listed. TAP rather than the SIA service the
-# obvious reading of the archive would use: SIA knows only the QR2 collection,
-# and has not been extended to QR3 - a SIA query for it comes back empty at
-# positions TAP has three dozen exposures of. The CAOM tables behind TAP carry
-# every release, and their artifact rows name the files directly, where
-# ObsCore's own access_url is a datalink document that would have to be
-# resolved one exposure at a time.
+# Where the spectral images are listed. TAP rather than the SIA service: SIA
+# has one collection per release and lags the archive by a day, while the CAOM
+# tables behind TAP carry every release at once, and their artifact rows name
+# the files directly, where ObsCore's own access_url is a datalink document
+# that would have to be resolved one exposure at a time.
 SPHEREX_TAP = 'https://irsa.ipac.caltech.edu/TAP/sync'
 SPHEREX_IBE = 'https://irsa.ipac.caltech.edu/'
 
 # The image list, over every release and both the all-sky survey and the deep
-# fields. QR3 is not a reprocessing of QR2 the way QR2 was of QR1 - it starts
-# where QR2 stops, at MJD 61241 - so a spectrum that reaches the present is
-# made of both, and the query is written to say nothing about which release a
-# file belongs to rather than to name them.
+# fields. QR3 is not a reprocessing of DR1 - it starts where DR1 stops, at MJD
+# 61176 - so a spectrum that reaches the present is made of both, and the query
+# is written to say nothing about which release a file belongs to rather than
+# to name them. That is also what let DR1 replace QR2 here with no change: the
+# archive stopped listing the one and began listing the other.
 #
 # 'science' is what excludes the calibration products that hang off the same
 # planes; the level 2 spectral images are all that is left.
@@ -178,7 +180,7 @@ SPHEREX_FLAGS_SHOULDER = {'TRANSIENT', 'SUR_ERROR', 'BLOOM'}
 
 # How far from the source the saturated pixels are checked against the rest:
 # the pixels whose flux the PSF is fitted to, which a radius of three would
-# carry past the 3.3 pixels the QR3 PSF reaches
+# carry past the 3.3 pixels the DR1 and QR3 PSF reaches
 SPHEREX_CHECK_RADIUS = 2.5
 
 # How far the saturated pixels may sit from what the PSF predicts of them,
@@ -353,9 +355,9 @@ def _data_size(header):
     """How many bytes an extension's data occupies, padded to whole blocks.
 
     PCOUNT counts too, and is not a detail of the standard nobody meets: the
-    QR3 FLAGS extension is a compressed image, whose every tile lives in the
-    heap that PCOUNT measures. Leaving it out walks the extension after it
-    twelve megabytes early, into the middle of that heap.
+    DR1 and QR3 FLAGS extension is a compressed image, whose every tile lives
+    in the heap that PCOUNT measures. Leaving it out walks the extension after
+    it twelve megabytes early, into the middle of that heap.
     """
     if not header.get('NAXIS'):
         return 0
@@ -453,7 +455,7 @@ def _psf_cube(header, data):
 
 
 def _psf_table(header, data, ranges, buf, offset_in_buf, shape, url):
-    """The QR3 EPSF: a table of them, one row per part of the detector.
+    """The DR1 and QR3 EPSF: a table of them, one row per detector zone.
 
     Thirty-three pixels square at five times oversampling rather than a
     hundred and one at ten, in double precision, and with the part of the
@@ -535,12 +537,12 @@ def _psf_table(header, data, ranges, buf, offset_in_buf, shape, url):
 def _flag_bits(header):
     """Which bit each pixel flag is, under either of the two spellings.
 
-    QR2 writes one card per flag, MP_<name> holding the bit number. QR3 writes
-    three, MSKN<n> naming the flag, MSKM<n> holding its mask - the bit set,
-    not its number - and MSKD<n> describing it. Reading only the first, which
-    is what this did, leaves QR3 with no flags at all: not an error, but every
-    exposure measured as though nothing had been flagged, whatever filtering
-    was asked for.
+    QR2 writes one card per flag, MP_<name> holding the bit number. DR1 and QR3
+    write three, MSKN<n> naming the flag, MSKM<n> holding its mask - the bit
+    set, not its number - and MSKD<n> describing it. Reading only the first,
+    which is what this did, leaves them with no flags at all: not an error, but
+    every exposure measured as though nothing had been flagged, whatever
+    filtering was asked for.
     """
     bits = {name[3:]: int(header[name])
             for name in header if name.startswith('MP_')}
@@ -565,11 +567,11 @@ def _flag_bits(header):
 def _flags_layout(header, url):
     """How a tile-compressed FLAGS extension is put together, or None.
 
-    QR3 compresses the mask and leaves IMAGE and VARIANCE alone. That would be
-    fatal to reading a few rows out of the middle of it, except for how it is
-    tiled: one tile per image row, so a row is still a thing that can be asked
-    for on its own - and a compressed row is smaller than the plain one it
-    replaces, so the exposure costs no more to measure than it did.
+    DR1 and QR3 compress the mask and leave IMAGE and VARIANCE alone. That
+    would be fatal to reading a few rows out of the middle of it, except for
+    how it is tiled: one tile per image row, so a row is still a thing that can
+    be asked for on its own - and a compressed row is smaller than the plain
+    one it replaces, so the exposure costs no more to measure than it did.
 
     What is lost is the arithmetic that found VARIANCE. A compressed extension
     is as long as it compressed to, which differs from exposure to exposure,
@@ -832,19 +834,20 @@ def _enclosed_energy(image, psf, radius):
     """What fraction of a point source the aperture holds.
 
     The files carry their own PSF, normalised to one and oversampled - tenfold
-    in QR2, five in QR3 - so the aperture correction is measured rather than
-    assumed. This is the step the published quick-look tooling replaces with an
-    empirical rescaling fitted against the mission's own fitting pipeline.
+    in QR2, five in DR1 and QR3 - so the aperture correction is measured rather
+    than assumed. This is the step the published quick-look tooling replaces
+    with an empirical rescaling fitted against the mission's own fitting
+    pipeline.
 
     Measured over the detector pixels the aperture actually sums, not over a
     circle of the same radius: the aperture is a handful of whole pixels either
     way, and at six arcseconds a pixel the difference between the two is
     several per cent of the flux.
 
-    The QR3 one is 33 pixels square at five times oversampling, so it reaches
-    3.3 detector pixels from the centre and an aperture wider than that would
-    be summing PSF the file does not carry. Which is not a thing to discover
-    as a quietly low correction, so it is refused.
+    The DR1 and QR3 one is 33 pixels square at five times oversampling, so it
+    reaches 3.3 detector pixels from the centre and an aperture wider than that
+    would be summing PSF the file does not carry. Which is not a thing to
+    discover as a quietly low correction, so it is refused.
     """
     ny, nx = psf['shape']
 
@@ -1886,7 +1889,7 @@ def _preview(results, basepath, name, show, log):
             QUALITY_PUBLISHED: 'None - every exposure as measured',
         }),
     },
-    help_text='SPHEREx QR2+QR3 spectrophotometry, all sky, 0.75-5 um',
+    help_text='SPHEREx DR1+QR3 spectrophotometry, all sky, 0.75-5 um',
     order=82,
     about=(
         "SPHEREx, which is surveying the whole sky in 102 near-infrared "
@@ -1917,7 +1920,8 @@ def _preview(results, basepath, name, show, log):
     template_layout='complex',
     additional_plots=['spherex_rgb.png'],
     main_plot='spherex_spectrum.png',
-    # The all-sky colour mosaic CDS built from QR2, beside the composite of
+    # The all-sky colour mosaic CDS built from QR2 - there is no DR1 one yet -
+    # beside the composite of
     # this target's own exposures. Six arcmin across rather than the two of
     # the other cutouts: a SPHEREx pixel is 6.2 arcsec, and at two arcmin the
     # target and its neighbours are one blur.
